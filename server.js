@@ -23,8 +23,23 @@ app.get('/', (req, res) => {
   });
 });
 
-// API 라우트 (추후 추가)
-// app.use('/api/auth', require('./src/routes/authRoutes'));
+// API 라우트
+const userController = require('./src/modules/auth/controllers/UserController');
+
+app.get('/api/test', (req, res) => userController.test(req, res));
+app.get('/api/users', (req, res) => userController.getAllUsers(req, res));
+
+// 인증 모듈 라우트
+app.use('/api/auth', require('./src/modules/auth/routes/authRoutes'));
+app.use('/api/user', require('./src/modules/auth/routes/userRoutes'));
+app.use('/api/health/weight', require('./src/modules/health/weight/routes/weightRoutes'));
+app.use('/api/health/blood-sugar', require('./src/modules/health/blood_sugar/routes/bloodSugarRoutes'));
+app.use('/api/contact', require('./src/modules/user/contact/routes/contactRoutes'));
+app.use('/api/user/address', require('./src/modules/user/address/routes/addressRoutes'));
+app.use('/api/user', require('./src/modules/user/point/routes/pointRoutes'));
+app.use('/api/user', require('./src/modules/user/coupon/routes/couponRoutes'));
+app.use('/api/healthprofile', require('./src/modules/user/healthprofile/routes/healthProfileRoutes'));
+app.use('/api/user/reviews', require('./src/modules/user/review/routes/reviewRoutes'));
 
 // 404 핸들러
 app.use((req, res) => {
