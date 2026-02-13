@@ -1,11 +1,22 @@
 class BloodPressure {
   constructor(data = {}) {
+    const toString = (value) => {
+      if (Buffer.isBuffer(value)) return value.toString('utf8');
+      if (value && typeof value === 'object' && value.type === 'Buffer' && Array.isArray(value.data)) {
+        try {
+          return Buffer.from(value.data).toString('utf8');
+        } catch (e) {
+          return null;
+        }
+      }
+      return value == null ? null : String(value);
+    };
     this.id = data.id ?? null;
-    this.mbId = data.mb_id ?? data.mbId ?? null;
+    this.mbId = toString(data.mb_id ?? data.mbId);
     this.systolic = data.systolic ?? null;
     this.diastolic = data.diastolic ?? null;
     this.pulse = data.pulse ?? null;
-    this.status = data.status ?? null;
+    this.status = toString(data.status);
     this.measuredAt = data.measured_at ?? data.measuredAt ?? null;
     this.createdAt = data.created_at ?? data.createdAt ?? null;
     this.updatedAt = data.updated_at ?? data.updatedAt ?? null;
