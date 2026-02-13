@@ -1,5 +1,7 @@
 const userRepository = require('../repositories/UserRepository');
 const { verifyPBKDF2Password, mysqlPassword } = require('../../../utils/passwordUtil');
+const fs = require('fs');
+const path = require('path');
 
 class UserController {
   /**
@@ -226,6 +228,63 @@ class UserController {
       return res.json({
         success: false,
         message: '프로필 수정 중 오류가 발생했습니다.'
+      });
+    }
+  }
+
+  async uploadProfileImage(req, res) {
+    try {
+      const mbId = req.body.mbId || req.body.mb_id || req.query.mbId || req.query.mb_id;
+      if (!mbId) {
+        return res.status(400).json({
+          success: false,
+          message: 'mbId가 필요합니다.',
+        });
+      }
+      if (!req.file) {
+        return res.status(400).json({
+          success: false,
+          message: '업로드할 이미지 파일이 없습니다.',
+        });
+      }
+
+      const user = await userRepository.findByMbId(mbId);
+      if (!user) {
+        return res.status(404).json({
+          success: false,
+          message: '사용자를 찾을 수 없습니다.',
+        });
+      }
+
+      const relativePath = `/uploads/profiles/${mbId}/${req.file.filename}`;
+
+      // 기존 파일 정리(같은 사용자 경로 내에서 현재 업로드 파일 제외)
+      try {
+        const userDir = path.join(process.cwd(), 'uploads', 'profiles', mbId);
+        const files = fs.readdirSync(userDir);
+        files
+          .filter((f) => f !== req.file.filename)
+          .forEach((f) => {
+            const target = path.join(userDir, f);
+            if (fs.existsSync(target)) fs.unlinkSync(target);
+          });
+      } catch (e) {
+        // 파일 정리 실패는 업로드 성공에 영향 주지 않음
+      }
+
+      user.profileImg = relativePath;
+      const updatedUser = await userRepository.update(user);
+
+      return res.json({
+        success: true,
+        message: '프로필 이미지가 업로드되었습니다.',
+        user: updatedUser.toResponse(),
+      });
+    } catch (error) {
+      console.error('❌ [UPLOAD PROFILE IMAGE] 오류:', error);
+      return res.status(500).json({
+        success: false,
+        message: '프로필 이미지 업로드 중 오류가 발생했습니다.',
       });
     }
   }

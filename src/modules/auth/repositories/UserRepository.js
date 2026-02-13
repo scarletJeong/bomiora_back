@@ -111,6 +111,10 @@ class UserRepository {
         updateFields.push('mb_hp = ?');
         updateValues.push(user.mbHp);
       }
+      if (user.profileImg !== undefined) {
+        updateFields.push('profile_img = ?');
+        updateValues.push(user.profileImg);
+      }
       if (user.lastLoginAt !== undefined) {
         updateFields.push('mb_today_login = ?');
         updateValues.push(user.lastLoginAt);

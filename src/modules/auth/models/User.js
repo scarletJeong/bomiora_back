@@ -4,13 +4,25 @@
  */
 class User {
   constructor(data) {
+    const toString = (value) => {
+      if (Buffer.isBuffer(value)) return value.toString('utf8');
+      if (value && typeof value === 'object' && value.type === 'Buffer' && Array.isArray(value.data)) {
+        try {
+          return Buffer.from(value.data).toString('utf8');
+        } catch (e) {
+          return null;
+        }
+      }
+      return value == null ? null : String(value);
+    };
     this.id = data.mb_no || null;
-    this.mbId = data.mb_id || null;
-    this.email = data.mb_email || null;
+    this.mbId = toString(data.mb_id);
+    this.email = toString(data.mb_email);
     this.password = data.mb_password || null;
-    this.name = data.mb_name || null;
-    this.nickname = data.mb_nick || null;
-    this.mbHp = data.mb_hp || null;
+    this.name = toString(data.mb_name);
+    this.nickname = toString(data.mb_nick);
+    this.mbHp = toString(data.mb_hp);
+    this.profileImg = toString(data.profile_img);
     this.createdAt = data.mb_datetime || null;
     this.lastLoginAt = data.mb_today_login || null;
   }
@@ -29,7 +41,9 @@ class User {
       mb_nick: this.nickname,
       nickname: this.nickname,
       mb_hp: this.mbHp,
-      phone: this.mbHp
+      phone: this.mbHp,
+      profile_img: this.profileImg || '',
+      profileImage: this.profileImg || ''
     };
   }
 }
