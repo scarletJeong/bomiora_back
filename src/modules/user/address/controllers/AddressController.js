@@ -111,6 +111,29 @@ class AddressController {
       return res.status(400).json({ error: error.message });
     }
   }
+
+  async setDefaultAddress(req, res) {
+    try {
+      const id = Number(req.params.id);
+      const mbId = req.body.mb_id || req.body.mbId || req.query.mbId;
+      if (!mbId) {
+        return res.status(400).json({ error: 'mb_id가 필요합니다.' });
+      }
+
+      const updated = await addressRepository.setDefault(id, mbId);
+      if (!updated) {
+        return res.status(404).json({ error: '배송지를 찾을 수 없습니다.' });
+      }
+
+      return res.json({
+        success: true,
+        data: this.mapAddress(updated),
+        message: '기본 배송지로 설정되었습니다.',
+      });
+    } catch (error) {
+      return res.status(400).json({ error: error.message });
+    }
+  }
 }
 
 module.exports = new AddressController();

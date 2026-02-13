@@ -67,6 +67,39 @@ class AddressRepository {
     );
     return result.affectedRows > 0;
   }
+
+  async setDefault(id, mbId) {
+    const connection = await pool.getConnection();
+    try {
+      await connection.beginTransaction();
+
+      const [targetRows] = await connection.query(
+        'SELECT ad_id FROM bomiora_shop_order_address WHERE ad_id = ? AND mb_id = ?',
+        [id, mbId]
+      );
+      if (!targetRows.length) {
+        await connection.rollback();
+        return null;
+      }
+
+      await connection.query(
+        'UPDATE bomiora_shop_order_address SET ad_default = 0 WHERE mb_id = ?',
+        [mbId]
+      );
+      await connection.query(
+        'UPDATE bomiora_shop_order_address SET ad_default = 1 WHERE ad_id = ? AND mb_id = ?',
+        [id, mbId]
+      );
+
+      await connection.commit();
+      return this.findByIdAndMbId(id, mbId);
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
+  }
 }
 
 module.exports = new AddressRepository();
