@@ -17,6 +17,17 @@ class ProductController {
     }
   }
 
+  // Buffer를 문자열로 변환하는 헬퍼 함수
+  bufferToString(value) {
+    if (Buffer.isBuffer(value)) {
+      return value.toString('utf8');
+    }
+    if (value && typeof value === 'object' && value.type === 'Buffer' && Array.isArray(value.data)) {
+      return Buffer.from(value.data).toString('utf8');
+    }
+    return value != null ? String(value) : null;
+  }
+
   normalizeImageUrl(path) {
     if (!path) return null;
     if (path.startsWith('http://') || path.startsWith('https://')) return path;
@@ -44,8 +55,12 @@ class ProductController {
   }
 
   toProductDto(row) {
+    // Buffer를 문자열로 변환
+    const itIdStr = this.bufferToString(row.it_id);
+    const itKindStr = this.bufferToString(row.it_kind);
+    
     return {
-      id: row.it_id,
+      id: itIdStr,
       name: row.it_name,
       description: row.it_explan,
       price: row.it_price,
@@ -53,13 +68,15 @@ class ProductController {
       imageUrl: this.processImageUrl(row),
       categoryId: row.ca_id,
       categoryName: this.categoryName(row.ca_id),
-      productKind: row.it_kind,
+      productKind: itKindStr,
       isNew: Number(row.it_type3 || 0) === 1,
       isBest: Number(row.it_type4 || 0) === 1,
       stock: row.it_stock_qty ?? 0,
       rating: row.it_use_avg != null ? Number(row.it_use_avg) : null,
       reviewCount: row.it_use_cnt ?? 0,
       additionalInfo: {
+        it_id: itIdStr,
+        it_kind: itKindStr,
         it_explan: row.it_explan,
         it_basic: row.it_basic,
         it_prescription: row.it_prescription,
@@ -120,6 +137,17 @@ class ProductController {
       if (!row) {
         return res.json({ success: false, message: '상품을 찾을 수 없습니다' });
       }
+      
+      // bomiora_shop_item_new 테이블에서 가져온 원본 데이터 로그 출력
+      const itIdStr = this.bufferToString(row.it_id);
+      const itKindStr = this.bufferToString(row.it_kind);
+      
+      console.log('📦 [상품 상세 조회] bomiora_shop_item_new 테이블 원본 데이터:');
+      console.log('  - it_id (원본):', row.it_id);
+      console.log('  - it_id (문자열):', itIdStr);
+      console.log('  - it_kind (원본):', row.it_kind);
+      console.log('  - it_kind (문자열):', itKindStr);
+      
       return res.json({ success: true, data: this.toProductDto(row) });
     } catch (error) {
       return res.status(500).json({ success: false, message: `상품 상세 조회 실패: ${error.message}` });

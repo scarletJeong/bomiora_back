@@ -7,6 +7,17 @@ class CartController {
     return Number.isFinite(n) ? n : fallback;
   }
 
+  // Buffer를 문자열로 변환하는 헬퍼 함수
+  bufferToString(value) {
+    if (Buffer.isBuffer(value)) {
+      return value.toString('utf8');
+    }
+    if (value && typeof value === 'object' && value.type === 'Buffer' && Array.isArray(value.data)) {
+      return Buffer.from(value.data).toString('utf8');
+    }
+    return value != null ? String(value) : null;
+  }
+
   async generateOrderId(mbId, itId) {
     const now = new Date();
     const pad = (n, len = 2) => String(n).padStart(len, '0');
@@ -49,22 +60,23 @@ class CartController {
   }
 
   async convertCartToMap(cart) {
-    const product = await cartRepository.findProductById(cart.it_id);
-    const imageUrl = product ? this.buildImageUrl(product, cart.it_id) : null;
+    const itId = this.bufferToString(cart.it_id);
+    const product = await cartRepository.findProductById(itId);
+    const imageUrl = product ? this.buildImageUrl(product, itId) : null;
     return {
       ct_id: cart.ct_id,
       od_id: cart.od_id,
-      mb_id: cart.mb_id,
-      it_id: cart.it_id,
-      it_name: cart.it_name,
-      it_subject: cart.it_subject,
-      ct_status: cart.ct_status,
+      mb_id: this.bufferToString(cart.mb_id),
+      it_id: itId,
+      it_name: this.bufferToString(cart.it_name),
+      it_subject: this.bufferToString(cart.it_subject) || '',
+      ct_status: this.bufferToString(cart.ct_status),
       ct_price: cart.ct_price,
-      ct_option: cart.ct_option,
+      ct_option: this.bufferToString(cart.ct_option) || '',
       ct_qty: cart.ct_qty,
-      io_id: cart.io_id,
+      io_id: this.bufferToString(cart.io_id) || '',
       io_price: cart.io_price,
-      ct_kind: cart.ct_kind || 'general',
+      ct_kind: this.bufferToString(cart.ct_kind) || 'general',
       ct_time: cart.ct_time,
       image_url: imageUrl,
       it_img: imageUrl,
@@ -143,6 +155,17 @@ class CartController {
       if (!product) return res.status(404).json({ success: false, message: '제품을 찾을 수 없습니다.' });
       if (!price) price = this.toInt(product.it_price, 0);
 
+      // bomiora_shop_item_new 테이블에서 가져온 원본 데이터 로그 출력
+      const itIdStr = this.bufferToString(product.it_id);
+      const itKindStr = this.bufferToString(product.it_kind);
+      
+      console.log('📦 [장바구니 추가] bomiora_shop_item_new 테이블 원본 데이터:');
+      console.log('  - it_id (원본):', product.it_id);
+      console.log('  - it_id (문자열):', itIdStr);
+      console.log('  - it_kind (원본):', product.it_kind);
+      console.log('  - it_kind (문자열):', itKindStr);
+      console.log('  - 프론트엔드에서 전달된 ct_kind:', req.body.ct_kind);
+
       const ioIdForSearch = optionId || '';
       const existing = await cartRepository.findSameItemOption(mbId, itId, ioIdForSearch, '쇼핑');
       if (existing) {
@@ -153,7 +176,22 @@ class CartController {
           ct_time: new Date(),
           ct_point: this.calculatePoint(product, optionId, optionPrice, newQty)
         });
-        return res.json({ success: true, message: '장바구니에 추가되었습니다.', data: await this.convertCartToMap(updated) });
+        const updatedData = await this.convertCartToMap(updated);
+        const ctKindStr = this.bufferToString(updatedData.ct_kind);
+        
+        console.log('📥 [API POST] 응답 본문 (기존 항목 업데이트):');
+        console.log('  - it_kind (원본):', product.it_kind);
+        console.log('  - it_kind (문자열):', itKindStr);
+        console.log('  - ct_kind (원본):', updatedData.ct_kind);
+        console.log('  - ct_kind (문자열):', ctKindStr);
+        
+        return res.json({ 
+          success: true, 
+          message: '장바구니에 추가되었습니다.', 
+          data: updatedData,
+          it_kind: itKindStr,
+          ct_kind: ctKindStr
+        });
       }
 
       if (!odId) odId = await this.generateOrderId(mbId, itId);
@@ -187,19 +225,34 @@ class CartController {
         ct_select: 0,
         inf_code: '',
         ct_output: 'Y',
-        ct_kind: product.it_kind === 'prescription' ? 'prescription' : 'general',
+        ct_kind: req.body.ct_kind || (this.bufferToString(product.it_kind) === 'prescription' ? 'prescription' : 'general'),
         ct_mb_inf: '',
         ct_inf_price: 0,
         ct_settlement_status: 'N'
       };
       const cart = await cartRepository.insertCart(payload);
 
-      if (product.it_kind === 'prescription') {
+      if (this.bufferToString(product.it_kind) === 'prescription') {
         const carts = await healthProfileCartRepository.findRecentByMbIdAndItIdAndStatus(mbId, itId, '쇼핑');
         if (carts.length) await healthProfileCartRepository.updateOdId(carts[0].hp_no, odId);
       }
 
-      return res.json({ success: true, message: '장바구니에 추가되었습니다.', data: await this.convertCartToMap(cart) });
+      const cartData = await this.convertCartToMap(cart);
+      const ctKindStr = this.bufferToString(cartData.ct_kind);
+      
+      console.log('📥 [API POST] 응답 본문에 포함될 데이터:');
+      console.log('  - it_kind (원본):', product.it_kind);
+      console.log('  - it_kind (문자열):', itKindStr);
+      console.log('  - ct_kind (원본):', cartData.ct_kind);
+      console.log('  - ct_kind (문자열):', ctKindStr);
+
+      return res.json({ 
+        success: true, 
+        message: '장바구니에 추가되었습니다.', 
+        data: cartData,
+        it_kind: itKindStr,
+        ct_kind: ctKindStr
+      });
     } catch (error) {
       return res.status(500).json({ success: false, message: '장바구니 추가 중 오류가 발생했습니다.', error: error.message });
     }
@@ -377,17 +430,28 @@ class CartController {
         ct_select: 0,
         inf_code: '',
         ct_output: 'Y',
-        ct_kind: product.it_kind === 'prescription' ? 'prescription' : 'general',
+        ct_kind: req.body.ct_kind || (this.bufferToString(product.it_kind) === 'prescription' ? 'prescription' : 'general'),
         ct_mb_inf: '',
         ct_inf_price: 0,
         ct_settlement_status: 'N'
       });
 
+      const itKindStrPrescription = this.bufferToString(product.it_kind);
+      const ctKindStr = this.bufferToString(cart.ct_kind);
+      
+      console.log('📥 [API POST] 응답 본문 (처방 예약):');
+      console.log('  - it_kind (원본):', product.it_kind);
+      console.log('  - it_kind (문자열):', itKindStrPrescription);
+      console.log('  - ct_kind (원본):', cart.ct_kind);
+      console.log('  - ct_kind (문자열):', ctKindStr);
+
       return res.json({
         success: true,
         message: '처방 예약이 완료되었습니다.',
         cart_id: cart.ct_id,
-        od_id: odId
+        od_id: odId,
+        it_kind: itKindStrPrescription,
+        ct_kind: ctKindStr
       });
     } catch (error) {
       return res.status(500).json({ success: false, message: '처방 예약 중 오류가 발생했습니다.', error: error.message });
