@@ -51,18 +51,32 @@ class ProductController {
     if (row.it_flutter_image_url && String(row.it_flutter_image_url).trim()) {
       return this.buildFlutterImageUrl(String(row.it_flutter_image_url).trim(), row.it_id);
     }
-    return this.normalizeImageUrl(row.it_img1 ? String(row.it_img1).trim() : null);
+    for (let i = 1; i <= 9; i += 1) {
+      const key = `it_img${i}`;
+      const value = row[key];
+      if (value != null && String(value).trim() !== '') {
+        return this.normalizeImageUrl(String(value).trim());
+      }
+    }
+    return null;
   }
 
   toProductDto(row) {
     // Buffer를 문자열로 변환
     const itIdStr = this.bufferToString(row.it_id);
     const itKindStr = this.bufferToString(row.it_kind);
+    const itExplain = row.it_explain ?? row.it_explan ?? null;
+    const imageFields = {};
+    for (let i = 1; i <= 9; i += 1) {
+      const key = `it_img${i}`;
+      const value = row[key];
+      imageFields[key] = value != null && String(value).trim() !== '' ? String(value).trim() : null;
+    }
     
     return {
       id: itIdStr,
       name: row.it_name,
-      description: row.it_explan,
+      description: itExplain,
       price: row.it_price,
       originalPrice: row.it_cust_price,
       imageUrl: this.processImageUrl(row),
@@ -77,7 +91,7 @@ class ProductController {
       additionalInfo: {
         it_id: itIdStr,
         it_kind: itKindStr,
-        it_explan: row.it_explan,
+        it_explain: itExplain,
         it_basic: row.it_basic,
         it_prescription: row.it_prescription,
         it_takeway: row.it_takeway,
@@ -85,8 +99,7 @@ class ProductController {
         it_point: row.it_point,
         it_point_type: row.it_point_type,
         it_option_subject: row.it_option_subject,
-        it_img2: null,
-        it_img3: null
+        ...imageFields
       }
     };
   }

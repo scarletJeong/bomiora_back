@@ -50,13 +50,24 @@ class CartController {
   }
 
   buildImageUrl(product, itId) {
-    let imageFile = product.it_flutter_image_url || product.it_img1 || null;
-    if (!imageFile) return null;
-    imageFile = String(imageFile);
-    if (imageFile.includes('/')) {
-      imageFile = imageFile.substring(imageFile.lastIndexOf('/') + 1);
+    // flutter 전용 경로가 있으면 우선 사용
+    if (product.it_flutter_image_url && String(product.it_flutter_image_url).trim()) {
+      return String(product.it_flutter_image_url).trim();
     }
-    return `data/item/${itId}/${imageFile}`;
+
+    // 썸네일은 it_img1~it_img9 중 첫 번째 유효값 사용
+    for (let i = 1; i <= 9; i += 1) {
+      const key = `it_img${i}`;
+      const value = product[key];
+      if (value == null) continue;
+      const trimmed = String(value).trim();
+      if (!trimmed) continue;
+      // DB에 저장된 경로를 그대로 사용한다.
+      // 예: 1682401752/file.jpg 또는 /1682401752/file.jpg 또는 /data/item/...
+      return trimmed;
+    }
+
+    return null;
   }
 
   async convertCartToMap(cart) {
