@@ -137,6 +137,69 @@ class OrderRepository {
     return rows.length ? rows[0] : null;
   }
 
+  async getPrescriptionFlagsByOdIds(mbId, odIds) {
+    if (!odIds.length) return {};
+    const placeholders = odIds.map(() => '?').join(', ');
+    const [rows] = await pool.query(
+      `SELECT od_id,
+              MAX(CASE WHEN hp_9 = 'prescription' THEN 1 ELSE 0 END) AS is_prescription
+       FROM bomiora_shop_health_profiles_cart
+       WHERE mb_id = ? AND od_id IN (${placeholders})
+       GROUP BY od_id`,
+      [mbId, ...odIds]
+    );
+    const map = {};
+    rows.forEach((row) => {
+      map[Number(row.od_id)] = Number(row.is_prescription || 0) === 1;
+    });
+    return map;
+  }
+
+  async isPrescriptionOrder(mbId, odId) {
+    const [rows] = await pool.query(
+      `SELECT 1
+       FROM bomiora_shop_health_profiles_cart
+       WHERE mb_id = ? AND od_id = ? AND hp_9 = 'prescription'
+       LIMIT 1`,
+      [mbId, odId]
+    );
+    return rows.length > 0;
+  }
+
+  async getAddressById(mbId, addressId) {
+    const [rows] = await pool.query(
+      `SELECT ad_id, ad_name, ad_tel, ad_hp, ad_zip1, ad_zip2, ad_addr1, ad_addr2, ad_addr3, ad_jibeon
+       FROM bomiora_shop_order_address
+       WHERE mb_id = ? AND ad_id = ?
+       LIMIT 1`,
+      [mbId, addressId]
+    );
+    return rows.length ? rows[0] : null;
+  }
+
+  async updateOrderAddress(odId, mbId, address) {
+    const [result] = await pool.query(
+      `UPDATE bomiora_shop_order
+       SET od_name = ?, od_tel = ?, od_hp = ?, od_zip1 = ?, od_zip2 = ?,
+           od_addr1 = ?, od_addr2 = ?, od_addr3 = ?, od_addr_jibeon = ?
+       WHERE od_id = ? AND mb_id = ?`,
+      [
+        address.ad_name || '',
+        address.ad_tel || '',
+        address.ad_hp || '',
+        address.ad_zip1 || '',
+        address.ad_zip2 || '',
+        address.ad_addr1 || '',
+        address.ad_addr2 || '',
+        address.ad_addr3 || '',
+        address.ad_jibeon || '',
+        odId,
+        mbId
+      ]
+    );
+    return result.affectedRows > 0;
+  }
+
   async updateReservation(mbId, odId, date, time) {
     const [result] = await pool.query(
       `UPDATE bomiora_shop_health_profiles_cart

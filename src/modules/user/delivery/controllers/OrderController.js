@@ -108,6 +108,7 @@ class OrderController {
       imageRows.forEach((row) => {
         if (row.it_img1) imageUrlMap[row.it_id] = row.it_img1;
       });
+      const prescriptionFlags = await orderRepository.getPrescriptionFlagsByOdIds(mbId, odIds);
 
       const orders = rows.map((row) => {
         const items = (cartsByOrder[Number(row.od_id)] || []).map((c) => this.toOrderItem(c, imageUrlMap));
@@ -119,6 +120,7 @@ class OrderController {
           odStatus: row.od_status,
           totalPrice: this.toInt(row.od_receipt_price),
           odCartCount: this.toInt(row.od_cart_count),
+          isPrescriptionOrder: prescriptionFlags[Number(row.od_id)] === true,
           items,
           firstProductName: items[0]?.itName || null,
           firstProductOption: items[0]?.ctOption || null,
@@ -181,6 +183,7 @@ class OrderController {
         deliveryFee: this.toInt(row.od_send_cost) + this.toInt(row.od_send_cost2),
         discountAmount: this.toInt(row.od_cart_coupon) + this.toInt(row.od_send_coupon) + this.toInt(row.od_coupon) + this.toInt(row.od_receipt_point),
         totalPrice: this.toInt(row.od_receipt_price),
+        isPrescriptionOrder: false,
         paymentMethod: row.od_settle_case,
         paymentMethodDetail: null,
         ordererName: row.od_b_name,
@@ -208,6 +211,7 @@ class OrderController {
         detail.reservationDate = reservation.hp_rsvt_date ? String(reservation.hp_rsvt_date).substring(0, 10) : null;
         detail.reservationTime = reservation.hp_rsvt_stime || null;
       }
+      detail.isPrescriptionOrder = await orderRepository.isPrescriptionOrder(mbId, odId);
 
       return res.json(detail);
     } catch (error) {
@@ -278,6 +282,9 @@ class OrderController {
       if (!['주문', '입금'].includes(order.od_status)) {
         throw new Error('예약 시간은 결제 완료 상태에서만 변경할 수 있습니다.');
       }
+      if (await orderRepository.isPrescriptionOrder(mbId, odId)) {
+        throw new Error('처방 주문은 예약 시간 변경이 불가능합니다.');
+      }
 
       const date = String(reservationDate).includes('T')
         ? String(reservationDate).substring(0, String(reservationDate).indexOf('T'))
@@ -286,6 +293,37 @@ class OrderController {
       if (!changed) throw new Error('예약 정보를 찾을 수 없습니다.');
 
       return res.json({ success: true, message: '예약 시간이 변경되었습니다.' });
+    } catch (error) {
+      return res.status(400).json({ error: error.message });
+    }
+  }
+
+  async changeDeliveryAddress(req, res) {
+    try {
+      const odId = Number(req.params.odId);
+      const mbId = req.body.mbId;
+      const addressId = Number(req.body.addressId || req.body.adId);
+
+      if (!mbId || !String(mbId).trim()) return res.status(400).json({ error: '회원 ID가 필요합니다.' });
+      if (!addressId || Number.isNaN(addressId)) return res.status(400).json({ error: '배송지 ID가 필요합니다.' });
+
+      const order = await orderRepository.findById(odId);
+      if (!order) throw new Error('주문을 찾을 수 없습니다.');
+      if (order.mb_id !== mbId) throw new Error('주문 정보가 일치하지 않습니다.');
+      if (!['주문', '입금', '준비'].includes(order.od_status)) {
+        throw new Error('배송지는 결제대기/배송준비 상태에서만 변경할 수 있습니다.');
+      }
+      if (await orderRepository.isPrescriptionOrder(mbId, odId)) {
+        throw new Error('처방 주문은 배송지 변경이 불가능합니다.');
+      }
+
+      const address = await orderRepository.getAddressById(mbId, addressId);
+      if (!address) throw new Error('선택한 배송지를 찾을 수 없습니다.');
+
+      const changed = await orderRepository.updateOrderAddress(odId, mbId, address);
+      if (!changed) throw new Error('배송지 변경에 실패했습니다.');
+
+      return res.json({ success: true, message: '배송지가 변경되었습니다.' });
     } catch (error) {
       return res.status(400).json({ error: error.message });
     }

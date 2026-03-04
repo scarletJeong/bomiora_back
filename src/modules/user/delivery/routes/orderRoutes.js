@@ -8,5 +8,7 @@ router.post('/:odId/cancel', (req, res) => orderController.cancelOrder(req, res)
 router.post('/:odId/confirm', (req, res) => orderController.confirmPurchase(req, res));
 router.post('/batch/auto-confirm', (req, res) => orderController.processAutoConfirm(req, res));
 router.put('/:odId/reservation', (req, res) => orderController.changeReservationTime(req, res));
+router.put('/:odId/address', (req, res) => orderController.changeDeliveryAddress(req, res));
+router.put('/:odId/delivery-address', (req, res) => orderController.changeDeliveryAddress(req, res));
 
 module.exports = router;
