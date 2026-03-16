@@ -1,19 +1,41 @@
 const pool = require('../../../../config/database');
 const BloodPressure = require('../models/BloodPressure');
+const heartRateRepository = require('../../heart_rate/repositories/HeartRateRepository');
 
 class BloodPressureRepository {
   async create(bloodPressureData) {
     const { mbId, systolic, diastolic, pulse, measuredAt } = bloodPressureData;
     const status = BloodPressure.determineStatus(systolic, diastolic);
+    const connection = await pool.getConnection();
 
-    const [result] = await pool.query(
-      `INSERT INTO bm_blood_pressure
-      (mb_id, systolic, diastolic, pulse, status, measured_at, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())`,
-      [mbId, systolic, diastolic, pulse, status, measuredAt]
-    );
+    try {
+      await connection.beginTransaction();
 
-    return this.findById(result.insertId);
+      const [result] = await connection.query(
+        `INSERT INTO bm_blood_pressure
+        (mb_id, systolic, diastolic, pulse, status, measured_at, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+        [mbId, systolic, diastolic, pulse, status, measuredAt]
+      );
+
+      await heartRateRepository.createOrUpdateFromBloodPressure(
+        {
+          mbId,
+          heartRate: pulse,
+          measuredAt,
+          bloodPressureId: result.insertId
+        },
+        connection
+      );
+
+      await connection.commit();
+      return this.findById(result.insertId);
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
   }
 
   async findById(id) {

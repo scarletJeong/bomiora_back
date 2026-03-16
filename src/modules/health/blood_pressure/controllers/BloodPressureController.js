@@ -1,6 +1,20 @@
 const bloodPressureRepository = require('../repositories/BloodPressureRepository');
 
 class BloodPressureController {
+  parseMeasuredAt(rawMeasuredAt) {
+    if (rawMeasuredAt == null) return new Date();
+
+    const parsed = rawMeasuredAt instanceof Date
+      ? rawMeasuredAt
+      : new Date(rawMeasuredAt);
+
+    if (Number.isNaN(parsed.getTime())) {
+      throw new Error('measured_at 형식이 올바르지 않습니다.');
+    }
+
+    return parsed;
+  }
+
   async addRecord(req, res) {
     try {
       const { mb_id, systolic, diastolic, pulse, measured_at } = req.body;
@@ -17,7 +31,7 @@ class BloodPressureController {
         systolic: Number(systolic),
         diastolic: Number(diastolic),
         pulse: Number(pulse),
-        measuredAt: measured_at || new Date()
+        measuredAt: this.parseMeasuredAt(measured_at)
       });
 
       return res.status(201).json({
@@ -51,7 +65,7 @@ class BloodPressureController {
       if (systolic != null) updateFields.systolic = Number(systolic);
       if (diastolic != null) updateFields.diastolic = Number(diastolic);
       if (pulse != null) updateFields.pulse = Number(pulse);
-      if (measured_at != null) updateFields.measuredAt = measured_at;
+      if (measured_at != null) updateFields.measuredAt = this.parseMeasuredAt(measured_at);
 
       const updated = await bloodPressureRepository.update(id, updateFields);
 
