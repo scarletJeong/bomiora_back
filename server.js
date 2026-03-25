@@ -35,6 +35,7 @@ app.get('/api/users', (req, res) => userController.getAllUsers(req, res));
 app.use('/api/auth', require('./src/modules/auth/routes/authRoutes'));
 app.use('/api/user', require('./src/modules/auth/routes/userRoutes'));
 app.use('/api/health/weight', require('./src/modules/health/weight/routes/weightRoutes'));
+app.use('/api/health/health-goal', require('./src/modules/health/health_goal/routes/healthGoalRoutes'));
 app.use('/api/health/blood-sugar', require('./src/modules/health/blood_sugar/routes/bloodSugarRoutes'));
 app.use('/api/health/blood-pressure', require('./src/modules/health/blood_pressure/routes/bloodPressureRoutes'));
 app.use('/api/health/heart-rate', require('./src/modules/health/heart_rate/routes/heartRateRoutes'));
