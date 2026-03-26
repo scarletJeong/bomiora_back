@@ -138,6 +138,99 @@ class StepsController {
     }
   }
 
+  /**
+   * GET /api/steps/daily-total?mb_id=&date=YYYY-MM-DD
+   * Flutter 앱: 총 걸음·거리·칼로리·시간대별 걸음을 한 번에, JSON만 반환.
+   */
+  async getDailyTotal(req, res) {
+    try {
+      const mbIdRaw = req.query.mb_id != null ? String(req.query.mb_id).trim() : '';
+      const date = req.query.date != null ? String(req.query.date).trim() : '';
+
+      if (!mbIdRaw || !date) {
+        return res.status(400).json({
+          success: false,
+          message: 'mb_id, date(YYYY-MM-DD)는 필수입니다.'
+        });
+      }
+
+      const userId = Number(mbIdRaw);
+
+      // 기존 steps_records 테이블이 user_id(INT) 기반이므로,
+      // mb_id가 비숫자인 경우에도 화면이 깨지지 않게 0 데이터 반환.
+      if (!Number.isFinite(userId)) {
+        return res.json({
+          success: true,
+          data: {
+            id: 0,
+            user_id: 0,
+            date,
+            total_steps: 0,
+            distance: 0,
+            calories: 0,
+            hourly_steps: [],
+            created_at: null,
+            updated_at: null,
+            steps_difference: 0
+          }
+        });
+      }
+
+      const record = await stepsRepository.findByUserIdAndRecordDate(userId, date);
+
+      let stepsDifference = 0;
+      const previousDate = new Date(`${date}T12:00:00`);
+      previousDate.setDate(previousDate.getDate() - 1);
+      const prevStr = previousDate.toISOString().split('T')[0];
+      const previous = await stepsRepository.findByUserIdAndRecordDate(userId, prevStr);
+
+      if (record && previous) {
+        stepsDifference = (record.totalSteps || 0) - (previous.totalSteps || 0);
+      } else if (record && !previous) {
+        stepsDifference = record.totalSteps || 0;
+      }
+
+      const hourlyRaw = record && record.hourlySteps ? record.hourlySteps : [];
+      const hourly_steps = hourlyRaw.map((h) => ({
+        hour: h.hour != null ? Number(h.hour) : 0,
+        steps: h.steps != null ? Number(h.steps) : 0,
+        distance:
+          h.distanceKm != null
+            ? Number(h.distanceKm)
+            : h.distance != null
+              ? Number(h.distance)
+              : 0,
+        calories:
+          h.caloriesBurned != null
+            ? Number(h.caloriesBurned)
+            : h.calories != null
+              ? Number(h.calories)
+              : 0
+      }));
+
+      const data = {
+        id: record ? record.id : 0,
+        user_id: userId,
+        date,
+        total_steps: record ? (record.totalSteps || 0) : 0,
+        distance: record && record.distanceKm != null ? Number(record.distanceKm) : 0,
+        calories: record && record.caloriesBurned != null ? Number(record.caloriesBurned) : 0,
+        hourly_steps,
+        created_at: record ? record.createdAt : null,
+        updated_at: record ? record.updatedAt : null,
+        steps_difference: stepsDifference
+      };
+
+      return res.json({ success: true, data });
+    } catch (error) {
+      console.error('daily-total 조회 실패:', error);
+      return res.status(500).json({
+        success: false,
+        message: '걸음 수 조회 실패: ' + error.message
+      });
+    }
+  }
+
   async getTodayStepsRecord(req, res) {
     try {
       const userId = Number(req.params.userId);
