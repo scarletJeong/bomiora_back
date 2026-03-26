@@ -232,6 +232,74 @@ class UserController {
     }
   }
 
+  /**
+   * 비밀번호 확인(재인증)
+   * - Flutter에서 SHA1 해시된 비밀번호 문자열을 전달받아 로그인과 동일한 방식으로 검증
+   */
+  async verifyPassword(req, res) {
+    try {
+      const { mbId, password } = req.body;
+
+      if (!mbId || !password) {
+        return res.status(400).json({
+          success: false,
+          message: 'mbId와 password가 필요합니다.',
+        });
+      }
+
+      const user = await userRepository.findByMbId(mbId);
+      if (!user) {
+        return res.json({
+          success: false,
+          message: '사용자를 찾을 수 없습니다.',
+        });
+      }
+
+      const storedHash = Buffer.isBuffer(user.password)
+        ? user.password.toString('utf8')
+        : String(user.password || '');
+
+      if (!storedHash) {
+        return res.json({
+          success: false,
+          message: '비밀번호가 일치하지 않습니다.',
+        });
+      }
+
+      let passwordMatch = false;
+
+      if (storedHash.startsWith('sha256:')) {
+        passwordMatch = verifyPBKDF2Password(password, storedHash);
+      } else if (storedHash.startsWith('*') && storedHash.length === 41) {
+        const mysqlHash = mysqlPassword(password);
+        passwordMatch = mysqlHash === storedHash;
+      } else {
+        return res.json({
+          success: false,
+          message: '비밀번호 형식 오류',
+        });
+      }
+
+      if (!passwordMatch) {
+        return res.json({
+          success: false,
+          message: '비밀번호가 일치하지 않습니다.',
+        });
+      }
+
+      return res.json({
+        success: true,
+        message: '비밀번호 확인 완료',
+      });
+    } catch (error) {
+      console.error('❌ [VERIFY PASSWORD] 오류:', error);
+      return res.status(500).json({
+        success: false,
+        message: '비밀번호 확인 중 오류가 발생했습니다.',
+      });
+    }
+  }
+
   async uploadProfileImage(req, res) {
     try {
       const mbId = req.body.mbId || req.body.mb_id || req.query.mbId || req.query.mb_id;

@@ -38,6 +38,13 @@ const upload = multer({
  * @access  Private (추후 인증 미들웨어 추가)
  */
 router.put('/profile', (req, res) => userController.updateProfile(req, res));
+
+/**
+ * @route   POST /api/user/verify-password
+ * @desc    비밀번호 확인(재인증)
+ * @access  Private (추후 인증 미들웨어 추가)
+ */
+router.post('/verify-password', (req, res) => userController.verifyPassword(req, res));
 router.post('/profile/image', upload.single('file'), (req, res) =>
   userController.uploadProfileImage(req, res)
 );
