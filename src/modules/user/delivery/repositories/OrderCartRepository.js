@@ -3,7 +3,13 @@ const pool = require('../../../../config/database');
 class OrderCartRepository {
   async findByOdIdAndMbId(odId, mbId) {
     const [rows] = await pool.query(
-      'SELECT * FROM bomiora_shop_cart WHERE od_id = ? AND mb_id = ? ORDER BY ct_id ASC',
+      `SELECT c.*,
+              i.it_kind AS it_kind,
+              COALESCE(i.it_name, i.it_subject, c.it_name) AS item_name
+       FROM bomiora_shop_cart c
+       LEFT JOIN bomiora_shop_item_new i ON i.it_id = c.it_id
+       WHERE c.od_id = ? AND c.mb_id = ?
+       ORDER BY c.ct_id ASC`,
       [odId, mbId]
     );
     return rows;
@@ -13,7 +19,13 @@ class OrderCartRepository {
     if (!odIds.length) return [];
     const placeholders = odIds.map(() => '?').join(', ');
     const [rows] = await pool.query(
-      `SELECT * FROM bomiora_shop_cart WHERE od_id IN (${placeholders}) ORDER BY od_id DESC, ct_id ASC`,
+      `SELECT c.*,
+              i.it_kind AS it_kind,
+              COALESCE(i.it_name, i.it_subject, c.it_name) AS item_name
+       FROM bomiora_shop_cart c
+       LEFT JOIN bomiora_shop_item_new i ON i.it_id = c.it_id
+       WHERE c.od_id IN (${placeholders})
+       ORDER BY c.od_id DESC, c.ct_id ASC`,
       odIds
     );
     return rows;

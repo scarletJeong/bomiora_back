@@ -2,6 +2,16 @@ const orderRepository = require('../repositories/OrderRepository');
 const orderCartRepository = require('../repositories/OrderCartRepository');
 
 class OrderController {
+  bufferToString(value) {
+    if (value == null) return null;
+    if (typeof value === 'string') return value;
+    if (Buffer.isBuffer(value)) return value.toString('utf8');
+    if (value && value.type === 'Buffer' && Array.isArray(value.data)) {
+      return Buffer.from(value.data).toString('utf8');
+    }
+    return String(value);
+  }
+
   toInt(value) {
     return value == null ? 0 : Number(value);
   }
@@ -45,18 +55,25 @@ class OrderController {
     const ctPrice = this.toInt(cart.ct_price);
     const ioPrice = this.toInt(cart.io_price);
     const ctQty = this.toInt(cart.ct_qty);
+    const itId = this.bufferToString(cart.it_id) || '';
+    const itName = this.bufferToString(cart.item_name || cart.it_name) || '';
+    const itSubject = this.bufferToString(cart.it_subject) || '';
+    const itKind = this.bufferToString(cart.it_kind);
+    const ctOption = this.bufferToString(cart.ct_option);
+    const ctStatus = this.bufferToString(cart.ct_status);
     return {
       ctId: cart.ct_id,
-      itId: cart.it_id,
-      itName: cart.it_name,
-      itSubject: cart.it_subject,
-      ctOption: cart.ct_option,
+      itId,
+      itName,
+      itKind,
+      itSubject,
+      ctOption,
       ctQty,
       ctPrice,
       ioPrice,
       totalPrice: (ctPrice + ioPrice) * ctQty,
-      ctStatus: cart.ct_status,
-      imageUrl: imageUrlMap[cart.it_id] || ''
+      ctStatus,
+      imageUrl: imageUrlMap[itId] || ''
     };
   }
 
