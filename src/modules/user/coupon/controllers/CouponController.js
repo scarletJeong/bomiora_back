@@ -19,13 +19,15 @@ class CouponController {
       cp_minimum: c.cp_minimum,
       cp_maximum: c.cp_maximum,
       od_id: c.od_id,
-      cp_datetime: c.cp_datetime
+      cp_datetime: c.cp_datetime,
+      applied_product: c._applied_product ?? null
     };
   }
 
   async getUserCoupons(req, res) {
     try {
       const rows = await couponRepository.findByUserId(req.query.mb_id);
+      await couponRepository.attachAppliedProductLabels(rows);
       return res.json({ success: true, data: rows.map((r) => this.toMap(r)) });
     } catch (error) {
       return res.status(500).json({ success: false, message: `쿠폰 목록 조회 실패: ${error.message}` });
@@ -35,6 +37,7 @@ class CouponController {
   async getAvailableCoupons(req, res) {
     try {
       const rows = await couponRepository.findAvailableCoupons(req.query.mb_id);
+      await couponRepository.attachAppliedProductLabels(rows);
       return res.json({ success: true, data: rows.map((r) => this.toMap(r)) });
     } catch (error) {
       return res.status(500).json({ success: false, message: `사용가능한 쿠폰 조회 실패: ${error.message}` });
@@ -44,6 +47,7 @@ class CouponController {
   async getUsedCoupons(req, res) {
     try {
       const rows = await couponRepository.findUsedCoupons(req.query.mb_id);
+      await couponRepository.attachAppliedProductLabels(rows);
       return res.json({ success: true, data: rows.map((r) => this.toMap(r)) });
     } catch (error) {
       return res.status(500).json({ success: false, message: `사용한 쿠폰 조회 실패: ${error.message}` });
@@ -53,6 +57,7 @@ class CouponController {
   async getExpiredCoupons(req, res) {
     try {
       const rows = await couponRepository.findExpiredCoupons(req.query.mb_id);
+      await couponRepository.attachAppliedProductLabels(rows);
       return res.json({ success: true, data: rows.map((r) => this.toMap(r)) });
     } catch (error) {
       return res.status(500).json({ success: false, message: `만료된 쿠폰 조회 실패: ${error.message}` });
