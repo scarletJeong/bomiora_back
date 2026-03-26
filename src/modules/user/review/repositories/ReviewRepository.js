@@ -30,7 +30,15 @@ class ReviewRepository {
   }
 
   async findById(isId) {
-    const [rows] = await pool.query('SELECT * FROM bomiora_shop_item_use WHERE is_id = ?', [isId]);
+    const [rows] = await pool.query(
+      `SELECT r.*,
+              COALESCE(n.it_name, n.it_subject) AS it_name,
+              n.it_kind AS it_kind
+       FROM bomiora_shop_item_use r
+       LEFT JOIN bomiora_shop_item_new n ON n.it_id = r.it_id
+       WHERE r.is_id = ?`,
+      [isId]
+    );
     return rows.length ? rows[0] : null;
   }
 
@@ -53,27 +61,37 @@ class ReviewRepository {
   }
 
   async getProductForReview(itId) {
-    const [rows] = await pool.query('SELECT it_id, it_org_id FROM bomiora_shop_item WHERE it_id = ? LIMIT 1', [itId]);
+    const [rows] = await pool.query(
+      `SELECT it_id, it_org_id FROM bomiora_shop_item_new WHERE it_id = ? LIMIT 1`,
+      [itId]
+    );
     return rows.length ? rows[0] : null;
   }
 
   async findByProduct(itId, rvkind, page, size) {
-    const where = ['it_id = ?', 'is_confirm = 1'];
+    const where = ['r.it_id = ?', 'r.is_confirm = 1'];
     const params = [itId];
     if (rvkind) {
-      where.push('is_rvkind = ?');
+      where.push('r.is_rvkind = ?');
       params.push(rvkind);
     }
 
     const [countRows] = await pool.query(
-      `SELECT COUNT(*) AS count FROM bomiora_shop_item_use WHERE ${where.join(' AND ')}`,
+      `SELECT COUNT(*) AS count FROM bomiora_shop_item_use r WHERE ${where.join(' AND ')}`,
       params
     );
     const total = countRows[0].count;
 
     const offset = page * size;
     const [rows] = await pool.query(
-      `SELECT * FROM bomiora_shop_item_use WHERE ${where.join(' AND ')} ORDER BY is_id DESC LIMIT ? OFFSET ?`,
+      `SELECT r.*,
+              COALESCE(n.it_name, n.it_subject) AS it_name,
+              n.it_kind AS it_kind
+       FROM bomiora_shop_item_use r
+       LEFT JOIN bomiora_shop_item_new n ON n.it_id = r.it_id
+       WHERE ${where.join(' AND ')}
+       ORDER BY r.is_id DESC
+       LIMIT ? OFFSET ?`,
       [...params, size, offset]
     );
     return { rows, total };
@@ -81,34 +99,48 @@ class ReviewRepository {
 
   async findByMember(mbId, page, size) {
     const [countRows] = await pool.query(
-      'SELECT COUNT(*) AS count FROM bomiora_shop_item_use WHERE mb_id = ? AND is_confirm = 1',
+      'SELECT COUNT(*) AS count FROM bomiora_shop_item_use WHERE mb_id = ?',
       [mbId]
     );
     const total = countRows[0].count;
     const offset = page * size;
     const [rows] = await pool.query(
-      'SELECT * FROM bomiora_shop_item_use WHERE mb_id = ? AND is_confirm = 1 ORDER BY is_id DESC LIMIT ? OFFSET ?',
+      `SELECT r.*,
+              COALESCE(n.it_name, n.it_subject) AS it_name,
+              n.it_kind AS it_kind
+       FROM bomiora_shop_item_use r
+       LEFT JOIN bomiora_shop_item_new n ON n.it_id = r.it_id
+       WHERE r.mb_id = ?
+       ORDER BY r.is_id DESC
+       LIMIT ? OFFSET ?`,
       [mbId, size, offset]
     );
     return { rows, total };
   }
 
   async findAll(rvkind, page, size) {
-    const where = ['is_confirm = 1'];
+    const where = ['r.is_confirm = 1'];
     const params = [];
     if (rvkind) {
-      where.push('is_rvkind = ?');
+      where.push('r.is_rvkind = ?');
       params.push(rvkind);
     }
 
     const [countRows] = await pool.query(
-      `SELECT COUNT(*) AS count FROM bomiora_shop_item_use WHERE ${where.join(' AND ')}`,
+      `SELECT COUNT(*) AS count FROM bomiora_shop_item_use r WHERE ${where.join(' AND ')}`,
       params
     );
     const total = countRows[0].count;
     const offset = page * size;
     const [rows] = await pool.query(
-      `SELECT * FROM bomiora_shop_item_use WHERE ${where.join(' AND ')} ORDER BY is_id DESC LIMIT ? OFFSET ?`,
+      `SELECT r.*,
+              COALESCE(n.it_name, n.it_subject) AS it_name,
+              n.it_kind AS it_kind
+       FROM bomiora_shop_item_use r
+       LEFT JOIN bomiora_shop_item_new n ON n.it_id = r.it_id
+       WHERE ${where.join(' AND ')}
+       ORDER BY r.is_id DESC
+       LIMIT ? OFFSET ?`,
       [...params, size, offset]
     );
     return { rows, total };

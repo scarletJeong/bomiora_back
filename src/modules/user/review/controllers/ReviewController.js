@@ -16,6 +16,7 @@ class ReviewController {
       isId: row.is_id,
       itId: row.it_id,
       itName: row.it_name,
+      itKind: row.it_kind,
       mbId: row.mb_id,
       isName: row.is_name,
       isTime: row.is_time,
@@ -62,6 +63,7 @@ class ReviewController {
       }
 
       const images = Array.isArray(req.body.images) ? req.body.images : [];
+      const imageOrEmpty = (index) => images[index] || '';
       const saved = await reviewRepository.create({
         mb_id: req.body.mbId,
         od_id: req.body.odId ?? null,
@@ -78,16 +80,16 @@ class ReviewController {
         is_positive_review_text: req.body.isPositiveReviewText || null,
         is_negative_review_text: req.body.isNegativeReviewText || null,
         is_more_review_text: req.body.isMoreReviewText || null,
-        is_img1: images[0] || null,
-        is_img2: images[1] || null,
-        is_img3: images[2] || null,
-        is_img4: images[3] || null,
-        is_img5: images[4] || null,
-        is_img6: images[5] || null,
-        is_img7: images[6] || null,
-        is_img8: images[7] || null,
-        is_img9: images[8] || null,
-        is_img10: images[9] || null,
+        is_img1: imageOrEmpty(0),
+        is_img2: imageOrEmpty(1),
+        is_img3: imageOrEmpty(2),
+        is_img4: imageOrEmpty(3),
+        is_img5: imageOrEmpty(4),
+        is_img6: imageOrEmpty(5),
+        is_img7: imageOrEmpty(6),
+        is_img8: imageOrEmpty(7),
+        is_img9: imageOrEmpty(8),
+        is_img10: imageOrEmpty(9),
         is_birthday: req.body.isBirthday || null,
         is_weight: req.body.isWeight || null,
         is_height: req.body.isHeight || null,
@@ -190,16 +192,16 @@ class ReviewController {
       if (req.body.isMoreReviewText != null) fields.is_more_review_text = req.body.isMoreReviewText;
       if (req.body.isRecommend != null) fields.is_recommend = req.body.isRecommend;
       if (images) {
-        fields.is_img1 = images[0] || null;
-        fields.is_img2 = images[1] || null;
-        fields.is_img3 = images[2] || null;
-        fields.is_img4 = images[3] || null;
-        fields.is_img5 = images[4] || null;
-        fields.is_img6 = images[5] || null;
-        fields.is_img7 = images[6] || null;
-        fields.is_img8 = images[7] || null;
-        fields.is_img9 = images[8] || null;
-        fields.is_img10 = images[9] || null;
+        fields.is_img1 = images[0] || '';
+        fields.is_img2 = images[1] || '';
+        fields.is_img3 = images[2] || '';
+        fields.is_img4 = images[3] || '';
+        fields.is_img5 = images[4] || '';
+        fields.is_img6 = images[5] || '';
+        fields.is_img7 = images[6] || '';
+        fields.is_img8 = images[7] || '';
+        fields.is_img9 = images[8] || '';
+        fields.is_img10 = images[9] || '';
       }
 
       const updated = await reviewRepository.updateById(isId, fields);
