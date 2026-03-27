@@ -129,6 +129,30 @@ class ContactController {
     }
   }
 
+  async deleteContact(req, res) {
+    try {
+      const wrId = Number(req.params.wrId);
+      const mbId = req.query.mb_id || req.query.mbId;
+      if (!mbId || !String(mbId).trim()) {
+        return res.status(400).json({ success: false, message: '회원 정보가 필요합니다.' });
+      }
+      const row = await contactRepository.findById(wrId);
+      if (!row) {
+        return res.status(404).json({ success: false, message: '문의를 찾을 수 없습니다.' });
+      }
+      if (String(row.mb_id).trim() !== String(mbId).trim()) {
+        return res.status(403).json({ success: false, message: '삭제할 권한이 없습니다.' });
+      }
+      const ok = await contactRepository.deleteByIdAndMbId(wrId, mbId);
+      if (!ok) {
+        return res.status(400).json({ success: false, message: '문의 삭제에 실패했습니다.' });
+      }
+      return res.json({ success: true, message: '문의가 삭제되었습니다.' });
+    } catch (error) {
+      return res.status(500).json({ success: false, message: `문의 삭제 실패: ${error.message}` });
+    }
+  }
+
   async getContactReplies(req, res) {
     try {
       const wrId = Number(req.params.wrId);

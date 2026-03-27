@@ -174,12 +174,21 @@ class ReviewController {
     }
   }
 
+  /** DB/API에서 mb_id·mbId 타입이 숫자·문자열로 섞여 strict 비교 시 권한 오류가 나지 않도록 통일 */
+  _isSameMember(dbRowMbId, bodyMbId) {
+    if (bodyMbId === undefined || bodyMbId === null || String(bodyMbId).trim() === '') return false;
+    if (dbRowMbId === undefined || dbRowMbId === null) return false;
+    return String(dbRowMbId).trim() === String(bodyMbId).trim();
+  }
+
   async updateReview(req, res) {
     try {
       const isId = Number(req.params.isId);
       const row = await reviewRepository.findById(isId);
       if (!row) return res.json({ success: false, message: '리뷰를 찾을 수 없습니다.' });
-      if (row.mb_id !== req.body.mbId) return res.json({ success: false, message: '리뷰를 수정할 권한이 없습니다.' });
+      if (!this._isSameMember(row.mb_id, req.body.mbId)) {
+        return res.json({ success: false, message: '리뷰를 수정할 권한이 없습니다.' });
+      }
 
       const images = Array.isArray(req.body.images) ? req.body.images : null;
       const fields = {};
@@ -216,7 +225,9 @@ class ReviewController {
       const isId = Number(req.params.isId);
       const row = await reviewRepository.findById(isId);
       if (!row) return res.json({ success: false, message: '리뷰를 찾을 수 없습니다.' });
-      if (row.mb_id !== req.query.mbId) return res.json({ success: false, message: '리뷰를 삭제할 권한이 없습니다.' });
+      if (!this._isSameMember(row.mb_id, req.query.mbId)) {
+        return res.json({ success: false, message: '리뷰를 삭제할 권한이 없습니다.' });
+      }
       await reviewRepository.deleteById(isId);
       return res.json({ success: true, message: '리뷰가 성공적으로 삭제되었습니다.' });
     } catch (error) {

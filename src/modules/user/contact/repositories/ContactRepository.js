@@ -64,6 +64,14 @@ class ContactRepository {
     await pool.query(`UPDATE bomiora_write_online SET ${pairs.join(', ')} WHERE wr_id = ?`, values);
     return this.findById(wrId);
   }
+
+  async deleteByIdAndMbId(wrId, mbId) {
+    const [result] = await pool.query(
+      'DELETE FROM bomiora_write_online WHERE wr_id = ? AND mb_id = ?',
+      [wrId, mbId]
+    );
+    return result.affectedRows > 0;
+  }
 }
 
 module.exports = new ContactRepository();

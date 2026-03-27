@@ -7,5 +7,6 @@ router.get('/:wrId/replies', (req, res) => contactController.getContactReplies(r
 router.get('/:wrId', (req, res) => contactController.getContactDetail(req, res));
 router.post('/create', (req, res) => contactController.createContact(req, res));
 router.put('/:wrId', (req, res) => contactController.updateContact(req, res));
+router.delete('/:wrId', (req, res) => contactController.deleteContact(req, res));
 
 module.exports = router;
