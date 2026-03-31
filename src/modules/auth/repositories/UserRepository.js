@@ -48,6 +48,27 @@ class UserRepository {
   }
 
   /**
+   * 이름 + 휴대폰 번호로 사용자 목록 조회
+   */
+  async findByNameAndPhone(name, phone) {
+    try {
+      const normalizedPhone = String(phone || '').replace(/[^0-9]/g, '');
+      const [rows] = await pool.query(
+        `SELECT * 
+         FROM bomiora_member 
+         WHERE mb_name = ?
+           AND REPLACE(REPLACE(REPLACE(IFNULL(mb_hp, ''), '-', ''), ' ', ''), '.', '') = ?
+         ORDER BY mb_no DESC`,
+        [name, normalizedPhone]
+      );
+      return rows.map(row => new User(row));
+    } catch (error) {
+      console.error('❌ [UserRepository] findByNameAndPhone 오류:', error);
+      throw error;
+    }
+  }
+
+  /**
    * 이메일 존재 여부 확인
    */
   async existsByEmail(email) {

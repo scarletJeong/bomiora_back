@@ -15,5 +15,6 @@ router.post('/login', (req, res) => userController.login(req, res));
  * @access  Public
  */
 router.post('/register', (req, res) => userController.register(req, res));
+router.post('/find-id', (req, res) => userController.findId(req, res));
 
 module.exports = router;

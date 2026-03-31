@@ -180,6 +180,45 @@ class UserController {
   }
 
   /**
+   * 아이디 찾기
+   */
+  async findId(req, res) {
+    try {
+      const { name, phone } = req.body;
+
+      if (!name || !phone) {
+        return res.status(400).json({
+          success: false,
+          message: '이름과 휴대폰 번호를 입력해 주세요.',
+        });
+      }
+
+      const users = await userRepository.findByNameAndPhone(name, phone);
+      if (!users.length) {
+        return res.json({
+          success: false,
+          message: '일치하는 회원 정보를 찾을 수 없습니다.',
+        });
+      }
+
+      return res.json({
+        success: true,
+        accounts: users.map((user) => ({
+          email: user.email,
+          name: user.name,
+        })),
+        message: '등록된 아이디를 찾았습니다.',
+      });
+    } catch (error) {
+      console.error('❌ [FIND ID] 오류:', error);
+      return res.status(500).json({
+        success: false,
+        message: '아이디 찾기 중 오류가 발생했습니다.',
+      });
+    }
+  }
+
+  /**
    * 프로필 수정
    */
   async updateProfile(req, res) {
