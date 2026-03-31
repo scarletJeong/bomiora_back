@@ -4,8 +4,8 @@ class FoodRecordRepository {
   async create(data) {
     const [result] = await pool.query(
       `INSERT INTO bm_food_records
-       (mb_id, record_date, food_time, eaten_at, photo, description, calories, protein, carbs, fat)
-       VALUES (?, ?, ?, COALESCE(?, TIME(NOW())), ?, ?, ?, ?, ?, ?)`,
+       (mb_id, record_date, food_time, eaten_at, photo, description, calories, protein, carbs, fat, other)
+       VALUES (?, ?, ?, COALESCE(?, TIME(NOW())), ?, ?, ?, ?, ?, ?, ?)`,
       [
         data.mbId,
         data.recordDate,
@@ -16,7 +16,8 @@ class FoodRecordRepository {
         data.calories ?? null,
         data.protein ?? null,
         data.carbs ?? null,
-        data.fat ?? null
+        data.fat ?? null,
+        data.other ?? null
       ]
     );
     return result.insertId;
@@ -50,6 +51,7 @@ class FoodRecordRepository {
            protein = COALESCE(?, protein),
            carbs = COALESCE(?, carbs),
            fat = COALESCE(?, fat),
+           other = COALESCE(?, other),
            updated_at = NOW()
        WHERE id = ?`,
       [
@@ -60,6 +62,7 @@ class FoodRecordRepository {
         data.protein ?? null,
         data.carbs ?? null,
         data.fat ?? null,
+        data.other ?? null,
         id
       ]
     );
@@ -77,8 +80,8 @@ class FoodRecordRepository {
   async addFoodItem(data) {
     const [result] = await pool.query(
       `INSERT INTO bm_food_records_items
-       (food_record_id, food_code, food_name, serving_quantity, kcal, carbohydrate, protein, fat)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+       (food_record_id, food_code, food_name, serving_quantity, kcal, carbohydrate, protein, fat, other)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         data.foodRecordId,
         data.foodCode,
@@ -87,7 +90,8 @@ class FoodRecordRepository {
         data.kcal ?? null,
         data.carbohydrate ?? null,
         data.protein ?? null,
-        data.fat ?? null
+        data.fat ?? null,
+        data.other ?? null
       ]
     );
     await this.updateRecordTotalsFromItems(data.foodRecordId);
@@ -102,6 +106,7 @@ class FoodRecordRepository {
         r.protein  = (SELECT COALESCE(SUM(i.protein), 0) FROM bm_food_records_items i WHERE i.food_record_id = r.id),
         r.carbs    = (SELECT COALESCE(SUM(i.carbohydrate), 0) FROM bm_food_records_items i WHERE i.food_record_id = r.id),
         r.fat      = (SELECT COALESCE(SUM(i.fat), 0) FROM bm_food_records_items i WHERE i.food_record_id = r.id),
+        r.other    = (SELECT COALESCE(SUM(i.other), 0) FROM bm_food_records_items i WHERE i.food_record_id = r.id),
         r.updated_at = NOW()
        WHERE r.id = ?`,
       [foodRecordId]

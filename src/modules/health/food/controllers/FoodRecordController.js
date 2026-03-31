@@ -28,7 +28,8 @@ class FoodRecordController {
         calories: req.body.calories,
         protein: req.body.protein,
         carbs: req.body.carbs,
-        fat: req.body.fat
+        fat: req.body.fat,
+        other: req.body.other
       });
       const record = await foodRecordRepository.findById(id);
       return res.status(201).json({
@@ -70,6 +71,7 @@ class FoodRecordController {
             carbohydrate: row.carbohydrate != null ? Number(row.carbohydrate) : null,
             protein: row.protein != null ? Number(row.protein) : null,
             fat: row.fat != null ? Number(row.fat) : null,
+            other: row.other != null ? Number(row.other) : null,
             created_at: row.created_at
           }));
           return {
@@ -84,6 +86,7 @@ class FoodRecordController {
             protein: r.protein != null ? Number(r.protein) : null,
             carbs: r.carbs != null ? Number(r.carbs) : null,
             fat: r.fat != null ? Number(r.fat) : null,
+            other: r.other != null ? Number(r.other) : null,
             created_at: r.created_at,
             updated_at: r.updated_at,
             items
@@ -122,10 +125,13 @@ class FoodRecordController {
         foodCode,
         foodName: food ? food.foodName : req.body.food_name,
         servingQuantity: serving,
-        kcal: food ? (food.kcal != null ? food.kcal * serving : null) : req.body.kcal,
-        carbohydrate: food ? (food.carbohydrate != null ? food.carbohydrate * serving : null) : req.body.carbohydrate,
+        kcal: food ? (food.energy != null ? food.energy * serving : null) : req.body.energy,
+        carbohydrate: food
+          ? (food.carbohydrates != null ? food.carbohydrates * serving : null)
+          : req.body.carbohydrates,
         protein: food ? (food.protein != null ? food.protein * serving : null) : req.body.protein,
-        fat: food ? (food.fat != null ? food.fat * serving : null) : req.body.fat
+        fat: food ? (food.fat != null ? food.fat * serving : null) : req.body.fat,
+        other: food ? (food.otherGrams != null ? food.otherGrams * serving : null) : req.body.other
       });
       const items = await foodRecordRepository.findFoodItemsByFoodRecordId(foodRecordId);
       return res.status(201).json({
