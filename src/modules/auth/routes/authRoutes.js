@@ -18,6 +18,7 @@ router.post('/check-email', (req, res) => userController.checkEmail(req, res));
  */
 router.post('/register', (req, res) => userController.register(req, res));
 router.post('/find-id', (req, res) => userController.findId(req, res));
+router.post('/withdraw', (req, res) => userController.withdraw(req, res));
 router.use('/kcp', kcpRoutes);
 
 module.exports = router;

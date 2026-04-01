@@ -317,6 +317,108 @@ class UserRepository {
       throw error;
     }
   }
+
+  /**
+   * 회원 본인 탈퇴(Soft Delete)
+   * - bomiora_member: leave_date/memo/본인인증 관련 필드 갱신
+   * - bomiora_member_social_profiles: 정책값에 따라 익명화 또는 즉시 삭제
+   */
+  async softDeleteMember({ mbId, reason = '', socialDeleteDay = 0 }) {
+    let conn;
+    try {
+      conn = await pool.getConnection();
+      await conn.beginTransaction();
+
+      const [rows] = await conn.query(
+        `SELECT mb_id, mb_leave_date, mb_memo
+         FROM bomiora_member
+         WHERE mb_id = ?
+         LIMIT 1
+         FOR UPDATE`,
+        [mbId]
+      );
+
+      if (!rows.length) {
+        await conn.rollback();
+        return { success: false, code: 'NOT_FOUND' };
+      }
+
+      const member = rows[0];
+      const todayYmd = getYmdString();
+      const alreadyLeft = String(member.mb_leave_date || '').trim();
+      if (alreadyLeft && alreadyLeft <= todayYmd) {
+        await conn.rollback();
+        return { success: true, alreadyLeft: true };
+      }
+
+      const safeReason = String(reason || '').trim().replace(/\s+/g, ' ').slice(0, 200);
+      const leaveLine = safeReason
+        ? `${todayYmd} 탈퇴함_${safeReason}`
+        : `${todayYmd} 탈퇴함`;
+      const oldMemo = String(member.mb_memo || '').trim();
+      const nextMemo = oldMemo ? `${leaveLine}\n${oldMemo}` : leaveLine;
+
+      await conn.query(
+        `UPDATE bomiora_member
+         SET mb_leave_date = ?,
+             mb_memo = ?,
+             mb_email = '',
+             mb_sex = '',
+             mb_birth = '',
+             mb_hp = '',
+             mb_point = 0,
+             mb_certify = '',
+             mb_adult = 0,
+             mb_dupinfo = ''
+         WHERE mb_id = ?`,
+        [todayYmd, nextMemo, mbId]
+      );
+
+      const nowDateTime = getKstDateTimeString();
+
+      if (Number(socialDeleteDay) > 0) {
+        await conn.query(
+          `UPDATE bomiora_member_social_profiles
+           SET mb_id = '',
+               object_sha = '',
+               profileurl = '',
+               photourl = '',
+               displayname = '',
+               mp_latest_day = ?
+           WHERE mb_id = ?`,
+          [nowDateTime, mbId]
+        );
+
+        const cutoffDateTime = getKstDateTimeBeforeDays(Number(socialDeleteDay));
+        await conn.query(
+          `DELETE FROM bomiora_member_social_profiles
+           WHERE mb_id = ''
+             AND mp_latest_day < ?`,
+          [cutoffDateTime]
+        );
+      } else {
+        await conn.query(
+          'DELETE FROM bomiora_member_social_profiles WHERE mb_id = ?',
+          [mbId]
+        );
+      }
+
+      await conn.commit();
+      return { success: true, alreadyLeft: false };
+    } catch (error) {
+      if (conn) {
+        try {
+          await conn.rollback();
+        } catch (_) {}
+      }
+      console.error('❌ [UserRepository] softDeleteMember 오류:', error);
+      throw error;
+    } finally {
+      if (conn) {
+        conn.release();
+      }
+    }
+  }
 }
 
 module.exports = new UserRepository();
@@ -349,4 +451,24 @@ function normalizeSex(value) {
     return 'F';
   }
   return '';
+}
+
+function getYmdString() {
+  const now = new Date(Date.now() + (9 * 60 * 60 * 1000));
+  const year = now.getUTCFullYear();
+  const month = String(now.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(now.getUTCDate()).padStart(2, '0');
+  return `${year}${month}${day}`;
+}
+
+function getKstDateTimeBeforeDays(days) {
+  const ms = Date.now() + (9 * 60 * 60 * 1000) - (days * 24 * 60 * 60 * 1000);
+  const dt = new Date(ms);
+  const year = dt.getUTCFullYear();
+  const month = String(dt.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(dt.getUTCDate()).padStart(2, '0');
+  const hour = String(dt.getUTCHours()).padStart(2, '0');
+  const minute = String(dt.getUTCMinutes()).padStart(2, '0');
+  const second = String(dt.getUTCSeconds()).padStart(2, '0');
+  return `${year}-${month}-${day} ${hour}:${minute}:${second}`;
 }

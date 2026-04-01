@@ -369,6 +369,61 @@ class UserController {
   }
 
   /**
+   * 회원 본인 탈퇴(Soft Delete)
+   */
+  async withdraw(req, res) {
+    try {
+      const mbId = String(req.body?.mbId || req.body?.mb_id || '').trim();
+      const reason = String(req.body?.reason || '').trim();
+
+      if (!mbId) {
+        return res.status(400).json({
+          success: false,
+          message: 'mbId가 필요합니다.',
+        });
+      }
+
+      const socialDeleteDay = Number(process.env.G5_SOCIAL_DELETE_DAY || 0);
+      const result = await userRepository.softDeleteMember({
+        mbId,
+        reason,
+        socialDeleteDay: Number.isNaN(socialDeleteDay) ? 0 : socialDeleteDay,
+      });
+
+      if (result.success !== true) {
+        if (result.code === 'NOT_FOUND') {
+          return res.status(404).json({
+            success: false,
+            message: '사용자를 찾을 수 없습니다.',
+          });
+        }
+        return res.status(500).json({
+          success: false,
+          message: '회원 탈퇴 처리에 실패했습니다.',
+        });
+      }
+
+      if (result.alreadyLeft) {
+        return res.json({
+          success: true,
+          message: '이미 탈퇴 처리된 회원입니다.',
+        });
+      }
+
+      return res.json({
+        success: true,
+        message: '회원 탈퇴가 처리되었습니다.',
+      });
+    } catch (error) {
+      console.error('❌ [WITHDRAW] 오류:', error);
+      return res.status(500).json({
+        success: false,
+        message: '회원 탈퇴 처리 중 오류가 발생했습니다.',
+      });
+    }
+  }
+
+  /**
    * 비밀번호 확인(재인증)
    * - Flutter에서 SHA1 해시된 비밀번호 문자열을 전달받아 로그인과 동일한 방식으로 검증
    */
