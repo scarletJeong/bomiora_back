@@ -1,9 +1,35 @@
 const userRepository = require('../repositories/UserRepository');
-const { verifyPBKDF2Password, mysqlPassword } = require('../../../utils/passwordUtil');
+const { verifyPBKDF2Password, mysqlPassword, createPBKDF2Password } = require('../../../utils/passwordUtil');
 const fs = require('fs');
 const path = require('path');
 
 class UserController {
+  async checkEmail(req, res) {
+    try {
+      const email = normalizeEmail(req.body?.email);
+
+      if (!email) {
+        return res.status(400).json({
+          success: false,
+          message: '이메일을 입력해 주세요.',
+        });
+      }
+
+      const exists = await userRepository.existsByEmail(email);
+      return res.json({
+        success: true,
+        exists,
+        message: exists ? '이미 존재하는 이메일입니다.' : '사용 가능한 이메일입니다.',
+      });
+    } catch (error) {
+      console.error('❌ [CHECK EMAIL] 이메일 중복 확인 오류:', error);
+      return res.status(500).json({
+        success: false,
+        message: '이메일 중복 확인 중 오류가 발생했습니다.',
+      });
+    }
+  }
+
   /**
    * 서버 상태 확인
    */
@@ -99,7 +125,7 @@ class UserController {
 
       if (passwordMatch) {
         // 로그인 성공 - 마지막 로그인 시간 업데이트
-        user.lastLoginAt = new Date();
+        user.lastLoginAt = getKstDateTimeString();
         const updatedUser = await userRepository.update(user);
 
         const response = {
@@ -133,12 +159,50 @@ class UserController {
    */
   async register(req, res) {
     try {
-      const { email, password, name, phone } = req.body;
+      const {
+        email,
+        password,
+        name,
+        phone,
+        birthday,
+        gender,
+        certInfo,
+        agreements,
+      } = req.body;
+
+      const normalizedEmail = normalizeEmail(email);
+      const resolvedName = String(name || certInfo?.name || '').trim();
+      const resolvedPhone = normalizePhone(phone || certInfo?.phone || '');
+      const resolvedBirthday = String(birthday || certInfo?.birthday || '').trim() || null;
+      const resolvedGender = String(gender || certInfo?.gender || '').trim() || null;
       
-      console.log('[REGISTER] 회원가입 시도:', email);
+      console.log('[REGISTER] 회원가입 시도:', normalizedEmail);
+      console.log('[REGISTER] 본인인증 완료 여부:', certInfo ? true : false);
+      console.log('[REGISTER] 약관 동의 데이터:', agreements || null);
+
+      if (!normalizedEmail || !password || !resolvedName) {
+        return res.status(400).json({
+          success: false,
+          message: '이메일, 비밀번호, 이름은 필수입니다.',
+        });
+      }
+
+      if (!agreements || agreements.terms !== true || agreements.privacy !== true) {
+        return res.status(400).json({
+          success: false,
+          message: '필수 약관 동의가 필요합니다.',
+        });
+      }
+
+      if (!certInfo || certInfo.cert_completed !== true) {
+        return res.status(400).json({
+          success: false,
+          message: '본인인증 완료 정보가 필요합니다.',
+        });
+      }
 
       // 1. 이메일 중복 확인
-      const exists = await userRepository.existsByEmail(email);
+      const exists = await userRepository.existsByEmail(normalizedEmail);
       if (exists) {
         console.log('❌ [REGISTER] 이미 존재하는 이메일');
         return res.json({
@@ -147,17 +211,22 @@ class UserController {
         });
       }
 
-      // 2. Flutter에서 받은 SHA1 해시를 MySQL PASSWORD() 방식으로 해싱
-      console.log('[REGISTER] Flutter에서 받은 SHA1:', password);
-      const mysqlHash = mysqlPassword(password);
-      console.log('[REGISTER] MySQL PASSWORD() 해시:', mysqlHash);
+      // 2. PHP 회원가입 포맷과 동일하게 PBKDF2 저장 문자열 생성
+      const pbkdf2Hash = createPBKDF2Password(password);
+      console.log('[REGISTER] PBKDF2 저장 포맷 해시 생성 완료');
 
       // 3. 사용자 생성 및 저장
       const userData = {
-        email,
-        password: mysqlHash,
-        name,
-        mbHp: phone
+        email: normalizedEmail,
+        password: pbkdf2Hash,
+        name: resolvedName,
+        mbHp: resolvedPhone,
+        birthday: resolvedBirthday,
+        gender: resolvedGender,
+        certInfo,
+        agreements,
+        clientIp: getClientIp(req),
+        mbIdPrefix: 'direct',
       };
 
       const savedUser = await userRepository.create(userData);
@@ -167,11 +236,39 @@ class UserController {
       return res.json({
         success: true,
         user: savedUser.toResponse(),
+        token: 'token_' + Date.now(),
+        autoLogin: true,
+        certInfo: certInfo || null,
+        agreements: agreements || null,
         message: '회원가입이 완료되었습니다.'
       });
 
     } catch (error) {
       console.error('❌ [REGISTER] 회원가입 오류:', error);
+      console.error('❌ [REGISTER] 상세:', {
+        code: error?.code,
+        errno: error?.errno,
+        sqlMessage: error?.sqlMessage,
+      });
+
+      if (error?.code === 'ER_DUP_ENTRY') {
+        const duplicateMessage = String(error?.sqlMessage || '');
+        const duplicateField = duplicateMessage.includes("for key 'mb_id'")
+          ? '회원 ID'
+          : duplicateMessage.includes("for key 'PRIMARY'")
+            ? '회원 번호'
+          : duplicateMessage.includes('mb_email')
+            ? '이메일'
+            : '중복 데이터';
+
+        return res.status(409).json({
+          success: false,
+          message: duplicateField === '이메일'
+            ? '이미 존재하는 이메일입니다.'
+            : `${duplicateField}가 중복되어 회원가입에 실패했습니다.`,
+        });
+      }
+
       return res.json({
         success: false,
         message: '회원가입 중 오류가 발생했습니다.'
@@ -395,6 +492,43 @@ class UserController {
       });
     }
   }
+}
+
+function normalizeEmail(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function normalizePhone(value) {
+  const digits = String(value || '').replace(/[^0-9]/g, '');
+
+  if (!digits) {
+    return '';
+  }
+
+  if (digits.length === 11) {
+    return `${digits.slice(0, 3)}-${digits.slice(3, 7)}-${digits.slice(7)}`;
+  }
+
+  return String(value || '').trim();
+}
+
+function getClientIp(req) {
+  const forwarded = req.headers['x-forwarded-for'];
+  const raw = Array.isArray(forwarded) ? forwarded[0] : String(forwarded || '');
+  const first = raw.split(',')[0].trim();
+  const ip = first || req.ip || req.connection?.remoteAddress || '';
+  return String(ip).replace('::ffff:', '').trim();
+}
+
+function getKstDateTimeString() {
+  const now = new Date(Date.now() + (9 * 60 * 60 * 1000));
+  const year = now.getUTCFullYear();
+  const month = String(now.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(now.getUTCDate()).padStart(2, '0');
+  const hour = String(now.getUTCHours()).padStart(2, '0');
+  const minute = String(now.getUTCMinutes()).padStart(2, '0');
+  const second = String(now.getUTCSeconds()).padStart(2, '0');
+  return `${year}-${month}-${day} ${hour}:${minute}:${second}`;
 }
 
 module.exports = new UserController();

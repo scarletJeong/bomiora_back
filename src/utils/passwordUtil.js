@@ -97,7 +97,28 @@ function mysqlPassword(password) {
   }
 }
 
+/**
+ * PHP get_encrypt_string 호환 저장 포맷 생성
+ * 형식: sha256:12000:salt_base64:hash_base64
+ */
+function createPBKDF2Password(password) {
+  const iterations = 12000;
+  const algorithm = 'sha256';
+  const keyLength = 24;
+  const salt = crypto.randomBytes(24).toString('base64');
+  const hash = crypto.pbkdf2Sync(
+    String(password ?? ''),
+    Buffer.from(salt, 'utf8'),
+    iterations,
+    keyLength,
+    algorithm
+  ).toString('base64');
+
+  return `${algorithm}:${iterations}:${salt}:${hash}`;
+}
+
 module.exports = {
   verifyPBKDF2Password,
-  mysqlPassword
+  mysqlPassword,
+  createPBKDF2Password
 };
