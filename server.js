@@ -44,6 +44,7 @@ app.use('/api/steps', require('./src/modules/health/steps/routes/stepsRoutes'));
 app.use('/api/health/food', require('./src/modules/health/food/routes/foodRoutes'));
 app.use('/api/contact', require('./src/modules/user/contact/routes/contactRoutes'));
 app.use('/api/user/address', require('./src/modules/user/address/routes/addressRoutes'));
+app.use('/api/user/addresses', require('./src/modules/user/address/routes/addressRoutes'));
 app.use('/api/user', require('./src/modules/user/point/routes/pointRoutes'));
 app.use('/api/user', require('./src/modules/user/coupon/routes/couponRoutes'));
 app.use('/api/healthprofile', require('./src/modules/user/healthprofile/routes/healthProfileRoutes'));
@@ -58,6 +59,7 @@ app.use('/api/cart', require('./src/modules/shopping/cart/routes/cartRoutes'));
 app.use('/api/proxy', require('./src/modules/common/imageProxy/routes/imageProxyRoutes'));
 app.use('/api/shop', require('./src/modules/common/shopdefault/routes/shopDefaultRoutes'));
 app.use('/api/config', require('./src/modules/config/routes/configRoutes'));
+app.use('/api/address', require('./src/modules/common/address/routes/addressSearchRoutes'));
 
 // 404 핸들러
 app.use((req, res) => {
