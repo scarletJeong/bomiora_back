@@ -81,6 +81,14 @@ class UserController {
         });
       }
 
+      if (isWithdrawnMember(user)) {
+        console.log('❌ [LOGIN] 탈퇴 회원 로그인 차단:', user.mbId || email);
+        return res.json({
+          success: false,
+          message: '탈퇴한 계정입니다.',
+        });
+      }
+
       const storedHash = Buffer.isBuffer(user.password)
         ? user.password.toString('utf8')
         : String(user.password || '');
@@ -446,6 +454,13 @@ class UserController {
         });
       }
 
+      if (isWithdrawnMember(user)) {
+        return res.json({
+          success: false,
+          message: '탈퇴한 계정입니다.',
+        });
+      }
+
       const storedHash = Buffer.isBuffer(user.password)
         ? user.password.toString('utf8')
         : String(user.password || '');
@@ -584,6 +599,26 @@ function getKstDateTimeString() {
   const minute = String(now.getUTCMinutes()).padStart(2, '0');
   const second = String(now.getUTCSeconds()).padStart(2, '0');
   return `${year}-${month}-${day} ${hour}:${minute}:${second}`;
+}
+
+function isWithdrawnMember(user) {
+  if (!user) {
+    return false;
+  }
+
+  const leaveDateRaw = String(user.leaveDate || '').trim();
+  if (!leaveDateRaw) {
+    return false;
+  }
+
+  const leaveDateDigits = leaveDateRaw.replace(/[^0-9]/g, '').slice(0, 8);
+  if (leaveDateDigits.length !== 8) {
+    // 형식이 애매해도 leave_date 값이 채워져 있으면 탈퇴 회원으로 본다.
+    return true;
+  }
+
+  const todayYmd = getKstDateTimeString().slice(0, 10).replace(/-/g, '');
+  return leaveDateDigits <= todayYmd;
 }
 
 module.exports = new UserController();
