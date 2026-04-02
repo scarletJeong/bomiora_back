@@ -323,6 +323,99 @@ class UserController {
     }
   }
 
+  async forgotPassword(req, res) {
+    try {
+      const email = normalizeEmail(req.body?.email);
+      const name = String(req.body?.name || '').trim();
+      const phone = String(req.body?.phone || '').trim();
+
+      if (!email || !name || !phone) {
+        return res.status(400).json({
+          success: false,
+          message: '이메일, 이름, 휴대폰 번호를 입력해 주세요.',
+        });
+      }
+
+      const user = await userRepository.findByEmailNameAndPhone(email, name, phone);
+      if (!user) {
+        return res.json({
+          success: false,
+          message: '일치하는 회원 정보를 찾을 수 없습니다.',
+        });
+      }
+
+      return res.json({
+        success: true,
+        message: '비밀번호 재설정이 가능합니다.',
+        account: {
+          email: user.email,
+          name: user.name,
+          mbId: user.mbId,
+        },
+      });
+    } catch (error) {
+      console.error('❌ [FORGOT PASSWORD] 오류:', error);
+      return res.status(500).json({
+        success: false,
+        message: '비밀번호 찾기 중 오류가 발생했습니다.',
+      });
+    }
+  }
+
+  async resetPassword(req, res) {
+    try {
+      const email = normalizeEmail(req.body?.email);
+      const name = String(req.body?.name || '').trim();
+      const phone = String(req.body?.phone || '').trim();
+      const password = String(req.body?.password || '');
+
+      if (!email || !name || !phone || !password) {
+        return res.status(400).json({
+          success: false,
+          message: '이메일, 이름, 휴대폰 번호, 새 비밀번호를 입력해 주세요.',
+        });
+      }
+
+      const passwordRule =
+        /^(?=.*[A-Za-z])(?=.*\d)(?=.*[!@#$%^&*(),.?":{}|<>_\-[\]\\/~`+=;]).{8,16}$/;
+      if (!passwordRule.test(password)) {
+        return res.status(400).json({
+          success: false,
+          message: '비밀번호는 8~16자의 영문, 숫자, 특수문자를 모두 포함해야 합니다.',
+        });
+      }
+
+      const user = await userRepository.findByEmailNameAndPhone(email, name, phone);
+      if (!user) {
+        return res.json({
+          success: false,
+          message: '일치하는 회원 정보를 찾을 수 없습니다.',
+        });
+      }
+
+      if (isWithdrawnMember(user)) {
+        return res.json({
+          success: false,
+          message: '탈퇴한 계정입니다.',
+        });
+      }
+
+      const nextPasswordHash = createPBKDF2Password(password);
+      await userRepository.updatePasswordByMbNo(user.id, nextPasswordHash);
+
+      return res.json({
+        success: true,
+        message: '비밀번호가 변경되었습니다.',
+      });
+    } catch (error) {
+      console.error('❌ [RESET PASSWORD] 오류:', error);
+      return res.status(500).json({
+        success: false,
+        message: '비밀번호 재설정 중 오류가 발생했습니다.',
+      });
+    }
+  }
+
   /**
    * 프로필 수정
    */

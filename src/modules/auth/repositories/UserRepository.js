@@ -81,6 +81,27 @@ class UserRepository {
     }
   }
 
+  async findByEmailNameAndPhone(email, name, phone) {
+    try {
+      const normalizedEmail = String(email || '').trim().toLowerCase();
+      const normalizedPhone = String(phone || '').replace(/[^0-9]/g, '');
+      const [rows] = await pool.query(
+        `SELECT *
+         FROM bomiora_member
+         WHERE LOWER(IFNULL(mb_email, '')) = ?
+           AND mb_name = ?
+           AND REPLACE(REPLACE(REPLACE(IFNULL(mb_hp, ''), '-', ''), ' ', ''), '.', '') = ?
+         ORDER BY mb_no DESC
+         LIMIT 1`,
+        [normalizedEmail, name, normalizedPhone]
+      );
+      return rows.length > 0 ? new User(rows[0]) : null;
+    } catch (error) {
+      console.error('❌ [UserRepository] findByEmailNameAndPhone 오류:', error);
+      throw error;
+    }
+  }
+
   /**
    * 이메일 존재 여부 확인
    */
@@ -314,6 +335,27 @@ class UserRepository {
       return rows.length > 0 ? new User(rows[0]) : null;
     } catch (error) {
       console.error('❌ [UserRepository] update 오류:', error);
+      throw error;
+    }
+  }
+
+  async updatePasswordByMbNo(mbNo, passwordHash) {
+    try {
+      await pool.query(
+        `UPDATE bomiora_member
+         SET mb_password = ?
+         WHERE mb_no = ?`,
+        [passwordHash, mbNo]
+      );
+
+      const [rows] = await pool.query(
+        'SELECT * FROM bomiora_member WHERE mb_no = ?',
+        [mbNo]
+      );
+
+      return rows.length > 0 ? new User(rows[0]) : null;
+    } catch (error) {
+      console.error('❌ [UserRepository] updatePasswordByMbNo 오류:', error);
       throw error;
     }
   }
