@@ -24,6 +24,10 @@ class HeartRate {
     this.sourceType = toString(data.source_type ?? data.sourceType);
     this.sourceRecordId = data.source_record_id ?? data.sourceRecordId ?? null;
     this.createdAt = data.created_at ?? data.createdAt ?? null;
+
+    const rawStatus = toString(data.status);
+    this.status =
+      rawStatus == null || rawStatus === '' ? '일상' : rawStatus;
   }
 
   toResponse() {
@@ -32,6 +36,7 @@ class HeartRate {
       mb_id: this.mbId,
       heart_rate: this.heartRate,
       measured_at: this.measuredAt,
+      status: this.status || '일상',
       source_type: this.sourceType,
       source_record_id: this.sourceRecordId,
       created_at: this.createdAt

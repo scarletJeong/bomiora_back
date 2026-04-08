@@ -4,13 +4,20 @@ const HeartRate = require('../models/HeartRate');
 class HeartRateRepository {
   async create(fields, connection = null) {
     const executor = connection || pool;
-    const { mbId, heartRate, measuredAt, sourceType = 'health_sync', sourceRecordId = null } = fields;
+    const {
+      mbId,
+      heartRate,
+      measuredAt,
+      sourceType = 'health_sync',
+      sourceRecordId = null,
+      status = '일상'
+    } = fields;
 
     await executor.query(
       `INSERT INTO bm_heart_rate
-      (mb_id, heart_rate, measured_at, source_type, source_record_id, created_at)
-      VALUES (?, ?, ?, ?, ?, NOW())`,
-      [mbId, heartRate, measuredAt, sourceType, sourceRecordId]
+      (mb_id, heart_rate, measured_at, source_type, source_record_id, status, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, NOW())`,
+      [mbId, heartRate, measuredAt, sourceType, sourceRecordId, status]
     );
   }
 
@@ -20,11 +27,12 @@ class HeartRateRepository {
 
     await executor.query(
       `INSERT INTO bm_heart_rate
-      (mb_id, heart_rate, measured_at, source_type, source_record_id, created_at)
-      VALUES (?, ?, ?, 'blood_pressure', ?, NOW())
+      (mb_id, heart_rate, measured_at, source_type, source_record_id, status, created_at)
+      VALUES (?, ?, ?, 'blood_pressure', ?, '일상', NOW())
       ON DUPLICATE KEY UPDATE
         heart_rate = VALUES(heart_rate),
-        measured_at = VALUES(measured_at)`,
+        measured_at = VALUES(measured_at),
+        status = VALUES(status)`,
       [mbId, heartRate, measuredAt, bloodPressureId]
     );
   }

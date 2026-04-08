@@ -11,7 +11,14 @@ class HeartRateController {
 
   async addRecord(req, res) {
     try {
-      const { mb_id, heart_rate, measured_at, source_type, source_record_id } = req.body;
+      const {
+        mb_id,
+        heart_rate,
+        measured_at,
+        source_type,
+        source_record_id,
+        status
+      } = req.body;
       if (!mb_id || heart_rate == null) {
         return res.status(400).json({
           success: false,
@@ -19,12 +26,18 @@ class HeartRateController {
         });
       }
 
+      const normalizedStatus =
+        typeof status === 'string' && status.trim() !== ''
+          ? status.trim()
+          : '일상';
+
       await heartRateRepository.create({
         mbId: mb_id,
         heartRate: Number(heart_rate),
         measuredAt: measured_at ? HeartRateController.parseDateTime(measured_at) : new Date(),
         sourceType: source_type || 'health_sync',
-        sourceRecordId: source_record_id ?? null
+        sourceRecordId: source_record_id ?? null,
+        status: normalizedStatus
       });
 
       const latest = await heartRateRepository.findFirstByMbIdOrderByMeasuredAtDesc(mb_id);
