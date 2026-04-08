@@ -155,71 +155,137 @@ class StepsController {
       }
 
       const userId = Number(mbIdRaw);
+      const numericUser = Number.isFinite(userId);
 
-      // 기존 steps_records 테이블이 user_id(INT) 기반이므로,
-      // mb_id가 비숫자인 경우에도 화면이 깨지지 않게 0 데이터 반환.
-      if (!Number.isFinite(userId)) {
-        return res.json({
-          success: true,
-          data: {
-            id: 0,
-            user_id: 0,
-            date,
-            total_steps: 0,
-            distance: 0,
-            calories: 0,
-            hourly_steps: [],
-            created_at: null,
-            updated_at: null,
-            steps_difference: 0
-          }
-        });
+      let bmAgg;
+      try {
+        bmAgg = await stepsRepository.aggregateBmStepsForCalendarDay(mbIdRaw, date);
+      } catch (e) {
+        bmAgg = { totalSteps: 0, halfHourSlots: Array(48).fill(0), intervalCount: 0 };
       }
 
-      const record = await stepsRepository.findByUserIdAndRecordDate(userId, date);
+      const useBm = bmAgg.intervalCount > 0;
 
       let stepsDifference = 0;
       const previousDate = new Date(`${date}T12:00:00`);
       previousDate.setDate(previousDate.getDate() - 1);
       const prevStr = previousDate.toISOString().split('T')[0];
-      const previous = await stepsRepository.findByUserIdAndRecordDate(userId, prevStr);
 
-      if (record && previous) {
-        stepsDifference = (record.totalSteps || 0) - (previous.totalSteps || 0);
-      } else if (record && !previous) {
-        stepsDifference = record.totalSteps || 0;
+      let data;
+
+      if (useBm) {
+        let prevTotal = 0;
+        try {
+          const prevAgg = await stepsRepository.aggregateBmStepsForCalendarDay(mbIdRaw, prevStr);
+          prevTotal = prevAgg.totalSteps || 0;
+        } catch (_) {
+          prevTotal = 0;
+        }
+        stepsDifference = (bmAgg.totalSteps || 0) - prevTotal;
+
+        const half_hour_steps = (bmAgg.halfHourSlots || []).map((steps, slot) => ({
+          slot,
+          steps: Number(steps) || 0
+        }));
+
+        const hourly_steps = [];
+        for (let h = 0; h < 24; h++) {
+          const a = bmAgg.halfHourSlots[h * 2] || 0;
+          const b = bmAgg.halfHourSlots[h * 2 + 1] || 0;
+          hourly_steps.push({
+            hour: h,
+            steps: Math.round(Number(a) + Number(b)),
+            distance: 0,
+            calories: 0
+          });
+        }
+
+        const approxKm = ((bmAgg.totalSteps || 0) * 0.0007);
+        const approxKcal = Math.round((bmAgg.totalSteps || 0) * 0.04);
+
+        data = {
+          id: 0,
+          user_id: numericUser ? userId : 0,
+          mb_id: mbIdRaw,
+          date,
+          total_steps: bmAgg.totalSteps || 0,
+          distance: Math.round(approxKm * 10) / 10,
+          calories: approxKcal,
+          hourly_steps,
+          half_hour_steps,
+          created_at: null,
+          updated_at: null,
+          steps_difference: stepsDifference,
+          source: 'bm_steps'
+        };
+      } else if (numericUser) {
+        const record = await stepsRepository.findByUserIdAndRecordDate(userId, date);
+        const previous = await stepsRepository.findByUserIdAndRecordDate(userId, prevStr);
+
+        if (record && previous) {
+          stepsDifference = (record.totalSteps || 0) - (previous.totalSteps || 0);
+        } else if (record && !previous) {
+          stepsDifference = record.totalSteps || 0;
+        }
+
+        const hourlyRaw = record && record.hourlySteps ? record.hourlySteps : [];
+        const hourly_steps = hourlyRaw.map((h) => ({
+          hour: h.hour != null ? Number(h.hour) : 0,
+          steps: h.steps != null ? Number(h.steps) : 0,
+          distance:
+            h.distanceKm != null
+              ? Number(h.distanceKm)
+              : h.distance != null
+                ? Number(h.distance)
+                : 0,
+          calories:
+            h.caloriesBurned != null
+              ? Number(h.caloriesBurned)
+              : h.calories != null
+                ? Number(h.calories)
+                : 0
+        }));
+
+        const legacySlots = Array(48).fill(0);
+        for (const h of hourly_steps) {
+          const hr = Number(h.hour);
+          if (hr >= 0 && hr < 24) {
+            legacySlots[hr * 2] += Math.round((h.steps || 0) / 2);
+            legacySlots[hr * 2 + 1] += Math.round((h.steps || 0) / 2);
+          }
+        }
+
+        data = {
+          id: record ? record.id : 0,
+          user_id: userId,
+          date,
+          total_steps: record ? (record.totalSteps || 0) : 0,
+          distance: record && record.distanceKm != null ? Number(record.distanceKm) : 0,
+          calories: record && record.caloriesBurned != null ? Number(record.caloriesBurned) : 0,
+          hourly_steps,
+          half_hour_steps: legacySlots.map((steps, slot) => ({ slot, steps })),
+          created_at: record ? record.createdAt : null,
+          updated_at: record ? record.updatedAt : null,
+          steps_difference: stepsDifference,
+          source: 'steps_records'
+        };
+      } else {
+        data = {
+          id: 0,
+          user_id: 0,
+          mb_id: mbIdRaw,
+          date,
+          total_steps: 0,
+          distance: 0,
+          calories: 0,
+          hourly_steps: [],
+          half_hour_steps: Array.from({ length: 48 }, (_, slot) => ({ slot, steps: 0 })),
+          created_at: null,
+          updated_at: null,
+          steps_difference: 0,
+          source: 'none'
+        };
       }
-
-      const hourlyRaw = record && record.hourlySteps ? record.hourlySteps : [];
-      const hourly_steps = hourlyRaw.map((h) => ({
-        hour: h.hour != null ? Number(h.hour) : 0,
-        steps: h.steps != null ? Number(h.steps) : 0,
-        distance:
-          h.distanceKm != null
-            ? Number(h.distanceKm)
-            : h.distance != null
-              ? Number(h.distance)
-              : 0,
-        calories:
-          h.caloriesBurned != null
-            ? Number(h.caloriesBurned)
-            : h.calories != null
-              ? Number(h.calories)
-              : 0
-      }));
-
-      const data = {
-        id: record ? record.id : 0,
-        user_id: userId,
-        date,
-        total_steps: record ? (record.totalSteps || 0) : 0,
-        distance: record && record.distanceKm != null ? Number(record.distanceKm) : 0,
-        calories: record && record.caloriesBurned != null ? Number(record.caloriesBurned) : 0,
-        hourly_steps,
-        created_at: record ? record.createdAt : null,
-        updated_at: record ? record.updatedAt : null,
-        steps_difference: stepsDifference
-      };
 
       return res.json({ success: true, data });
     } catch (error) {
@@ -227,6 +293,65 @@ class StepsController {
       return res.status(500).json({
         success: false,
         message: '걸음 수 조회 실패: ' + error.message
+      });
+    }
+  }
+
+  /** GET /api/steps/daily-range?mb_id=&start=YYYY-MM-DD&end=YYYY-MM-DD */
+  async getDailyRangeTotals(req, res) {
+    try {
+      const mbId = req.query.mb_id != null ? String(req.query.mb_id).trim() : '';
+      const start = req.query.start != null ? String(req.query.start).trim() : '';
+      const end = req.query.end != null ? String(req.query.end).trim() : '';
+      if (!mbId || !start || !end) {
+        return res.status(400).json({
+          success: false,
+          message: 'mb_id, start, end(YYYY-MM-DD)는 필수입니다.'
+        });
+      }
+      const map = await stepsRepository.aggregateBmStepsDailyTotalsBetween(mbId, start, end);
+      const days = [];
+      const cur = new Date(`${start}T12:00:00`);
+      const endD = new Date(`${end}T12:00:00`);
+      while (cur <= endD) {
+        const key = cur.toISOString().split('T')[0];
+        days.push({ date: key, total_steps: map.get(key) || 0 });
+        cur.setDate(cur.getDate() + 1);
+      }
+      return res.json({ success: true, data: { days } });
+    } catch (error) {
+      console.error('daily-range 조회 실패:', error);
+      return res.status(500).json({
+        success: false,
+        message: '기간별 걸음 조회 실패: ' + error.message
+      });
+    }
+  }
+
+  /** GET /api/steps/monthly-totals?mb_id=&year=2026 */
+  async getMonthlyTotalsForYear(req, res) {
+    try {
+      const mbId = req.query.mb_id != null ? String(req.query.mb_id).trim() : '';
+      const year = Number(req.query.year);
+      if (!mbId || !year) {
+        return res.status(400).json({
+          success: false,
+          message: 'mb_id, year는 필수입니다.'
+        });
+      }
+      const totals = await stepsRepository.aggregateBmStepsMonthlyTotalsForYear(mbId, year);
+      return res.json({
+        success: true,
+        data: {
+          year,
+          months: totals.map((total_steps, i) => ({ month: i + 1, total_steps }))
+        }
+      });
+    } catch (error) {
+      console.error('monthly-totals 조회 실패:', error);
+      return res.status(500).json({
+        success: false,
+        message: '월별 걸음 조회 실패: ' + error.message
       });
     }
   }

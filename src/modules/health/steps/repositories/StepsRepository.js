@@ -196,6 +196,132 @@ class StepsRepository {
     }
   }
 
+  /**
+   * bm_steps: mb_id + 일자 기준 30분 슬롯(48) 및 일 합계.
+   * 구간이 여러 슬롯/날에 걸치면 겹치는 시간 비율로 steps 분배.
+   */
+  async aggregateBmStepsForCalendarDay(mbId, dateStr) {
+    const slots = Array.from({ length: 48 }, () => 0);
+    const dayStart = new Date(`${dateStr}T00:00:00`);
+    const dayEnd = new Date(dayStart);
+    dayEnd.setDate(dayEnd.getDate() + 1);
+
+    let intervalCount = 0;
+    try {
+      const [rows] = await pool.query(
+        `SELECT steps, interval_start, interval_end
+         FROM bm_steps
+         WHERE mb_id = ?
+           AND interval_start < ?
+           AND interval_end > ?`,
+        [mbId, dayEnd, dayStart]
+      );
+
+      intervalCount = rows.length;
+
+      for (const row of rows) {
+        const rawStart = row.interval_start instanceof Date
+          ? row.interval_start
+          : new Date(row.interval_start);
+        const rawEnd = row.interval_end instanceof Date
+          ? row.interval_end
+          : new Date(row.interval_end);
+        const stepsVal = Number(row.steps) || 0;
+        if (stepsVal <= 0 || !(rawEnd > rawStart)) continue;
+
+        const segStart = rawStart > dayStart ? rawStart : dayStart;
+        const segEnd = rawEnd < dayEnd ? rawEnd : dayEnd;
+        if (!(segEnd > segStart)) continue;
+
+        const clippedMs = segEnd - segStart;
+        const fullMs = rawEnd - rawStart;
+        const stepsForDayPortion = fullMs > 0 ? (stepsVal * clippedMs) / fullMs : stepsVal;
+        if (!(clippedMs > 0)) continue;
+
+        for (let slotIdx = 0; slotIdx < 48; slotIdx++) {
+          const slotStart = new Date(dayStart);
+          slotStart.setMinutes(slotIdx * 30, 0, 0);
+          const slotEnd = new Date(slotStart);
+          slotEnd.setMinutes(slotStart.getMinutes() + 30, 0, 0);
+
+          const ovStart = segStart > slotStart ? segStart : slotStart;
+          const ovEnd = segEnd < slotEnd ? segEnd : slotEnd;
+          const ovMs = ovEnd - ovStart;
+          if (ovMs > 0) {
+            slots[slotIdx] += (stepsForDayPortion * ovMs) / clippedMs;
+          }
+        }
+      }
+    } catch (e) {
+      if (e && (e.code === 'ER_NO_SUCH_TABLE' || String(e.message || '').includes('bm_steps'))) {
+        return { totalSteps: 0, halfHourSlots: slots.map(() => 0), intervalCount: 0 };
+      }
+      throw e;
+    }
+
+    const roundedSlots = slots.map((v) => Math.round(v));
+    const roundedTotal = roundedSlots.reduce((a, b) => a + b, 0);
+    return {
+      totalSteps: roundedTotal,
+      halfHourSlots: roundedSlots,
+      intervalCount
+    };
+  }
+
+  async aggregateBmStepsDailyTotalsBetween(mbId, startDateStr, endDateStr) {
+    const map = new Map();
+    try {
+      const [rows] = await pool.query(
+        `SELECT DATE(interval_start) AS d, SUM(steps) AS total
+         FROM bm_steps
+         WHERE mb_id = ?
+           AND DATE(interval_start) BETWEEN ? AND ?
+         GROUP BY DATE(interval_start)
+         ORDER BY d ASC`,
+        [mbId, startDateStr, endDateStr]
+      );
+      for (const row of rows) {
+        const key =
+          row.d instanceof Date
+            ? row.d.toISOString().split('T')[0]
+            : String(row.d).split('T')[0];
+        map.set(key, Number(row.total) || 0);
+      }
+    } catch (e) {
+      if (e && (e.code === 'ER_NO_SUCH_TABLE' || String(e.message || '').includes('bm_steps'))) {
+        return map;
+      }
+      throw e;
+    }
+    return map;
+  }
+
+  async aggregateBmStepsMonthlyTotalsForYear(mbId, year) {
+    const arr = Array.from({ length: 12 }, () => 0);
+    try {
+      const [rows] = await pool.query(
+        `SELECT MONTH(interval_start) AS m, SUM(steps) AS total
+         FROM bm_steps
+         WHERE mb_id = ? AND YEAR(interval_start) = ?
+         GROUP BY MONTH(interval_start)
+         ORDER BY m ASC`,
+        [mbId, Number(year)]
+      );
+      for (const row of rows) {
+        const m = Number(row.m) || 0;
+        if (m >= 1 && m <= 12) {
+          arr[m - 1] = Number(row.total) || 0;
+        }
+      }
+    } catch (e) {
+      if (e && (e.code === 'ER_NO_SUCH_TABLE' || String(e.message || '').includes('bm_steps'))) {
+        return arr;
+      }
+      throw e;
+    }
+    return arr;
+  }
+
   async findTopByUserIdOrderByRecordDateDesc(userId) {
     const [rows] = await pool.query(
       'SELECT * FROM steps_records WHERE user_id = ? ORDER BY record_date DESC LIMIT 1',
