@@ -96,6 +96,7 @@ class ProductController {
         it_prescription: row.it_prescription,
         it_takeway: row.it_takeway,
         it_package: row.it_package,
+        it_weight: row.it_weight,
         it_point: row.it_point,
         it_point_type: row.it_point_type,
         it_option_subject: row.it_option_subject,
