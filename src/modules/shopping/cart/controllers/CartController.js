@@ -7,6 +7,12 @@ class CartController {
     return Number.isFinite(n) ? n : fallback;
   }
 
+  normalizeCartStatus(value) {
+    const normalized = this.bufferToString(value);
+    if (normalized == null) return '쇼핑';
+    return String(normalized).trim() === '임시' ? '임시' : '쇼핑';
+  }
+
   // Buffer를 문자열로 변환하는 헬퍼 함수
   bufferToString(value) {
     if (Buffer.isBuffer(value)) {
@@ -154,6 +160,7 @@ class CartController {
     try {
       const mbId = req.body.mb_id;
       const itId = req.body.it_id;
+      const ctStatus = this.normalizeCartStatus(req.body.ct_status);
       const quantity = this.toInt(req.body.quantity, 1);
       let price = this.toInt(req.body.price, 0);
       const optionId = req.body.option_id || '';
@@ -178,7 +185,12 @@ class CartController {
       console.log('  - 프론트엔드에서 전달된 ct_kind:', req.body.ct_kind);
 
       const ioIdForSearch = optionId || '';
-      const existing = await cartRepository.findSameItemOption(mbId, itId, ioIdForSearch, '쇼핑');
+      const existing = await cartRepository.findSameItemOption(
+        mbId,
+        itId,
+        ioIdForSearch,
+        ctStatus
+      );
       if (existing) {
         const newQty = this.toInt(existing.ct_qty, 0) + quantity;
         const updated = await cartRepository.updateCart(existing.ct_id, {
@@ -217,7 +229,7 @@ class CartController {
         it_sc_price: this.toInt(product.it_sc_price, 0),
         it_sc_minimum: this.toInt(product.it_sc_minimum, 0),
         it_sc_qty: this.toInt(product.it_sc_qty, 0),
-        ct_status: '쇼핑',
+        ct_status: ctStatus,
         ct_history: '',
         ct_price: price,
         ct_point: this.calculatePoint(product, optionId, optionPrice, quantity),
@@ -243,7 +255,7 @@ class CartController {
       };
       const cart = await cartRepository.insertCart(payload);
 
-      if (this.bufferToString(product.it_kind) === 'prescription') {
+      if (this.bufferToString(product.it_kind) === 'prescription' && ctStatus === '쇼핑') {
         const carts = await healthProfileCartRepository.findRecentByMbIdAndItIdAndStatus(mbId, itId, '쇼핑');
         if (carts.length) await healthProfileCartRepository.updateOdId(carts[0].hp_no, odId);
       }
@@ -262,7 +274,8 @@ class CartController {
         message: '장바구니에 추가되었습니다.', 
         data: cartData,
         it_kind: itKindStr,
-        ct_kind: ctKindStr
+        ct_kind: ctKindStr,
+        ct_status: ctStatus
       });
     } catch (error) {
       return res.status(500).json({ success: false, message: '장바구니 추가 중 오류가 발생했습니다.', error: error.message });
@@ -272,7 +285,7 @@ class CartController {
   async getCart(req, res) {
     try {
       const mbId = req.query.mb_id;
-      const ctStatus = req.query.ct_status || '쇼핑';
+      const ctStatus = this.normalizeCartStatus(req.query.ct_status);
       const carts = await cartRepository.findByMbIdAndStatus(mbId, ctStatus);
       const data = await Promise.all(carts.map((c) => this.convertCartToMap(c)));
       const shippingCost = this.calculateShippingCost(carts);
@@ -356,6 +369,7 @@ class CartController {
 
   async saveHealthProfileForPrescription(req, res) {
     try {
+      const ctStatus = this.normalizeCartStatus(req.body.ct_status);
       const odIdRaw = req.body.od_id;
       if (odIdRaw == null) throw new Error('od_id는 필수입니다.');
       const odId = Number(odIdRaw);
@@ -422,7 +436,7 @@ class CartController {
         it_sc_price: this.toInt(product.it_sc_price, 0),
         it_sc_minimum: this.toInt(product.it_sc_minimum, 0),
         it_sc_qty: this.toInt(product.it_sc_qty, 0),
-        ct_status: '쇼핑',
+        ct_status: ctStatus,
         ct_history: '',
         ct_price: price,
         ct_point: this.calculatePoint(product, optionId, optionPrice, quantity),
@@ -462,7 +476,8 @@ class CartController {
         cart_id: cart.ct_id,
         od_id: odId,
         it_kind: itKindStrPrescription,
-        ct_kind: ctKindStr
+        ct_kind: ctKindStr,
+        ct_status: ctStatus
       });
     } catch (error) {
       return res.status(500).json({ success: false, message: '처방 예약 중 오류가 발생했습니다.', error: error.message });
