@@ -1,8 +1,11 @@
 /**
  * 건강 API용 날짜/시간: JSON에는 항상 실제 instant 기준 UTC ISO-8601(Z)로 통일.
- * DB는 DATETIME/TIMESTAMP를 UTC 벽시계로 저장한다고 가정하고 mysql2 timezone: 'Z'와 맞춘다.
  *
- * 타임존 없는 입력(레거시): "yyyy-MM-dd HH:mm:ss" / "yyyy-MM-ddTHH:mm:ss" 는 한국 고정 오프셋 +09:00 으로 해석.
+ * MySQL DATETIME(타임존 미저장)은 기본적으로 **한국 벽시계(KST)** 로 넣고 읽는다고 가정한다.
+ * `src/config/database.js` 의 mysql2 `timezone` 은 `+09:00`(또는 DB_TIMEZONE) — 이때 읽힌 JS Date 의
+ * toISOString() 이 올바른 instant가 되고, 앱에서 toLocal() 해도 DB에 찍힌 시·분과 일치한다.
+ *
+ * API 타임존 없는 문자열 입력: "yyyy-MM-dd HH:mm:ss" / "yyyy-MM-ddTHH:mm:ss" 는 +09:00 으로 해석.
  */
 
 const NAIVE_LOCAL = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(?::\d{2})?(?:\.\d{1,6})?$/;
@@ -116,18 +119,19 @@ function toIsoUtcString(value) {
   };
 
   const withT = s.includes('T') ? s : s.replace(' ', 'T');
-  if (hasExplicitZone(withT)) {
-    const iso = tryParse(withT);
-    if (iso) {
-      return iso;
+
+  // "yyyy-MM-dd HH:mm:ss" 처럼 오프셋 없는 값은 KST 벽시계 (parseHealthDateTimeInput 과 동일)
+  if (NAIVE_LOCAL.test(s) && !hasExplicitZone(withT)) {
+    try {
+      const d = parseHealthDateTimeInput(s);
+      return Number.isNaN(d.getTime()) ? null : d.toISOString();
+    } catch {
+      /* fall through */
     }
   }
 
-  const asUtcWall = withT.match(
-    /^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}:\d{2})(\.\d{1,6})?$/
-  );
-  if (asUtcWall) {
-    const iso = tryParse(`${asUtcWall[1]}T${asUtcWall[2]}${asUtcWall[3] || ''}Z`);
+  if (hasExplicitZone(withT)) {
+    const iso = tryParse(withT);
     if (iso) {
       return iso;
     }
