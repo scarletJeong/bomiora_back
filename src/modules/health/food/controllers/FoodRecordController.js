@@ -1,5 +1,43 @@
 const foodRecordRepository = require('../repositories/FoodRecordRepository');
 const foodRepository = require('../repositories/FoodRepository');
+const { toIsoUtcString } = require('../../../../utils/healthDateTime');
+
+function mapFoodItemRows(rows) {
+  return (rows || []).map((row) => ({
+    item_id: row.item_id,
+    food_record_id: row.food_record_id,
+    food_code: row.food_code,
+    food_name: row.food_name,
+    serving_quantity: row.serving_quantity != null ? Number(row.serving_quantity) : null,
+    kcal: row.kcal != null ? Number(row.kcal) : null,
+    carbohydrate: row.carbohydrate != null ? Number(row.carbohydrate) : null,
+    protein: row.protein != null ? Number(row.protein) : null,
+    fat: row.fat != null ? Number(row.fat) : null,
+    other: row.other != null ? Number(row.other) : null,
+    created_at: toIsoUtcString(row.created_at)
+  }));
+}
+
+function serializeFoodRecordRow(r, items = []) {
+  if (!r) return null;
+  return {
+    id: r.id,
+    mb_id: r.mb_id,
+    record_date: r.record_date,
+    food_time: String(r.food_time || '').toLowerCase(),
+    eaten_at: toIsoUtcString(r.eaten_at),
+    photo: r.photo,
+    description: r.description,
+    calories: r.calories != null ? Number(r.calories) : null,
+    protein: r.protein != null ? Number(r.protein) : null,
+    carbs: r.carbs != null ? Number(r.carbs) : null,
+    fat: r.fat != null ? Number(r.fat) : null,
+    other: r.other != null ? Number(r.other) : null,
+    created_at: toIsoUtcString(r.created_at),
+    updated_at: toIsoUtcString(r.updated_at),
+    items
+  };
+}
 
 class FoodRecordController {
   /** POST /api/health/food/records - 식사 기록 생성 */
@@ -35,7 +73,7 @@ class FoodRecordController {
       return res.status(201).json({
         success: true,
         message: '식사 기록이 추가되었습니다.',
-        data: record
+        data: serializeFoodRecordRow(record, [])
       });
     } catch (error) {
       console.error('[FoodRecordController.create]', error.message);
@@ -61,36 +99,7 @@ class FoodRecordController {
       const withItems = await Promise.all(
         records.map(async (r) => {
           const rows = await foodRecordRepository.findFoodItemsByFoodRecordId(r.id);
-          const items = (rows || []).map((row) => ({
-            item_id: row.item_id,
-            food_record_id: row.food_record_id,
-            food_code: row.food_code,
-            food_name: row.food_name,
-            serving_quantity: row.serving_quantity != null ? Number(row.serving_quantity) : null,
-            kcal: row.kcal != null ? Number(row.kcal) : null,
-            carbohydrate: row.carbohydrate != null ? Number(row.carbohydrate) : null,
-            protein: row.protein != null ? Number(row.protein) : null,
-            fat: row.fat != null ? Number(row.fat) : null,
-            other: row.other != null ? Number(row.other) : null,
-            created_at: row.created_at
-          }));
-          return {
-            id: r.id,
-            mb_id: r.mb_id,
-            record_date: r.record_date,
-            food_time: String(r.food_time || '').toLowerCase(),
-            eaten_at: r.eaten_at,
-            photo: r.photo,
-            description: r.description,
-            calories: r.calories != null ? Number(r.calories) : null,
-            protein: r.protein != null ? Number(r.protein) : null,
-            carbs: r.carbs != null ? Number(r.carbs) : null,
-            fat: r.fat != null ? Number(r.fat) : null,
-            other: r.other != null ? Number(r.other) : null,
-            created_at: r.created_at,
-            updated_at: r.updated_at,
-            items
-          };
+          return serializeFoodRecordRow(r, mapFoodItemRows(rows));
         })
       );
       return res.json({
@@ -137,7 +146,7 @@ class FoodRecordController {
       return res.status(201).json({
         success: true,
         message: '음식이 추가되었습니다.',
-        data: { food_record_id: foodRecordId, items }
+        data: { food_record_id: foodRecordId, items: mapFoodItemRows(items) }
       });
     } catch (error) {
       return res.status(500).json({

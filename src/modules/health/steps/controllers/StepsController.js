@@ -1,4 +1,8 @@
 const stepsRepository = require('../repositories/StepsRepository');
+const {
+  toIsoUtcString,
+  addDaysToYmdDateString
+} = require('../../../../utils/healthDateTime');
 
 class StepsController {
   async createStepsRecord(req, res) {
@@ -167,9 +171,7 @@ class StepsController {
       const useBm = bmAgg.intervalCount > 0;
 
       let stepsDifference = 0;
-      const previousDate = new Date(`${date}T12:00:00`);
-      previousDate.setDate(previousDate.getDate() - 1);
-      const prevStr = previousDate.toISOString().split('T')[0];
+      const prevStr = addDaysToYmdDateString(date, -1);
 
       let data;
 
@@ -264,8 +266,8 @@ class StepsController {
           calories: record && record.caloriesBurned != null ? Number(record.caloriesBurned) : 0,
           hourly_steps,
           half_hour_steps: legacySlots.map((steps, slot) => ({ slot, steps })),
-          created_at: record ? record.createdAt : null,
-          updated_at: record ? record.updatedAt : null,
+          created_at: record ? toIsoUtcString(record.createdAt) : null,
+          updated_at: record ? toIsoUtcString(record.updatedAt) : null,
           steps_difference: stepsDifference,
           source: 'steps_records'
         };
@@ -311,12 +313,10 @@ class StepsController {
       }
       const map = await stepsRepository.aggregateBmStepsDailyTotalsBetween(mbId, start, end);
       const days = [];
-      const cur = new Date(`${start}T12:00:00`);
-      const endD = new Date(`${end}T12:00:00`);
-      while (cur <= endD) {
-        const key = cur.toISOString().split('T')[0];
+      let key = start;
+      while (key <= end) {
         days.push({ date: key, total_steps: map.get(key) || 0 });
-        cur.setDate(cur.getDate() + 1);
+        key = addDaysToYmdDateString(key, 1);
       }
       return res.json({ success: true, data: { days } });
     } catch (error) {

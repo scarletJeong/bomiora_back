@@ -1,3 +1,5 @@
+const { toIsoUtcString } = require('../../../../utils/healthDateTime');
+
 class BloodPressure {
   constructor(data = {}) {
     const toString = (value) => {
@@ -41,6 +43,7 @@ class BloodPressure {
   }
 
   toResponse() {
+    const measuredIso = toIsoUtcString(this.measuredAt);
     return {
       id: this.id,
       mb_id: this.mbId,
@@ -48,9 +51,10 @@ class BloodPressure {
       diastolic: this.diastolic,
       pulse: this.pulse,
       status: this.status || BloodPressure.determineStatus(this.systolic, this.diastolic),
-      measured_at: this.measuredAt,
-      created_at: this.createdAt,
-      updated_at: this.updatedAt
+      measured_at: measuredIso,
+      measuredAt: measuredIso,
+      created_at: toIsoUtcString(this.createdAt),
+      updated_at: toIsoUtcString(this.updatedAt)
     };
   }
 }

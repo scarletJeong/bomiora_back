@@ -1,18 +1,12 @@
 const bloodPressureRepository = require('../repositories/BloodPressureRepository');
+const {
+  parseHealthDateTimeInput,
+  parseHealthDateTimeOptional
+} = require('../../../../utils/healthDateTime');
 
 class BloodPressureController {
   parseMeasuredAt(rawMeasuredAt) {
-    if (rawMeasuredAt == null) return new Date();
-
-    const parsed = rawMeasuredAt instanceof Date
-      ? rawMeasuredAt
-      : new Date(rawMeasuredAt);
-
-    if (Number.isNaN(parsed.getTime())) {
-      throw new Error('measured_at 형식이 올바르지 않습니다.');
-    }
-
-    return parsed;
+    return parseHealthDateTimeOptional(rawMeasuredAt, new Date());
   }
 
   async addRecord(req, res) {
@@ -178,8 +172,8 @@ class BloodPressureController {
 
       const records = await bloodPressureRepository.findByMbIdAndMeasuredAtBetween(
         mb_id,
-        new Date(start_date),
-        new Date(end_date)
+        parseHealthDateTimeInput(start_date),
+        parseHealthDateTimeInput(end_date)
       );
 
       return res.json({

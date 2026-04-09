@@ -1,5 +1,9 @@
 const pool = require('../../../../config/database');
 const StepsRecord = require('../models/StepsRecord');
+const {
+  parseHealthDateTimeInput,
+  addDaysToYmdDateString
+} = require('../../../../utils/healthDateTime');
 
 class StepsRepository {
   async create(stepsData) {
@@ -202,9 +206,9 @@ class StepsRepository {
    */
   async aggregateBmStepsForCalendarDay(mbId, dateStr) {
     const slots = Array.from({ length: 48 }, () => 0);
-    const dayStart = new Date(`${dateStr}T00:00:00`);
-    const dayEnd = new Date(dayStart);
-    dayEnd.setDate(dayEnd.getDate() + 1);
+    const dayStart = parseHealthDateTimeInput(`${String(dateStr).trim()}T00:00:00+09:00`);
+    const nextYmd = addDaysToYmdDateString(dateStr, 1);
+    const dayEnd = parseHealthDateTimeInput(`${nextYmd}T00:00:00+09:00`);
 
     let intervalCount = 0;
     try {

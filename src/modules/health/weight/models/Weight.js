@@ -1,3 +1,5 @@
+const { toIsoUtcString } = require('../../../../utils/healthDateTime');
+
 class Weight {
   constructor(data = {}) {
     this.recordId = data.record_id ?? data.recordId ?? null;
@@ -24,18 +26,20 @@ class Weight {
   }
 
   toResponse() {
+    const measuredIso = toIsoUtcString(this.measuredAt);
     return {
       recordId: this.recordId,
       mbId: this.mbId,
-      measuredAt: this.measuredAt,
+      measuredAt: measuredIso,
+      measured_at: measuredIso,
       weight: this.weight,
       height: this.height,
       bmi: this.bmi,
       notes: this.notes,
       frontImagePath: this.frontImagePath,
       sideImagePath: this.sideImagePath,
-      createdAt: this.createdAt,
-      updatedAt: this.updatedAt
+      createdAt: toIsoUtcString(this.createdAt),
+      updatedAt: toIsoUtcString(this.updatedAt)
     };
   }
 }

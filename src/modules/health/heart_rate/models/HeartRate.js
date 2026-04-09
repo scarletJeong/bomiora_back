@@ -1,3 +1,5 @@
+const { toIsoUtcString } = require('../../../../utils/healthDateTime');
+
 class HeartRate {
   constructor(data = {}) {
     const toString = (value) => {
@@ -31,15 +33,17 @@ class HeartRate {
   }
 
   toResponse() {
+    const measuredIso = toIsoUtcString(this.measuredAt);
     return {
       id: this.id,
       mb_id: this.mbId,
       heart_rate: this.heartRate,
-      measured_at: this.measuredAt,
+      measured_at: measuredIso,
+      measuredAt: measuredIso,
       status: this.status || '일상',
       source_type: this.sourceType,
       source_record_id: this.sourceRecordId,
-      created_at: this.createdAt
+      created_at: toIsoUtcString(this.createdAt)
     };
   }
 }

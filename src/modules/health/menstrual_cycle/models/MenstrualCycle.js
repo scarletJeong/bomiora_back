@@ -1,3 +1,5 @@
+const { toIsoUtcString } = require('../../../../utils/healthDateTime');
+
 class MenstrualCycle {
   constructor(data = {}) {
     this.id = data.id ?? null;
@@ -10,14 +12,21 @@ class MenstrualCycle {
   }
 
   toResponse() {
+    const lps = this.lastPeriodStart;
+    const lastPeriodIso =
+      lps == null || lps === ''
+        ? null
+        : String(lps).trim().match(/^\d{4}-\d{2}-\d{2}$/)
+          ? String(lps).trim()
+          : toIsoUtcString(lps);
     return {
       id: this.id,
       mb_id: this.mbId,
-      last_period_start: this.lastPeriodStart,
+      last_period_start: lastPeriodIso,
       cycle_length: this.cycleLength,
       period_length: this.periodLength,
-      created_at: this.createdAt,
-      updated_at: this.updatedAt
+      created_at: toIsoUtcString(this.createdAt),
+      updated_at: toIsoUtcString(this.updatedAt)
     };
   }
 }

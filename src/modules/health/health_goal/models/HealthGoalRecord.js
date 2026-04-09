@@ -1,3 +1,5 @@
+const { toIsoUtcString } = require('../../../../utils/healthDateTime');
+
 class HealthGoalRecord {
   constructor(data = {}) {
     this.goalRecordId = data.goal_record_id ?? data.goalRecordId ?? null;
@@ -18,8 +20,8 @@ class HealthGoalRecord {
       targetWeight: this.targetWeight,
       dailyStepGoal: this.dailyStepGoal,
       weightRecordId: this.weightRecordId,
-      createdAt: this.createdAt,
-      updatedAt: this.updatedAt
+      createdAt: toIsoUtcString(this.createdAt),
+      updatedAt: toIsoUtcString(this.updatedAt)
     };
   }
 }

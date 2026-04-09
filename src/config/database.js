@@ -12,7 +12,9 @@ const pool = mysql.createPool({
   connectionLimit: 10,
   queueLimit: 0,
   enableKeepAlive: true,
-  keepAliveInitialDelay: 0
+  keepAliveInitialDelay: 0,
+  // DATETIME/TIMESTAMP ↔ JS Date 를 UTC 기준으로 일관 처리 (로컬/운영 JVM·서버 TZ 차이와 무관)
+  timezone: 'Z'
 });
 
 // 연결 테스트

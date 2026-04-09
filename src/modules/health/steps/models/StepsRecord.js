@@ -1,3 +1,5 @@
+const { toIsoUtcString } = require('../../../../utils/healthDateTime');
+
 class StepsRecord {
   constructor(data = {}) {
     this.id = data.id ?? null;
@@ -26,6 +28,11 @@ class StepsRecord {
   }
 
   toResponse() {
+    const hourlySteps = (this.hourlySteps || []).map((h) => ({
+      ...h,
+      createdAt: toIsoUtcString(h.createdAt),
+      updatedAt: toIsoUtcString(h.updatedAt)
+    }));
     return {
       id: this.id,
       userId: this.userId,
@@ -41,11 +48,11 @@ class StepsRecord {
       avgHeartRate: this.avgHeartRate,
       maxHeartRate: this.maxHeartRate,
       syncStatus: this.syncStatus,
-      lastSyncTime: this.lastSyncTime,
+      lastSyncTime: toIsoUtcString(this.lastSyncTime),
       syncErrorMessage: this.syncErrorMessage,
-      createdAt: this.createdAt,
-      updatedAt: this.updatedAt,
-      hourlySteps: this.hourlySteps,
+      createdAt: toIsoUtcString(this.createdAt),
+      updatedAt: toIsoUtcString(this.updatedAt),
+      hourlySteps,
       goalAchieved: this.goalAchieved,
       stepsDifference: this.stepsDifference,
       distanceDifference: this.distanceDifference,

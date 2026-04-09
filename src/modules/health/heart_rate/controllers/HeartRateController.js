@@ -1,14 +1,10 @@
 const heartRateRepository = require('../repositories/HeartRateRepository');
+const {
+  parseHealthDateTimeInput,
+  parseHealthDateTimeOptional
+} = require('../../../../utils/healthDateTime');
 
 class HeartRateController {
-  static parseDateTime(value) {
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) {
-      throw new Error(`유효하지 않은 날짜 형식입니다: ${value}`);
-    }
-    return date;
-  }
-
   async addRecord(req, res) {
     try {
       const {
@@ -31,10 +27,20 @@ class HeartRateController {
           ? status.trim()
           : '일상';
 
+      let measuredAt;
+      try {
+        measuredAt = parseHealthDateTimeOptional(measured_at, new Date());
+      } catch {
+        return res.status(400).json({
+          success: false,
+          message: 'measured_at 형식이 올바르지 않습니다.'
+        });
+      }
+
       await heartRateRepository.create({
         mbId: mb_id,
         heartRate: Number(heart_rate),
-        measuredAt: measured_at ? HeartRateController.parseDateTime(measured_at) : new Date(),
+        measuredAt,
         sourceType: source_type || 'health_sync',
         sourceRecordId: source_record_id ?? null,
         status: normalizedStatus
@@ -114,11 +120,19 @@ class HeartRateController {
         });
       }
 
-      const records = await heartRateRepository.findByMbIdAndMeasuredAtBetween(
-        mbId,
-        HeartRateController.parseDateTime(startDate),
-        HeartRateController.parseDateTime(endDate)
-      );
+      let start;
+      let end;
+      try {
+        start = parseHealthDateTimeInput(startDate);
+        end = parseHealthDateTimeInput(endDate);
+      } catch {
+        return res.status(400).json({
+          success: false,
+          message: 'start_date, end_date 형식이 올바르지 않습니다.'
+        });
+      }
+
+      const records = await heartRateRepository.findByMbIdAndMeasuredAtBetween(mbId, start, end);
 
       return res.json({
         success: true,

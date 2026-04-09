@@ -1,15 +1,8 @@
 const BloodSugar = require('../models/BloodSugar');
 const bloodSugarRepository = require('../repositories/BloodSugarRepository');
+const { parseHealthDateTimeInput } = require('../../../../utils/healthDateTime');
 
 class BloodSugarController {
-  static parseDateTime(value) {
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) {
-      throw new Error(`유효하지 않은 날짜 형식입니다: ${value}`);
-    }
-    return date;
-  }
-
   async addRecord(req, res) {
     try {
       const status = req.body.status || BloodSugar.determineStatus(
@@ -22,7 +15,7 @@ class BloodSugarController {
         bloodSugar: Number(req.body.blood_sugar),
         measurementType: req.body.measurement_type,
         status,
-        measuredAt: BloodSugarController.parseDateTime(req.body.measured_at)
+        measuredAt: parseHealthDateTimeInput(req.body.measured_at)
       });
 
       return res.status(201).json({
@@ -58,7 +51,7 @@ class BloodSugarController {
         bloodSugar: Number(req.body.blood_sugar),
         measurementType: req.body.measurement_type,
         status,
-        measuredAt: BloodSugarController.parseDateTime(req.body.measured_at)
+        measuredAt: parseHealthDateTimeInput(req.body.measured_at)
       });
 
       return res.json({
@@ -139,8 +132,8 @@ class BloodSugarController {
     try {
       const records = await bloodSugarRepository.findByMbIdAndMeasuredAtBetween(
         req.query.mb_id,
-        BloodSugarController.parseDateTime(req.query.start_date),
-        BloodSugarController.parseDateTime(req.query.end_date)
+        parseHealthDateTimeInput(req.query.start_date),
+        parseHealthDateTimeInput(req.query.end_date)
       );
 
       return res.json({
@@ -212,8 +205,8 @@ class BloodSugarController {
     try {
       const count = await bloodSugarRepository.countByMbIdAndMeasuredAtBetween(
         req.query.mb_id,
-        BloodSugarController.parseDateTime(req.query.start_date),
-        BloodSugarController.parseDateTime(req.query.end_date)
+        parseHealthDateTimeInput(req.query.start_date),
+        parseHealthDateTimeInput(req.query.end_date)
       );
 
       return res.json({

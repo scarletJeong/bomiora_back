@@ -2,6 +2,10 @@ const fs = require('fs');
 const path = require('path');
 const weightRepository = require('../repositories/WeightRepository');
 const Weight = require('../models/Weight');
+const {
+  parseHealthDateTimeInput,
+  utcRangeForKstCalendarDay
+} = require('../../../../utils/healthDateTime');
 
 const UPLOAD_DIR = process.env.WEIGHT_IMAGE_UPLOAD_DIR || path.join(process.cwd(), 'uploads', 'weight_images');
 
@@ -61,7 +65,15 @@ class WeightController {
   async createWeight(req, res) {
     try {
       const mbId = String(req.body.mb_id);
-      const measuredAt = new Date(req.body.measured_at);
+      let measuredAt;
+      try {
+        measuredAt = parseHealthDateTimeInput(req.body.measured_at);
+      } catch {
+        return res.status(400).json({
+          success: false,
+          message: 'measured_at 형식이 올바르지 않습니다.'
+        });
+      }
       const weight = Number(req.body.weight);
 
       const height = req.body.height == null ? null : Number(req.body.height);
@@ -121,7 +133,14 @@ class WeightController {
       fields.bmi = Weight.calculateBMI(fields.weight, fields.height);
 
       if (Object.prototype.hasOwnProperty.call(req.body, 'measured_at')) {
-        fields.measuredAt = new Date(req.body.measured_at);
+        try {
+          fields.measuredAt = parseHealthDateTimeInput(req.body.measured_at);
+        } catch {
+          return res.status(400).json({
+            success: false,
+            message: 'measured_at 형식이 올바르지 않습니다.'
+          });
+        }
       }
       if (Object.prototype.hasOwnProperty.call(req.body, 'notes')) {
         fields.notes = req.body.notes ?? null;
@@ -216,13 +235,21 @@ class WeightController {
   async getWeightsByDate(req, res) {
     try {
       const date = req.params.date;
-      const startDate = `${date} 00:00:00`;
-      const endDate = `${date} 23:59:59`;
+      let start;
+      let end;
+      try {
+        ({ start, end } = utcRangeForKstCalendarDay(date));
+      } catch {
+        return res.status(400).json({
+          success: false,
+          message: '날짜는 YYYY-MM-DD 형식이어야 합니다.'
+        });
+      }
 
       const records = await weightRepository.findByMbIdAndDateRange(
         req.query.mb_id,
-        startDate,
-        endDate
+        start,
+        end
       );
 
       return res.json({

@@ -1,4 +1,5 @@
 const healthGoalRepository = require('../repositories/HealthGoalRepository');
+const { parseHealthDateTimeOptional } = require('../../../../utils/healthDateTime');
 
 function parsePositiveNumber(value, fieldName) {
   const n = Number(value);
@@ -32,11 +33,15 @@ class HealthGoalController {
       const targetWeight = parsePositiveNumber(req.body.target_weight, '목표 체중');
       const dailyStepGoal = parseNonNegativeInt(req.body.daily_step_goal, '하루 목표 걸음 수');
 
-      const measuredAt =
-        req.body.measured_at != null && req.body.measured_at !== ''
-          ? new Date(req.body.measured_at)
-          : new Date();
-      if (Number.isNaN(measuredAt.getTime())) {
+      let measuredAt;
+      try {
+        measuredAt = parseHealthDateTimeOptional(
+          req.body.measured_at != null && req.body.measured_at !== ''
+            ? req.body.measured_at
+            : null,
+          new Date()
+        );
+      } catch (e) {
         return res.status(400).json({
           success: false,
           message: 'measured_at 형식이 올바르지 않습니다.'
