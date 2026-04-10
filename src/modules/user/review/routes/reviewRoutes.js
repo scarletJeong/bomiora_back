@@ -7,6 +7,7 @@ router.get('/product/:itId/stats', (req, res) => reviewController.getProductRevi
 router.get('/product/:itId', (req, res) => reviewController.getProductReviews(req, res));
 router.get('/member/:mbId', (req, res) => reviewController.getMemberReviews(req, res));
 router.get('/check', (req, res) => reviewController.checkReviewExists(req, res));
+router.get('/main', (req, res) => reviewController.getMainReviews(req, res));
 router.get('/:isId/helpful/check', (req, res) => reviewController.checkUserHelpful(req, res));
 router.post('/:isId/helpful', (req, res) => reviewController.incrementReviewHelpful(req, res));
 router.get('/:isId', (req, res) => reviewController.getReviewById(req, res));

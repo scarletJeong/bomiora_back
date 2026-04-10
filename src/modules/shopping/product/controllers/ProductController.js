@@ -1,5 +1,6 @@
 const productRepository = require('../repositories/ProductRepository');
 const productOptionRepository = require('../option/repositories/ProductOptionRepository');
+const reviewRepository = require('../../../user/review/repositories/ReviewRepository');
 
 class ProductController {
   categoryName(categoryId) {
@@ -147,6 +148,9 @@ class ProductController {
 
   async getProductDetail(req, res) {
     try {
+      if (req.query.id != null && String(req.query.id).trim() !== '') {
+        await reviewRepository.refreshItemReviewAggregates(req.query.id);
+      }
       const row = await productRepository.findById(req.query.id);
       if (!row) {
         return res.json({ success: false, message: '상품을 찾을 수 없습니다' });
