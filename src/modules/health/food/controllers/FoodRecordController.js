@@ -1,6 +1,7 @@
 const foodRecordRepository = require('../repositories/FoodRecordRepository');
 const foodRepository = require('../repositories/FoodRepository');
 const { toIsoUtcString } = require('../../../../utils/healthDateTime');
+const { calculateConvertedNutrition } = require('../utils/calorieConverter');
 
 function mapFoodItemRows(rows) {
   return (rows || []).map((row) => ({
@@ -128,19 +129,28 @@ class FoodRecordController {
       const foodCode = req.body.food_code;
       const food = await foodRepository.findByFoodCode(foodCode);
       const serving = Number(req.body.serving_quantity) || 1;
+      const scenario = req.body.calorie_scenario || 'single';
+
+      const converted = food
+        ? calculateConvertedNutrition(
+            {
+              ...food.toResponse(),
+              serving_quantity: serving
+            },
+            { scenario }
+          )
+        : null;
 
       await foodRecordRepository.addFoodItem({
         foodRecordId,
         foodCode,
         foodName: food ? food.foodName : req.body.food_name,
         servingQuantity: serving,
-        kcal: food ? (food.energy != null ? food.energy * serving : null) : req.body.energy,
-        carbohydrate: food
-          ? (food.carbohydrates != null ? food.carbohydrates * serving : null)
-          : req.body.carbohydrates,
-        protein: food ? (food.protein != null ? food.protein * serving : null) : req.body.protein,
-        fat: food ? (food.fat != null ? food.fat * serving : null) : req.body.fat,
-        other: food ? (food.otherGrams != null ? food.otherGrams * serving : null) : req.body.other
+        kcal: food ? converted.kcal : req.body.energy,
+        carbohydrate: food ? converted.carbohydrate : req.body.carbohydrates,
+        protein: food ? converted.protein : req.body.protein,
+        fat: food ? converted.fat : req.body.fat,
+        other: food ? converted.other : req.body.other
       });
       const items = await foodRecordRepository.findFoodItemsByFoodRecordId(foodRecordId);
       return res.status(201).json({

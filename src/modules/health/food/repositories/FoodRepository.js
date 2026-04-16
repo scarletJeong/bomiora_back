@@ -20,11 +20,7 @@ class FoodRepository {
   async searchByFoodName(keyword, limit = 20) {
     const like = `%${(keyword || '').trim().replace(/%/g, '\\%')}%`;
     const [rows] = await pool.query(
-      `SELECT food_code, food_name,
-              energy,
-              carbohydrates,
-              protein, fat,
-              representative_food_name, nutrient_base_quantity,
+      `SELECT *,
               ${OTHER_GRAMS_EXPR} AS other_grams
        FROM bm_food_nutrition
        WHERE food_name LIKE ? OR representative_food_name LIKE ?
@@ -40,11 +36,7 @@ class FoodRepository {
    */
   async findByFoodCode(foodCode) {
     const [rows] = await pool.query(
-      `SELECT food_code, food_name,
-              energy,
-              carbohydrates,
-              protein, fat,
-              representative_food_name, nutrient_base_quantity,
+      `SELECT *,
               ${OTHER_GRAMS_EXPR} AS other_grams
        FROM bm_food_nutrition WHERE food_code = ?`,
       [foodCode]
