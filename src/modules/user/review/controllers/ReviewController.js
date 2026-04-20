@@ -216,6 +216,15 @@ class ReviewController {
     ]
       .map((x) => t(x))
       .filter(Boolean);
+    const productImages = [
+      row.it_img1,
+      row.it_img2,
+      row.it_img3,
+      row.it_img4,
+      row.it_img5
+    ]
+      .map((x) => t(x))
+      .filter(Boolean);
 
     const s1 = Number(row.mr_score1 || 0);
     const s2 = Number(row.mr_score2 || 0);
@@ -246,7 +255,8 @@ class ReviewController {
       mrLink: link || null,
       mrDatetime: row.mr_datetime,
       mrOrderNum: row.mr_order_num,
-      images
+      images,
+      productImage: productImages[0] || null
     };
   }
 
