@@ -10,6 +10,7 @@ const kcpRoutes = require('./kcpRoutes');
  */
 router.post('/login', (req, res) => userController.login(req, res));
 router.post('/check-email', (req, res) => userController.checkEmail(req, res));
+router.post('/check-dup-info', (req, res) => userController.checkDupInfo(req, res));
 
 /**
  * @route   POST /api/auth/register

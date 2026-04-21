@@ -119,6 +119,26 @@ class UserRepository {
   }
 
   /**
+   * 본인인증 고유값(dupinfo/mb_dupinfo) 존재 여부 확인
+   * - bomiora_member.mb_dupinfo 에 저장된 값 기준
+   * - 탈퇴 시 mb_dupinfo='' 로 비워지므로, 재가입을 허용하려면 DB 정책대로 동작
+   */
+  async existsByDupInfo(dupInfo) {
+    try {
+      const v = String(dupInfo || '').trim();
+      if (!v) return false;
+      const [rows] = await pool.query(
+        'SELECT COUNT(*) as count FROM bomiora_member WHERE mb_dupinfo = ?',
+        [v]
+      );
+      return rows[0].count > 0;
+    } catch (error) {
+      console.error('❌ [UserRepository] existsByDupInfo 오류:', error);
+      throw error;
+    }
+  }
+
+  /**
    * 사용자 생성
    */
   async create(userData) {
@@ -145,7 +165,14 @@ class UserRepository {
       const mbId = await this.generateUniqueMbId(email, mbIdPrefix || 'direct', conn);
       const normalizedBirth = normalizeBirth(birthday || certInfo?.birthday || '');
       const normalizedSex = normalizeSex(gender || certInfo?.gender || certInfo?.sex_code || '');
-      const dupInfo = String(certInfo?.di || certInfo?.dupinfo || certInfo?.dupInfo || '').trim();
+      const dupInfo = String(
+        certInfo?.mb_dupinfo ||
+        certInfo?.mbDupinfo ||
+        certInfo?.dupinfo ||
+        certInfo?.dupInfo ||
+        certInfo?.di ||
+        ''
+      ).trim();
       const ip = String(clientIp || '');
       const marketingEmail = agreements?.marketingEmail === true ? 1 : 0;
       const marketingSms = agreements?.marketingSms === true ? 1 : 0;
