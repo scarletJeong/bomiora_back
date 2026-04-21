@@ -1,6 +1,16 @@
 const healthProfileRepository = require('../repositories/HealthProfileRepository');
 
 class HealthProfileController {
+  normalizeAnswer102(body) {
+    const raw =
+      body?.answer102 ??
+      body?.answer_10_2 ??
+      body?.answer10_2 ??
+      '';
+    const s = String(raw).trim();
+    return s || null;
+  }
+
   formatMultipleChoice(value) {
     if (!value || !String(value).trim()) return '';
     const unique = [];
@@ -29,6 +39,7 @@ class HealthProfileController {
       answer8: row.answer_8,
       answer9: row.answer_9,
       answer10: row.answer_10,
+      answer102: row.answer_10_2 ?? '',
       answer11: row.answer_11,
       answer12: row.answer_12,
       answer13: row.answer_13,
@@ -57,6 +68,7 @@ class HealthProfileController {
       answer_8: this.formatMultipleChoice(body.answer8),
       answer_9: this.formatMultipleChoice(body.answer9),
       answer_10: body.answer10,
+      answer_10_2: this.normalizeAnswer102(body),
       answer_11: this.formatMultipleChoice(body.answer11),
       answer_12: this.formatMultipleChoice(body.answer12),
       answer_13: body.answer13,

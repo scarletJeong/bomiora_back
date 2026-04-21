@@ -29,11 +29,11 @@ class HealthProfileRepository {
     const [result] = await pool.query(
       `INSERT INTO bomiora_member_health_profiles
       (mb_id, answer_1, answer_2, answer_3, answer_4, answer_5, answer_6, answer_7, answer_8, answer_9,
-       answer_10, answer_11, answer_12, answer_13, answer_13_period, answer_13_dosage, answer_13_medicine, answer_7_1, answer_13_sideeffect, pf_ip, pf_memo, pf_wdatetime, pf_mdatetime)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+       answer_10, answer_10_2, answer_11, answer_12, answer_13, answer_13_period, answer_13_dosage, answer_13_medicine, answer_7_1, answer_13_sideeffect, pf_ip, pf_memo, pf_wdatetime, pf_mdatetime)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
       [
         fields.mb_id, fields.answer_1, fields.answer_2, fields.answer_3, fields.answer_4, fields.answer_5, fields.answer_6, fields.answer_7, fields.answer_8,
-        fields.answer_9, fields.answer_10, fields.answer_11, fields.answer_12, fields.answer_13, fields.answer_13_period, fields.answer_13_dosage,
+        fields.answer_9, fields.answer_10, fields.answer_10_2 ?? null, fields.answer_11, fields.answer_12, fields.answer_13, fields.answer_13_period, fields.answer_13_dosage,
         fields.answer_13_medicine, fields.answer_7_1, fields.answer_13_sideeffect, fields.pf_ip, fields.pf_memo
       ]
     );
@@ -45,12 +45,12 @@ class HealthProfileRepository {
     await pool.query(
       `UPDATE bomiora_member_health_profiles SET
        answer_1 = ?, answer_2 = ?, answer_3 = ?, answer_4 = ?, answer_5 = ?, answer_6 = ?, answer_7 = ?, answer_8 = ?, answer_9 = ?,
-       answer_10 = ?, answer_11 = ?, answer_12 = ?, answer_13 = ?, answer_13_period = ?, answer_13_dosage = ?, answer_13_medicine = ?,
+       answer_10 = ?, answer_10_2 = ?, answer_11 = ?, answer_12 = ?, answer_13 = ?, answer_13_period = ?, answer_13_dosage = ?, answer_13_medicine = ?,
        answer_7_1 = ?, answer_13_sideeffect = ?, pf_memo = ?, pf_mdatetime = NOW()
        WHERE pf_no = ? AND mb_id = ?`,
       [
         fields.answer_1, fields.answer_2, fields.answer_3, fields.answer_4, fields.answer_5, fields.answer_6, fields.answer_7, fields.answer_8, fields.answer_9,
-        fields.answer_10, fields.answer_11, fields.answer_12, fields.answer_13, fields.answer_13_period, fields.answer_13_dosage, fields.answer_13_medicine,
+        fields.answer_10, fields.answer_10_2 ?? null, fields.answer_11, fields.answer_12, fields.answer_13, fields.answer_13_period, fields.answer_13_dosage, fields.answer_13_medicine,
         fields.answer_7_1, fields.answer_13_sideeffect, fields.pf_memo, pfNo, mbId
       ]
     );
