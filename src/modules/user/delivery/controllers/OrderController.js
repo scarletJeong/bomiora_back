@@ -16,6 +16,10 @@ class OrderController {
     return value == null ? 0 : Number(value);
   }
 
+  toOdId(value) {
+    return value == null ? '' : String(value).trim();
+  }
+
   formatDate(dateValue, withTime) {
     if (!dateValue) return '';
     const d = new Date(dateValue);
@@ -36,6 +40,7 @@ class OrderController {
 
     switch (odStatus) {
       case '주문':
+        return '결제대기중';
       case '입금':
         return '결제완료';
       case '준비':
@@ -49,6 +54,60 @@ class OrderController {
       default:
         return odStatus;
     }
+  }
+
+  /**
+   * KCP 매출전표(구매 영수증) URL — NHN KCP 매출전표 연동(cmd=card_bill).
+   * @see https://developer.kcp.co.kr/page/document/bill
+   */
+  buildKcpCardReceiptUrl(row) {
+    const odPg = this.bufferToString(row.od_pg || '').toLowerCase();
+    if (odPg !== 'kcp') return null;
+
+    const tno = this.bufferToString(row.od_tno || '').trim();
+    if (!tno || tno.startsWith('PENDING-')) return null;
+
+    const settleRaw = this.bufferToString(row.od_settle_case || '');
+    const blockSubstrings = ['가상', '무통장', '계좌이체', '휴대폰'];
+    for (const s of blockSubstrings) {
+      if (settleRaw.includes(s)) return null;
+    }
+
+    const tradeMony = this.toInt(row.od_receipt_price) > 0
+      ? this.toInt(row.od_receipt_price)
+      : this.computeOrderTotal(row);
+    if (!Number.isFinite(tradeMony) || tradeMony <= 0) return null;
+
+    const orderNo = this.toOdId(row.od_id);
+    if (!orderNo) return null;
+
+    const isTest = Number(row.od_test || 0) === 1;
+    const defaultBase = isTest
+      ? 'https://testadmin8.kcp.co.kr/assist/bill.BillActionNew.do'
+      : 'https://admin8.kcp.co.kr/assist/bill.BillActionNew.do';
+    const base = String(process.env.KCP_BILL_BASE_URL || defaultBase).trim() || defaultBase;
+
+    const qs = new URLSearchParams({
+      cmd: 'card_bill',
+      tno,
+      order_no: orderNo,
+      trade_mony: String(tradeMony),
+    });
+    return `${base}?${qs.toString()}`;
+  }
+
+  computeOrderTotal(row) {
+    const receipt = this.toInt(row.od_receipt_price);
+    if (receipt > 0) return receipt;
+    return (
+      this.toInt(row.od_cart_price) +
+      this.toInt(row.od_send_cost) +
+      this.toInt(row.od_send_cost2) -
+      this.toInt(row.od_send_coupon) -
+      this.toInt(row.od_cart_coupon) -
+      this.toInt(row.od_coupon) -
+      this.toInt(row.od_receipt_point)
+    );
   }
 
   toOrderItem(cart, imageUrlMap) {
@@ -109,12 +168,12 @@ class OrderController {
       const size = Number(req.query.size || 10);
 
       const { rows, total } = await orderRepository.getOrders(mbId, period, status, page, size);
-      const odIds = rows.map((r) => Number(r.od_id));
+      const odIds = rows.map((r) => this.toOdId(r.od_id)).filter(Boolean);
 
       const allCarts = await orderCartRepository.findByOdIds(odIds);
       const cartsByOrder = {};
       allCarts.forEach((c) => {
-        const key = Number(c.od_id);
+        const key = this.toOdId(c.od_id);
         if (!cartsByOrder[key]) cartsByOrder[key] = [];
         cartsByOrder[key].push(c);
       });
@@ -128,16 +187,17 @@ class OrderController {
       const prescriptionFlags = await orderRepository.getPrescriptionFlagsByOdIds(mbId, odIds);
 
       const orders = rows.map((row) => {
-        const items = (cartsByOrder[Number(row.od_id)] || []).map((c) => this.toOrderItem(c, imageUrlMap));
+        const odId = this.toOdId(row.od_id);
+        const items = (cartsByOrder[odId] || []).map((c) => this.toOrderItem(c, imageUrlMap));
         return {
-          odId: String(row.od_id),
+          odId,
           orderDate: this.formatDate(row.od_time, false),
           orderDateTime: this.formatDate(row.od_time, true),
           displayStatus: this.getDisplayStatus(row.od_status, row.delivery_completed, row.admin_completed, row.auto_confirm_at),
           odStatus: row.od_status,
-          totalPrice: this.toInt(row.od_receipt_price),
+          totalPrice: this.computeOrderTotal(row),
           odCartCount: this.toInt(row.od_cart_count),
-          isPrescriptionOrder: prescriptionFlags[Number(row.od_id)] === true,
+          isPrescriptionOrder: prescriptionFlags[odId] === true,
           items,
           firstProductName: items[0]?.itName || null,
           firstProductOption: items[0]?.ctOption || null,
@@ -169,7 +229,8 @@ class OrderController {
 
   async getOrderDetail(req, res) {
     try {
-      const odId = Number(req.params.odId);
+      const odId = this.toOdId(req.params.odId);
+      if (!odId) return res.status(400).json({ error: '주문번호가 필요합니다.' });
       const mbId = req.query.mbId;
       const row = await orderRepository.getOrderDetail(odId, mbId);
       if (!row) return res.status(404).json({ error: '주문을 찾을 수 없습니다.' });
@@ -182,6 +243,8 @@ class OrderController {
         if (img.it_img1) imageUrlMap[img.it_id] = img.it_img1;
       });
       const products = carts.map((c) => this.toOrderItem(c, imageUrlMap));
+      const settleCase = this.bufferToString(row.od_settle_case) || '';
+      const bankAccount = this.bufferToString(row.od_bank_account) || '';
 
       const detail = {
         odId: String(row.od_id),
@@ -199,9 +262,9 @@ class OrderController {
         productPrice: this.toInt(row.od_cart_price),
         deliveryFee: this.toInt(row.od_send_cost) + this.toInt(row.od_send_cost2),
         discountAmount: this.toInt(row.od_cart_coupon) + this.toInt(row.od_send_coupon) + this.toInt(row.od_coupon) + this.toInt(row.od_receipt_point),
-        totalPrice: this.toInt(row.od_receipt_price),
+        totalPrice: this.computeOrderTotal(row),
         isPrescriptionOrder: false,
-        paymentMethod: row.od_settle_case,
+        paymentMethod: settleCase || ((this.toInt(row.od_misu) > 0 && bankAccount.includes('/')) ? '가상계좌' : ''),
         paymentMethodDetail: null,
         ordererName: row.od_b_name,
         ordererPhone: row.od_b_hp,
@@ -212,11 +275,13 @@ class OrderController {
         reservationTime: null
       };
 
-      if (row.od_bank_account && (String(row.od_settle_case || '').includes('간편결제') || String(row.od_settle_case || '').includes('신용카드'))) {
-        if (String(row.od_bank_account).includes('카카오')) detail.paymentMethodDetail = ' (카카오페이)';
-        else if (String(row.od_bank_account).includes('네이버')) detail.paymentMethodDetail = ' (네이버페이)';
-        else if (String(row.od_bank_account).includes('토스')) detail.paymentMethodDetail = ' (토스페이)';
-        else if (String(row.od_bank_account) !== '0') detail.paymentMethodDetail = ` (${row.od_bank_account})`;
+      if (bankAccount && (settleCase.includes('가상계좌') || settleCase.includes('무통장'))) {
+        detail.paymentMethodDetail = bankAccount;
+      } else if (bankAccount && (settleCase.includes('간편결제') || settleCase.includes('신용카드'))) {
+        if (bankAccount.includes('카카오')) detail.paymentMethodDetail = ' (카카오페이)';
+        else if (bankAccount.includes('네이버')) detail.paymentMethodDetail = ' (네이버페이)';
+        else if (bankAccount.includes('토스')) detail.paymentMethodDetail = ' (토스페이)';
+        else if (bankAccount !== '0') detail.paymentMethodDetail = ` (${bankAccount})`;
       }
 
       if (row.od_status === '취소' || row.od_status === '반품') {
@@ -230,6 +295,11 @@ class OrderController {
       }
       detail.isPrescriptionOrder = await orderRepository.isPrescriptionOrder(mbId, odId);
 
+      const cardReceiptUrl = this.buildKcpCardReceiptUrl(row);
+      if (cardReceiptUrl) {
+        detail.cardReceiptUrl = cardReceiptUrl;
+      }
+
       return res.json(detail);
     } catch (error) {
       return res.status(404).json({ error: '주문 정보를 불러올 수 없습니다.' });
@@ -238,7 +308,8 @@ class OrderController {
 
   async cancelOrder(req, res) {
     try {
-      const odId = Number(req.params.odId);
+      const odId = this.toOdId(req.params.odId);
+      if (!odId) return res.status(400).json({ error: '주문번호가 필요합니다.' });
       const mbId = req.body.mbId;
       if (!mbId || !String(mbId).trim()) return res.status(400).json({ error: '회원 ID가 필요합니다.' });
 
@@ -260,7 +331,8 @@ class OrderController {
 
   async confirmPurchase(req, res) {
     try {
-      const odId = Number(req.params.odId);
+      const odId = this.toOdId(req.params.odId);
+      if (!odId) return res.status(400).json({ error: '주문번호가 필요합니다.' });
       const mbId = req.body.mbId;
       if (!mbId || !String(mbId).trim()) return res.status(400).json({ error: '회원 ID가 필요합니다.' });
 
@@ -287,7 +359,8 @@ class OrderController {
 
   async changeReservationTime(req, res) {
     try {
-      const odId = Number(req.params.odId);
+      const odId = this.toOdId(req.params.odId);
+      if (!odId) return res.status(400).json({ error: '주문번호가 필요합니다.' });
       const { mbId, reservationDate, reservationTime } = req.body;
       if (!mbId || !String(mbId).trim()) return res.status(400).json({ error: '회원 ID가 필요합니다.' });
       if (!reservationDate || !String(reservationDate).trim()) return res.status(400).json({ error: '예약 날짜가 필요합니다.' });
@@ -317,7 +390,8 @@ class OrderController {
 
   async changeDeliveryAddress(req, res) {
     try {
-      const odId = Number(req.params.odId);
+      const odId = this.toOdId(req.params.odId);
+      if (!odId) return res.status(400).json({ error: '주문번호가 필요합니다.' });
       const mbId = req.body.mbId;
       const addressId = Number(req.body.addressId || req.body.adId);
 

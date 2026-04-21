@@ -53,6 +53,18 @@ class KcpResultStore {
     return this.results.get(token) || null;
   }
 
+  findTokenByOrderId(ordr_idxx) {
+    this.cleanupExpired();
+    const needle = String(ordr_idxx || '').trim();
+    if (!needle) return null;
+    for (const [token, entry] of this.results.entries()) {
+      if (String(entry?.ordr_idxx || '').trim() === needle) {
+        return token;
+      }
+    }
+    return null;
+  }
+
   cleanupExpired() {
     const now = Date.now();
     for (const [token, entry] of this.results.entries()) {

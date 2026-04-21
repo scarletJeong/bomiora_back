@@ -4,6 +4,27 @@ const fs = require('fs');
 const path = require('path');
 
 class UserController {
+  async checkDupInfo(req, res) {
+    try {
+      const dup = String(req.body?.mb_dupinfo || req.body?.dupinfo || req.body?.di || '').trim();
+      if (!dup) {
+        return res.json({ success: true, exists: false });
+      }
+      const exists = await userRepository.existsByDupInfo(dup);
+      return res.json({
+        success: true,
+        exists,
+        message: exists ? '이미 가입된 본인인증 정보입니다.' : '사용 가능한 본인인증 정보입니다.',
+      });
+    } catch (error) {
+      console.error('❌ [CHECK DUPINFO] 오류:', error);
+      return res.status(500).json({
+        success: false,
+        exists: false,
+        message: '본인인증 중복 확인 중 오류가 발생했습니다.',
+      });
+    }
+  }
   async checkEmail(req, res) {
     try {
       const email = normalizeEmail(req.body?.email);
@@ -176,6 +197,7 @@ class UserController {
         gender,
         certInfo,
         agreements,
+        mb_dupinfo,
       } = req.body;
 
       const normalizedEmail = normalizeEmail(email);
@@ -209,6 +231,30 @@ class UserController {
         });
       }
 
+      // 0. 본인인증 고유값(dupinfo) 중복 확인
+      const dupInfo = String(
+        mb_dupinfo ||
+        certInfo?.mb_dupinfo ||
+        certInfo?.mbDupinfo ||
+        certInfo?.dupinfo ||
+        certInfo?.dupInfo ||
+        certInfo?.di ||
+        ''
+      ).trim();
+      if (!dupInfo) {
+        return res.status(400).json({
+          success: false,
+          message: '본인인증 고유값(dupinfo)이 누락되었습니다.',
+        });
+      }
+      const dupExists = await userRepository.existsByDupInfo(dupInfo);
+      if (dupExists) {
+        return res.status(409).json({
+          success: false,
+          message: '이미 가입된 본인인증 정보입니다.',
+        });
+      }
+
       // 1. 이메일 중복 확인
       const exists = await userRepository.existsByEmail(normalizedEmail);
       if (exists) {
@@ -231,7 +277,10 @@ class UserController {
         mbHp: resolvedPhone,
         birthday: resolvedBirthday,
         gender: resolvedGender,
-        certInfo,
+        certInfo: {
+          ...(certInfo || {}),
+          mb_dupinfo: dupInfo,
+        },
         agreements,
         clientIp: getClientIp(req),
         mbIdPrefix: 'direct',
@@ -267,12 +316,16 @@ class UserController {
             ? '회원 번호'
           : duplicateMessage.includes('mb_email')
             ? '이메일'
+            : duplicateMessage.includes('mb_dupinfo')
+              ? '본인인증 정보'
             : '중복 데이터';
 
         return res.status(409).json({
           success: false,
           message: duplicateField === '이메일'
             ? '이미 존재하는 이메일입니다.'
+            : duplicateField === '본인인증 정보'
+              ? '이미 가입된 본인인증 정보입니다.'
             : `${duplicateField}가 중복되어 회원가입에 실패했습니다.`,
         });
       }

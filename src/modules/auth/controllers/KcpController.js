@@ -9,14 +9,25 @@ class KcpController {
         userAgent: req.get('user-agent') || '',
       });
 
-      const callbackUrl = process.env.KCP_CALLBACK_URL
+      const rawCallbackUrl = process.env.KCP_CALLBACK_URL
         || `${req.protocol}://${req.get('host')}/api/auth/kcp/callback`;
+      // 일부 KCP 리턴에서는 param_opt_1 등이 POST body로 전달되지 않는 케이스가 있어,
+      // 토큰을 쿼리로도 함께 전달해 결과 저장 토큰을 확실히 매칭한다.
+      const callbackUrl = appendQueryToken(rawCallbackUrl, pending.token);
 
       const payload = await kcpService.createRequestPayload({
         callbackUrl,
         token: pending.token,
         paramOpt2: req.query.flow || 'register',
         paramOpt3: req.query.returnTo || '',
+      });
+
+      // callback에서 token이 유실되는 케이스 대비: orderId로도 역추적 가능하도록 저장한다.
+      kcpResultStore.saveResult(pending.token, {
+        status: 'pending',
+        cert_completed: false,
+        success: false,
+        ordr_idxx: payload.orderId,
       });
 
       return res.json({
@@ -45,9 +56,10 @@ class KcpController {
   }
 
   async callback(req, res) {
-    const token = req.body.param_opt_1 || req.query.token || '';
+    let token = req.body.param_opt_1 || req.query.token || '';
 
     try {
+      console.log('[KCP] callback hit', { token, res_cd: req.body?.res_cd, ip: req.ip });
       const {
         site_cd: siteCd = '',
         ordr_idxx: orderId = '',
@@ -59,8 +71,16 @@ class KcpController {
         res_msg: resMsg = '',
       } = req.body;
 
+      if (!token && orderId) {
+        const found = kcpResultStore.findTokenByOrderId(orderId);
+        if (found) {
+          token = found;
+          console.log('[KCP] token recovered from orderId', { orderId, token });
+        }
+      }
+
       if (!token) {
-        throw new Error('KCP 결과 토큰이 없습니다.');
+        throw new Error('KCP 결과 토큰이 없습니다. (param_opt_1/token 누락)');
       }
 
       if (certEncUse !== 'Y') {
@@ -264,3 +284,10 @@ function decodeURIComponentSafe(value) {
 }
 
 module.exports = new KcpController();
+
+function appendQueryToken(url, token) {
+  if (!url) return url;
+  const hasQuery = url.includes('?');
+  const sep = hasQuery ? '&' : '?';
+  return `${url}${sep}token=${encodeURIComponent(token)}`;
+}

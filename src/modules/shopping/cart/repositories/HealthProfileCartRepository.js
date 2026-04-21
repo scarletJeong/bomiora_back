@@ -44,6 +44,32 @@ class HealthProfileCartRepository {
     );
     return result.affectedRows > 0;
   }
+
+  async findLatestByOrderAndItem({ mbId, odId, itId }) {
+    if (!mbId || !itId) return null;
+    if (odId) {
+      const [rows] = await pool.query(
+        `SELECT hp_doc_name, hp_rsvt_date, hp_rsvt_stime, hp_rsvt_etime
+         FROM bomiora_shop_health_profiles_cart
+         WHERE mb_id = ? AND REPLACE(od_id, ',', '') = ? AND it_id = ?
+         ORDER BY hp_no DESC
+         LIMIT 1`,
+        [mbId, odId, itId]
+      );
+      if (rows.length) return rows[0];
+    }
+
+    // od_id 매칭이 실패하는 환경(형변환/저장 포맷 차이) 대비 fallback
+    const [fallbackRows] = await pool.query(
+      `SELECT hp_doc_name, hp_rsvt_date, hp_rsvt_stime, hp_rsvt_etime
+       FROM bomiora_shop_health_profiles_cart
+       WHERE mb_id = ? AND it_id = ? AND hp_status = '쇼핑'
+       ORDER BY hp_no DESC
+       LIMIT 1`,
+      [mbId, itId]
+    );
+    return fallbackRows.length ? fallbackRows[0] : null;
+  }
 }
 
 module.exports = new HealthProfileCartRepository();

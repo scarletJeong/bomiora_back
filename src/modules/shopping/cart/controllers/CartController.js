@@ -76,14 +76,69 @@ class CartController {
     return null;
   }
 
+  /**
+   * MySQL DATE/DATETIME이 mysql2에서 Date 객체로 올 때 String().substring(0,10) 하면
+   * "Mon Apr 21" 처럼 잘려 Dart DateTime.tryParse 실패 → 항상 YYYY-MM-DD로 정규화.
+   */
+  formatSqlDateForApi(value) {
+    if (value == null || value === '') return null;
+    if (value instanceof Date) {
+      if (Number.isNaN(value.getTime())) return null;
+      const y = value.getFullYear();
+      const m = String(value.getMonth() + 1).padStart(2, '0');
+      const d = String(value.getDate()).padStart(2, '0');
+      return `${y}-${m}-${d}`;
+    }
+    const s = String(value).trim();
+    if (!s) return null;
+    const iso = s.match(/^(\d{4}-\d{2}-\d{2})/);
+    if (iso) return iso[1];
+    const parsed = new Date(s);
+    if (Number.isNaN(parsed.getTime())) return null;
+    const y = parsed.getFullYear();
+    const m = String(parsed.getMonth() + 1).padStart(2, '0');
+    const d = String(parsed.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+
   async convertCartToMap(cart) {
-    const itId = this.bufferToString(cart.it_id);
+    const clean = (value) =>
+      String(this.bufferToString(value) ?? '')
+        .replace(/\u0000/g, '')
+        .trim();
+    const cleanNumberString = (value) =>
+      clean(value).replace(/[^0-9]/g, '');
+    const itId = clean(cart.it_id);
+    const mbId = clean(cart.mb_id);
+    const odId = cleanNumberString(cart.od_id);
     const product = await cartRepository.findProductById(itId);
     const imageUrl = product ? this.buildImageUrl(product, itId) : null;
+    const reservation =
+      await healthProfileCartRepository.findLatestByOrderAndItem({
+        mbId,
+        odId,
+        itId
+      });
+
+    const rawDate = reservation?.hp_rsvt_date;
+    const hpRsvtDate = this.formatSqlDateForApi(rawDate);
+    const hpDocName = reservation?.hp_doc_name
+      ? String(reservation.hp_doc_name).trim()
+      : null;
+    const hpRsvtStime = reservation?.hp_rsvt_stime
+      ? String(reservation.hp_rsvt_stime).trim()
+      : null;
+    const hpRsvtEtime = reservation?.hp_rsvt_etime
+      ? String(reservation.hp_rsvt_etime).trim()
+      : null;
+    const reservationTimeRange = hpRsvtStime && hpRsvtEtime
+      ? `${hpRsvtStime} ~ ${hpRsvtEtime}`
+      : (hpRsvtStime || hpRsvtEtime || null);
+
     return {
       ct_id: cart.ct_id,
       od_id: cart.od_id,
-      mb_id: this.bufferToString(cart.mb_id),
+      mb_id: mbId,
       it_id: itId,
       it_name: this.bufferToString(cart.it_name),
       it_subject: this.bufferToString(cart.it_subject) || '',
@@ -94,10 +149,22 @@ class CartController {
       io_id: this.bufferToString(cart.io_id) || '',
       io_price: cart.io_price,
       ct_kind: this.bufferToString(cart.ct_kind) || 'general',
+      ct_mb_inf: this.bufferToString(cart.ct_mb_inf) || '',
+      point_usage_rate: this.toInt(
+        (product && (product.point_usage_rate ?? product.it_point_usage_rate)) ?? 10,
+        10
+      ),
       ct_time: cart.ct_time,
       image_url: imageUrl,
       it_img: imageUrl,
-      it_img1: imageUrl
+      it_img1: imageUrl,
+      hp_rsvt_date: hpRsvtDate,
+      hp_rsvt_stime: hpRsvtStime,
+      hp_rsvt_etime: hpRsvtEtime,
+      hp_doc_name: hpDocName,
+      doctor_name: hpDocName,
+      reservation_date: hpRsvtDate,
+      reservation_time: reservationTimeRange
     };
   }
 
@@ -173,16 +240,8 @@ class CartController {
       if (!product) return res.status(404).json({ success: false, message: '제품을 찾을 수 없습니다.' });
       if (!price) price = this.toInt(product.it_price, 0);
 
-      // bomiora_shop_item_new 테이블에서 가져온 원본 데이터 로그 출력
       const itIdStr = this.bufferToString(product.it_id);
       const itKindStr = this.bufferToString(product.it_kind);
-      
-      console.log('📦 [장바구니 추가] bomiora_shop_item_new 테이블 원본 데이터:');
-      console.log('  - it_id (원본):', product.it_id);
-      console.log('  - it_id (문자열):', itIdStr);
-      console.log('  - it_kind (원본):', product.it_kind);
-      console.log('  - it_kind (문자열):', itKindStr);
-      console.log('  - 프론트엔드에서 전달된 ct_kind:', req.body.ct_kind);
 
       const ioIdForSearch = optionId || '';
       const existing = await cartRepository.findSameItemOption(
@@ -201,13 +260,7 @@ class CartController {
         });
         const updatedData = await this.convertCartToMap(updated);
         const ctKindStr = this.bufferToString(updatedData.ct_kind);
-        
-        console.log('📥 [API POST] 응답 본문 (기존 항목 업데이트):');
-        console.log('  - it_kind (원본):', product.it_kind);
-        console.log('  - it_kind (문자열):', itKindStr);
-        console.log('  - ct_kind (원본):', updatedData.ct_kind);
-        console.log('  - ct_kind (문자열):', ctKindStr);
-        
+
         return res.json({ 
           success: true, 
           message: '장바구니에 추가되었습니다.', 
@@ -262,12 +315,6 @@ class CartController {
 
       const cartData = await this.convertCartToMap(cart);
       const ctKindStr = this.bufferToString(cartData.ct_kind);
-      
-      console.log('📥 [API POST] 응답 본문에 포함될 데이터:');
-      console.log('  - it_kind (원본):', product.it_kind);
-      console.log('  - it_kind (문자열):', itKindStr);
-      console.log('  - ct_kind (원본):', cartData.ct_kind);
-      console.log('  - ct_kind (문자열):', ctKindStr);
 
       return res.json({ 
         success: true, 
@@ -369,6 +416,11 @@ class CartController {
 
   async saveHealthProfileForPrescription(req, res) {
     try {
+      const mbId = req.body.mb_id;
+      if (!mbId) {
+        return res.status(400).json({ success: false, message: 'mb_id는 필수입니다.' });
+      }
+
       const ctStatus = this.normalizeCartStatus(req.body.ct_status);
       const odIdRaw = req.body.od_id;
       if (odIdRaw == null) throw new Error('od_id는 필수입니다.');
@@ -382,102 +434,144 @@ class CartController {
         reservationEndTime = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
       }
       const reservationDate = req.body.reservationDate ? String(req.body.reservationDate).substring(0, 10) : null;
-      await healthProfileCartRepository.insert({
-        mb_id: req.body.mb_id,
-        it_id: req.body.it_id,
-        od_id: odId,
-        answer1: req.body.answer1,
-        answer2: req.body.answer2,
-        answer3: req.body.answer3,
-        answer4: req.body.answer4,
-        answer5: req.body.answer5,
-        answer6: req.body.answer6,
-        answer7: req.body.answer7,
-        answer8: req.body.answer8,
-        answer9: req.body.answer9,
-        answer10: req.body.answer10,
-        answer11: req.body.answer11,
-        answer12: req.body.answer12,
-        answer13: req.body.answer13,
-        answer13Period: req.body.answer13Period,
-        answer13Dosage: req.body.answer13Dosage,
-        answer13Medicine: req.body.answer13Medicine,
-        answer71: req.body.answer71,
-        answer13Sideeffect: req.body.answer13Sideeffect,
-        reservationDate,
-        reservationTime,
-        reservationEndTime,
-        reservationName: req.body.reservationName,
-        reservationTel: req.body.reservationTel,
-        doctorName: req.body.doctorName,
-        hpMemo: req.body.pfMemo || '',
-        hp_ip: '127.0.0.1'
-      });
+      const incomingItems = Array.isArray(req.body.items) && req.body.items.length
+        ? req.body.items
+        : [
+            {
+              it_id: req.body.it_id,
+              quantity: req.body.quantity,
+              price: req.body.price,
+              option_id: req.body.option_id,
+              option_text: req.body.option_text,
+              option_price: req.body.option_price,
+              ct_kind: req.body.ct_kind
+            }
+          ];
 
-      const mbId = req.body.mb_id;
-      const itId = req.body.it_id;
-      const quantity = this.toInt(req.body.quantity, 1);
-      let price = this.toInt(req.body.price, 0);
-      const optionId = req.body.option_id || '';
-      const optionText = req.body.option_text || '';
-      const optionPrice = req.body.option_price != null ? this.toInt(req.body.option_price, 0) : 0;
-      const product = await cartRepository.findProductById(itId);
-      if (!product) return res.status(404).json({ success: false, message: '제품을 찾을 수 없습니다.' });
-      if (!price) price = this.toInt(product.it_price, 0);
+      const normalizedItems = incomingItems
+        .map((item) => ({
+          itId: item?.it_id != null ? String(item.it_id).trim() : '',
+          quantity: this.toInt(item?.quantity, 1),
+          price: this.toInt(item?.price, 0),
+          optionId: item?.option_id != null ? String(item.option_id) : '',
+          optionText: item?.option_text != null ? String(item.option_text) : '',
+          optionPrice: item?.option_price != null ? this.toInt(item.option_price, 0) : 0,
+          ctKind: item?.ct_kind != null ? String(item.ct_kind).trim() : ''
+        }))
+        .filter((item) => item.itId);
 
-      const cart = await cartRepository.insertCart({
-        od_id: odId,
-        mb_id: mbId,
-        it_id: itId,
-        it_name: product.it_name || '',
-        it_subject: '',
-        it_sc_type: this.toInt(product.it_sc_type, 0),
-        it_sc_method: this.toInt(product.it_sc_method, 0),
-        it_sc_price: this.toInt(product.it_sc_price, 0),
-        it_sc_minimum: this.toInt(product.it_sc_minimum, 0),
-        it_sc_qty: this.toInt(product.it_sc_qty, 0),
-        ct_status: ctStatus,
-        ct_history: '',
-        ct_price: price,
-        ct_point: this.calculatePoint(product, optionId, optionPrice, quantity),
-        cp_price: 0,
-        ct_point_use: 0,
-        ct_stock_use: 0,
-        ct_option: optionText,
-        ct_qty: quantity,
-        ct_notax: 0,
-        io_id: optionId,
-        io_type: 0,
-        io_price: optionPrice,
-        ct_ip: '127.0.0.1',
-        ct_send_cost: this.calculateSendCost(product),
-        ct_direct: 0,
-        ct_select: 0,
-        inf_code: '',
-        ct_output: 'Y',
-        ct_kind: req.body.ct_kind || (this.bufferToString(product.it_kind) === 'prescription' ? 'prescription' : 'general'),
-        ct_mb_inf: '',
-        ct_inf_price: 0,
-        ct_settlement_status: 'N'
-      });
+      if (!normalizedItems.length) {
+        return res.status(400).json({ success: false, message: 'it_id 또는 items[].it_id가 필요합니다.' });
+      }
 
-      const itKindStrPrescription = this.bufferToString(product.it_kind);
-      const ctKindStr = this.bufferToString(cart.ct_kind);
-      
-      console.log('📥 [API POST] 응답 본문 (처방 예약):');
-      console.log('  - it_kind (원본):', product.it_kind);
-      console.log('  - it_kind (문자열):', itKindStrPrescription);
-      console.log('  - ct_kind (원본):', cart.ct_kind);
-      console.log('  - ct_kind (문자열):', ctKindStr);
+      const cartIds = [];
+      const failedItems = [];
+      let firstItKind = null;
+      let firstCtKind = null;
 
+      for (const item of normalizedItems) {
+        const product = await cartRepository.findProductById(item.itId);
+        if (!product) {
+          failedItems.push({ it_id: item.itId, message: '제품을 찾을 수 없습니다.' });
+          continue;
+        }
+
+        const finalPrice = item.price || this.toInt(product.it_price, 0);
+        const finalCtKind =
+          item.ctKind || (this.bufferToString(product.it_kind) === 'prescription' ? 'prescription' : 'general');
+
+        await healthProfileCartRepository.insert({
+          mb_id: mbId,
+          it_id: item.itId,
+          od_id: odId,
+          answer1: req.body.answer1,
+          answer2: req.body.answer2,
+          answer3: req.body.answer3,
+          answer4: req.body.answer4,
+          answer5: req.body.answer5,
+          answer6: req.body.answer6,
+          answer7: req.body.answer7,
+          answer8: req.body.answer8,
+          answer9: req.body.answer9,
+          answer10: req.body.answer10,
+          answer11: req.body.answer11,
+          answer12: req.body.answer12,
+          answer13: req.body.answer13,
+          answer13Period: req.body.answer13Period,
+          answer13Dosage: req.body.answer13Dosage,
+          answer13Medicine: req.body.answer13Medicine,
+          answer71: req.body.answer71,
+          answer13Sideeffect: req.body.answer13Sideeffect,
+          reservationDate,
+          reservationTime,
+          reservationEndTime,
+          reservationName: req.body.reservationName,
+          reservationTel: req.body.reservationTel,
+          doctorName: req.body.doctorName,
+          hpMemo: req.body.pfMemo || '',
+          hp_ip: '127.0.0.1'
+        });
+
+        const cart = await cartRepository.insertCart({
+          od_id: odId,
+          mb_id: mbId,
+          it_id: item.itId,
+          it_name: product.it_name || '',
+          it_subject: '',
+          it_sc_type: this.toInt(product.it_sc_type, 0),
+          it_sc_method: this.toInt(product.it_sc_method, 0),
+          it_sc_price: this.toInt(product.it_sc_price, 0),
+          it_sc_minimum: this.toInt(product.it_sc_minimum, 0),
+          it_sc_qty: this.toInt(product.it_sc_qty, 0),
+          ct_status: ctStatus,
+          ct_history: '',
+          ct_price: finalPrice,
+          ct_point: this.calculatePoint(product, item.optionId, item.optionPrice, item.quantity),
+          cp_price: 0,
+          ct_point_use: 0,
+          ct_stock_use: 0,
+          ct_option: item.optionText,
+          ct_qty: item.quantity,
+          ct_notax: 0,
+          io_id: item.optionId,
+          io_type: 0,
+          io_price: item.optionPrice,
+          ct_ip: '127.0.0.1',
+          ct_send_cost: this.calculateSendCost(product),
+          ct_direct: 0,
+          ct_select: 0,
+          inf_code: '',
+          ct_output: 'Y',
+          ct_kind: finalCtKind,
+          ct_mb_inf: '',
+          ct_inf_price: 0,
+          ct_settlement_status: 'N'
+        });
+
+        cartIds.push(cart.ct_id);
+        if (firstItKind == null) firstItKind = this.bufferToString(product.it_kind);
+        if (firstCtKind == null) firstCtKind = this.bufferToString(cart.ct_kind);
+      }
+
+      if (!cartIds.length) {
+        return res.status(404).json({
+          success: false,
+          message: '예약 가능한 상품을 찾지 못했습니다.',
+          failed_items: failedItems
+        });
+      }
+
+      const partial = failedItems.length > 0;
       return res.json({
         success: true,
-        message: '처방 예약이 완료되었습니다.',
-        cart_id: cart.ct_id,
+        message: partial ? '일부 상품 예약이 완료되었습니다.' : '처방 예약이 완료되었습니다.',
+        cart_id: cartIds[0],
+        cart_ids: cartIds,
         od_id: odId,
-        it_kind: itKindStrPrescription,
-        ct_kind: ctKindStr,
-        ct_status: ctStatus
+        it_kind: firstItKind,
+        ct_kind: firstCtKind,
+        ct_status: ctStatus,
+        failed_items: failedItems
       });
     } catch (error) {
       return res.status(500).json({ success: false, message: '처방 예약 중 오류가 발생했습니다.', error: error.message });

@@ -67,6 +67,16 @@ class ProductController {
     const itIdStr = this.bufferToString(row.it_id);
     const itKindStr = this.bufferToString(row.it_kind);
     const itExplain = row.it_explain ?? row.it_explan ?? null;
+    const itSubjectRaw = this.bufferToString(row.it_subject);
+    const itSubjectStr =
+      itSubjectRaw != null && String(itSubjectRaw).trim() !== ''
+        ? String(itSubjectRaw).trim()
+        : null;
+    const itBasicRaw = this.bufferToString(row.it_basic);
+    const itBasicStr =
+      itBasicRaw != null && String(itBasicRaw).trim() !== ''
+        ? String(itBasicRaw).trim()
+        : null;
     const imageFields = {};
     for (let i = 1; i <= 9; i += 1) {
       const key = `it_img${i}`;
@@ -77,7 +87,10 @@ class ProductController {
     return {
       id: itIdStr,
       name: row.it_name,
+      // 목록용 짧은 설명(it_basic). 상세 본문은 it_explain → description
       description: itExplain,
+      it_basic: itBasicStr,
+      it_subject: itSubjectStr,
       price: row.it_price,
       originalPrice: row.it_cust_price,
       imageUrl: this.processImageUrl(row),
@@ -93,7 +106,8 @@ class ProductController {
         it_id: itIdStr,
         it_kind: itKindStr,
         it_explain: itExplain,
-        it_basic: row.it_basic,
+        it_subject: itSubjectStr,
+        it_basic: itBasicStr,
         it_prescription: row.it_prescription,
         it_takeway: row.it_takeway,
         it_package: row.it_package,

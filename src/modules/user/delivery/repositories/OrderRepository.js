@@ -84,6 +84,7 @@ class OrderRepository {
               od_memo, od_status, od_cart_count, od_cart_price, od_cart_coupon,
               od_send_cost, od_send_cost2, od_send_coupon, od_receipt_price, od_cancel_price, od_receipt_point, od_coupon, od_misu,
               od_settle_case, od_bank_account, od_delivery_company, od_invoice,
+              od_pg, od_tno, od_test, od_other_pay_type,
               od_shop_memo, od_mod_history,
               NULLIF(od_time, '0000-00-00 00:00:00') AS od_time,
               NULLIF(od_invoice_time, '0000-00-00 00:00:00') AS od_invoice_time,
@@ -150,7 +151,7 @@ class OrderRepository {
     );
     const map = {};
     rows.forEach((row) => {
-      map[Number(row.od_id)] = Number(row.is_prescription || 0) === 1;
+      map[String(row.od_id)] = Number(row.is_prescription || 0) === 1;
     });
     return map;
   }
