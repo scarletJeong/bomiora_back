@@ -92,9 +92,19 @@ class ImageProxyController {
         return res.sendStatus(response.status);
       }
 
+      const responseContentType = (response.headers.get('content-type') || '').toLowerCase();
+      // 이미지 요청인데 HTML/문서가 내려오면 Flutter 웹에서 ImageCodecException이 발생하므로 차단
+      if (responseContentType && !responseContentType.startsWith('image/')) {
+        return res.sendStatus(415);
+      }
+
       const bytes = Buffer.from(await response.arrayBuffer());
-      const contentType = this.detectContentType(String(targetUrl), response.headers.get('content-type'));
+      const contentType = this.detectContentType(
+        String(targetUrl),
+        response.headers.get('content-type')
+      );
       res.setHeader('Content-Type', contentType);
+      res.setHeader('Cache-Control', 'no-store');
       return res.status(200).send(bytes);
     } catch (error) {
       return res.sendStatus(500);
