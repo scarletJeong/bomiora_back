@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const userController = require('../controllers/UserController');
 const kcpRoutes = require('./kcpRoutes');
+const otpRoutes = require('./otpRoutes');
 
 /**
  * @route   POST /api/auth/login
@@ -23,5 +24,6 @@ router.post('/forgot-password', (req, res) => userController.forgotPassword(req,
 router.post('/reset-password', (req, res) => userController.resetPassword(req, res));
 router.post('/withdraw', (req, res) => userController.withdraw(req, res));
 router.use('/kcp', kcpRoutes);
+router.use('/otp', otpRoutes);
 
 module.exports = router;

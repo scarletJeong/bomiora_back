@@ -15,9 +15,20 @@ class KcpService {
     const homeDir = this.resolveHomeDir(envHomeDir, fallbackHomeDir);
     const explicitBinary = process.env.KCP_CTCLI_PATH || '';
     const isTestMode = String(process.env.KCP_TEST_MODE || 'true').toLowerCase() !== 'false';
-    const certUrl = process.env.KCP_CERT_URL || (isTestMode
-      ? this.defaultCertUrl
-      : 'https://cert.kcp.co.kr/kcp_cert/cert_view.jsp');
+    // KCP_CERT_URL: 폼 action 전체 URL 직접 지정(최우선).
+    // KCP_CERT_ENTRY: 기본 telcom → telcomSelect.do 로 POST(cert_view.jsp 생략).
+    //   cert_view | jsp | legacy → 기존 cert_view.jsp 경로.
+    const certEntry = String(process.env.KCP_CERT_ENTRY || 'telcom').toLowerCase();
+    const useLegacyCertView =
+      certEntry === 'cert_view' || certEntry === 'jsp' || certEntry === 'legacy';
+    const certUrlDefault = useLegacyCertView
+      ? (isTestMode
+        ? this.defaultCertUrl
+        : 'https://cert.kcp.co.kr/kcp_cert/cert_view.jsp')
+      : (isTestMode
+        ? 'https://testcert.kcp.co.kr/telcomSelect.do'
+        : 'https://cert.kcp.co.kr/telcomSelect.do');
+    const certUrl = process.env.KCP_CERT_URL || certUrlDefault;
     const siteCd = process.env.KCP_SITE_CD || '';
     const webSiteId = process.env.KCP_WEB_SITEID || '';
     const encKey = process.env.KCP_ENC_KEY || '';
@@ -239,7 +250,7 @@ class KcpService {
   <title>KCP 본인인증 요청</title>
 </head>
 <body>
-  <form id="kcp-auth-form" method="post" action="${this.escapeHtml(certUrl)}">
+  <form id="kcp-auth-form" method="post" action="${this.escapeHtml(certUrl)}" target="_self">
     ${inputs}
   </form>
   <script>
@@ -254,7 +265,7 @@ class KcpService {
   buildCallbackHtml({ token, success, message }) {
     const title = success ? '본인인증이 완료되었습니다.' : '본인인증 처리 중 오류가 발생했습니다.';
     const bodyMessage = message || (success
-      ? '앱으로 돌아가 결과를 확인해 주세요.'
+      ? '이 창은 자동으로 닫힙니다. 앱으로 돌아가 주세요.'
       : '잠시 후 다시 시도해 주세요.');
 
     return `<!DOCTYPE html>
@@ -263,12 +274,65 @@ class KcpService {
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>KCP 인증 결과</title>
+  <style>
+    body { font-family: sans-serif; display: flex; align-items: center;
+           justify-content: center; min-height: 100vh; margin: 0; background: #f9f9f9; }
+    .box { text-align: center; padding: 32px; max-width: 420px; }
+    .spinner { width: 36px; height: 36px; border: 3px solid #eee;
+               border-top-color: #FF5A8D; border-radius: 50%;
+               animation: kcpSpin 0.8s linear infinite; margin: 0 auto 16px; }
+    @keyframes kcpSpin { to { transform: rotate(360deg); } }
+  </style>
 </head>
-<body data-kcp-token="${this.escapeHtml(token || '')}" data-kcp-success="${success ? 'true' : 'false'}">
-  <div style="padding:24px;font-family:sans-serif;">
-    <h2 style="margin:0 0 12px;">${this.escapeHtml(title)}</h2>
-    <p style="margin:0;color:#555;">${this.escapeHtml(bodyMessage)}</p>
+<body
+  data-kcp-token="${this.escapeHtml(token || '')}"
+  data-kcp-success="${success ? 'true' : 'false'}"
+>
+  <div class="box">
+    <div class="spinner"></div>
+    <h2 style="margin:0 0 12px;color:#222;font-size:1.1rem;">${this.escapeHtml(title)}</h2>
+    <p style="margin:0;color:#555;font-size:0.95rem;">${this.escapeHtml(bodyMessage)}</p>
   </div>
+  <script>
+    (function () {
+      var token = ${JSON.stringify(token || '')};
+      var success = ${success ? 'true' : 'false'};
+
+      function notifyOpener() {
+        try {
+          var payload = { type: 'KCP_CERT_DONE', token: token, success: success };
+          if (!window.opener || window.opener.closed) {
+            return;
+          }
+          // opener가 iframe(WebView)이면 opener만으로는 부모 탭이 못 받음 → opener.top에도 전달
+          try {
+            window.opener.postMessage(payload, '*');
+          } catch (e0) {}
+          try {
+            var topWin = window.opener.top;
+            if (topWin && topWin !== window.opener) {
+              topWin.postMessage(payload, '*');
+            }
+          } catch (e1) {}
+        } catch (e) {}
+      }
+
+      function tryClose() {
+        try { window.close(); } catch (e) {}
+        try { self.close(); } catch (e2) {}
+      }
+
+      notifyOpener();
+      tryClose();
+
+      [100, 300, 600, 1000, 2000].forEach(function (ms) {
+        setTimeout(function () {
+          notifyOpener();
+          tryClose();
+        }, ms);
+      });
+    })();
+  </script>
 </body>
 </html>`;
   }
