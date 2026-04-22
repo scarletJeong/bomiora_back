@@ -55,11 +55,22 @@ app.use('/api/user/orders', require('./src/modules/user/delivery/routes/orderRou
 app.use('/api/products', require('./src/modules/shopping/product/routes/productRoutes'));
 app.use('/api/wish', require('./src/modules/shopping/wish/routes/wishRoutes'));
 app.use('/api/event', require('./src/modules/shopping/event/routes/eventRoutes'));
+app.use('/api/announcement', require('./src/modules/community/announcement/routes/announcementRoutes'));
+app.use('/api/faq', require('./src/modules/community/faq/routes/faqRoutes'));
+app.use('/api/content', require('./src/modules/content/routes/contentRoutes'));
 app.use('/api/cart', require('./src/modules/shopping/cart/routes/cartRoutes'));
+app.use('/api/kcp-pay', require('./src/modules/shopping/kcp_pay/routes/kcpPayRoutes'));
 app.use('/api/proxy', require('./src/modules/common/imageProxy/routes/imageProxyRoutes'));
 app.use('/api/shop', require('./src/modules/common/shopdefault/routes/shopDefaultRoutes'));
 app.use('/api/config', require('./src/modules/config/routes/configRoutes'));
 app.use('/api/address', require('./src/modules/common/address/routes/addressSearchRoutes'));
+app.use('/api/get-category', require('./src/modules/common/get_category/routes/getCategoryRoutes'));
+app.use('/api/get_category', require('./src/modules/common/get_category/routes/getCategoryRoutes'));
+
+// 브라우저 기본 favicon 요청으로 콘솔에 404가 쌓이지 않도록
+app.get('/favicon.ico', (req, res) => {
+  res.status(204).end();
+});
 
 // 404 핸들러
 app.use((req, res) => {

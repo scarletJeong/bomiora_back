@@ -1,5 +1,6 @@
 const orderRepository = require('../repositories/OrderRepository');
 const orderCartRepository = require('../repositories/OrderCartRepository');
+const kcpApprovalService = require('../../../shopping/kcp_pay/services/kcpApprovalService');
 
 class OrderController {
   bufferToString(value) {
@@ -94,6 +95,37 @@ class OrderController {
       trade_mony: String(tradeMony),
     });
     return `${base}?${qs.toString()}`;
+  }
+
+  /**
+   * 주문 취소 시 KCP 망취소 대상 여부 (신용카드 승인 건, 가상계좌·휴대폰 등 제외).
+   * buildKcpCardReceiptUrl 과 동일한 PG/결제수단 판별을 사용한다.
+   */
+  isKcpCardNetworkCancelTarget(row) {
+    if (this.bufferToString(row.od_pg || '').toLowerCase() !== 'kcp') return false;
+    const tno = this.bufferToString(row.od_tno || '').trim();
+    if (!tno || tno.startsWith('PENDING-')) return false;
+    const settleRaw = this.bufferToString(row.od_settle_case || '');
+    const blockSubstrings = ['가상', '무통장', '계좌이체', '휴대폰'];
+    for (const s of blockSubstrings) {
+      if (settleRaw.includes(s)) return false;
+    }
+    return true;
+  }
+
+  /** KCP Pay 취소 mod_type — 에스크로는 STE2, 일반 카드는 STSC (KcpPayController.resolveCancelModType 와 정합). */
+  resolveKcpCancelModTypeForOrder(row) {
+    const isEscrow = this.toInt(row.od_escrow) === 1;
+    if (isEscrow) return 'STE2';
+    return 'STSC';
+  }
+
+  resolveClientIp(req) {
+    const xff = String(req.headers['x-forwarded-for'] || '')
+      .split(',')[0]
+      .trim();
+    if (xff) return xff;
+    return String(req.ip || req.connection?.remoteAddress || '127.0.0.1');
   }
 
   computeOrderTotal(row) {
@@ -318,6 +350,37 @@ class OrderController {
       if (order.mb_id !== mbId) throw new Error('주문 정보가 일치하지 않습니다.');
       if (!['주문', '입금', '준비'].includes(order.od_status)) throw new Error('취소할 수 없는 상태입니다.');
       if (this.toInt(order.od_cancel_price) > 0) throw new Error('이미 취소된 주문입니다.');
+
+      if (this.isKcpCardNetworkCancelTarget(order)) {
+        const tno = this.bufferToString(order.od_tno || '').trim();
+        const modType = this.resolveKcpCancelModTypeForOrder(order);
+        const clientIp = this.resolveClientIp(req);
+        let kcpResult;
+        try {
+          kcpResult = await kcpApprovalService.cancel({
+            orderId: odId,
+            tno,
+            modType,
+            modDesc: 'USER_ORDER_CANCEL',
+            clientIp,
+          });
+        } catch (kcpErr) {
+          console.error('[OrderController] KCP 망취소(브리지) 실패', { odId, message: kcpErr.message });
+          return res.status(400).json({
+            error: kcpErr.message || '카드 승인 취소(망취소) 처리에 실패했습니다.',
+            kcp: { code: 'BRIDGE', message: kcpErr.message },
+          });
+        }
+        if (!kcpResult.success) {
+          const resCd = String(kcpResult.res_cd || '');
+          const resMsg = String(kcpResult.res_msg || '승인 취소에 실패했습니다.');
+          console.error('[OrderController] KCP 망취소 거절', { odId, res_cd: resCd, res_msg: resMsg, modType });
+          return res.status(400).json({
+            error: `결제 취소에 실패했습니다. (${resCd}) ${resMsg}`,
+            kcp: { code: resCd, message: resMsg, modType },
+          });
+        }
+      }
 
       await orderRepository.updateOrder(odId, {
         od_status: '취소',

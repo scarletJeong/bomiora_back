@@ -1,6 +1,6 @@
 class KcpPayService {
   getConfig() {
-    const siteCd = (process.env.KCP_PAY_SITE_CD || process.env.KCP_SITE_CD || '').trim();
+    let siteCd = (process.env.KCP_PAY_SITE_CD || process.env.KCP_SITE_CD || '').trim();
     const isTestSiteCode = /^T000/i.test(siteCd);
     const testMode = String(
       process.env.KCP_PAY_TEST_MODE || (isTestSiteCode ? 'true' : 'false')
@@ -11,9 +11,16 @@ class KcpPayService {
       ? 'https://testpay.kcp.co.kr/plugin/payplus_web.jsp'
       : 'https://pay.kcp.co.kr/plugin/payplus_web.jsp');
     const callbackUrl = process.env.KCP_PAY_CALLBACK_URL || '';
+    const siteCdAsIs = String(process.env.KCP_PAY_SITE_CD_AS_IS || '').toLowerCase() === '1'
+      || String(process.env.KCP_PAY_SITE_CD_AS_IS || '').toLowerCase() === 'true';
 
     if (!siteCd) {
       throw new Error('KCP_PAY_SITE_CD 환경변수가 필요합니다.');
+    }
+
+    // 그누보드 `settle_kcp.inc.php`: 운영 상점은 site_cd가 SR 로 시작(환경에는 미포함 저장된 경우 SR 접두)
+    if (!siteCdAsIs && !isTestSiteCode && !testMode && siteCd && !/^SR/i.test(siteCd)) {
+      siteCd = `SR${siteCd}`;
     }
 
     return {
@@ -26,14 +33,81 @@ class KcpPayService {
     };
   }
 
-  mapMethod(method) {
-    switch (String(method || '').toLowerCase()) {
-      case 'bank':
-        return { payMethod: '010000000000', settleCase: '계좌이체' };
-      case 'vbank':
-        return { payMethod: '001000000000', settleCase: '가상계좌' };
+  /**
+   * 영카트 `orderform.sub.php` (에스크로 good_info) 와 동일한 형식
+   * @param {string} orderId
+   * @param {Array<{ it_name?: string, ct_qty?: number, ct_price?: number }>} cartRows
+   */
+  buildGoodInfo(orderId, cartRows) {
+    if (!Array.isArray(cartRows) || !cartRows.length) return '';
+    const RS = String.fromCharCode(30);
+    const US = String.fromCharCode(31);
+    const esc = (s) => String(s ?? '').replace(/[\r\n\x1E\x1F]/g, ' ').replace(/"/g, "'");
+    let out = '';
+    cartRows.forEach((row, i) => {
+      if (i > 0) out += RS;
+      const seq = i + 1;
+      out += `seq=${seq}${US}ordr_numb=${orderId}_${String(i).padStart(4, '0')}${US}good_name=${esc(row.it_name)}${US}good_cntx=${row.ct_qty ?? 1}${US}good_amtx=${row.ct_price ?? 0}${US}`;
+    });
+    return out;
+  }
+
+  rcvrZipx(receiver) {
+    if (!receiver || typeof receiver !== 'object') return '';
+    if (receiver.zip) return String(receiver.zip).replace(/[^0-9]/g, '');
+    const a = String(receiver.zip1 || '').replace(/[^0-9]/g, '');
+    const b = String(receiver.zip2 || '').replace(/[^0-9]/g, '');
+    return `${a}${b}`;
+  }
+
+  /**
+   * 영카트 `orderform.sub.php` 와 동일한 KCP `pay_method` 12자리.
+   * @param {string} method - `card`|`bank`|`vbank` 또는 `신용카드`|`계좌이체`|`가상계좌`
+   * @param {string} [explicitPayMethod] - `pay_method` 12자리(선택). `payment_method`와 일치할 때만 반영
+   */
+  mapMethod(method, explicitPayMethod) {
+    const fromText = this._mapMethodFromText(method);
+    const bits = String(explicitPayMethod || '').trim();
+    const allowed = new Set(['100000000000', '010000000000', '001000000000']);
+    if (!/^\d{12}$/.test(bits) || !allowed.has(bits)) {
+      return fromText;
+    }
+    if (bits === fromText.payMethod) {
+      return { payMethod: bits, settleCase: fromText.settleCase };
+    }
+    if (!String(method || '').trim()) {
+      return { payMethod: bits, settleCase: this.settleCaseFromPayMethodBits(bits) };
+    }
+    // 충돌 시 `payment_method` 기준(위조된 pay_method 무시)
+    return fromText;
+  }
+
+  _mapMethodFromText(method) {
+    const raw = String(method || '').trim();
+    const key = raw.toLowerCase();
+    if (key === 'bank' || raw === '계좌이체') {
+      return { payMethod: '010000000000', settleCase: '계좌이체' };
+    }
+    if (key === 'vbank' || raw === '가상계좌') {
+      return { payMethod: '001000000000', settleCase: '가상계좌' };
+    }
+    if (key === 'card' || raw === '신용카드') {
+      return { payMethod: '100000000000', settleCase: '신용카드' };
+    }
+    return { payMethod: '100000000000', settleCase: '신용카드' };
+  }
+
+  settleCaseFromPayMethodBits(bits) {
+    switch (String(bits)) {
+      case '010000000000':
+        return '계좌이체';
+      case '001000000000':
+        return '가상계좌';
+      case '000010000000':
+        return '휴대폰';
+      case '100000000000':
       default:
-        return { payMethod: '100000000000', settleCase: '신용카드' };
+        return '신용카드';
     }
   }
 
@@ -50,13 +124,18 @@ class KcpPayService {
     receiver,
     payMethod,
     escrowUse,
-    basketCount,
+    basketLineCount,
+    goodInfo,
+    shopUserId,
   }) {
+    const rcvrZipx = this.rcvrZipx(receiver);
+    const lineCount = Math.max(1, Number(basketLineCount) || 1);
+
     const fields = {
       req_tx: 'pay',
       site_cd: siteCd,
-      def_site_cd: siteCd,
       site_name: siteName,
+      def_site_cd: siteCd,
       pay_method: payMethod,
       ordr_idxx: orderId,
       good_name: goodsName,
@@ -69,11 +148,16 @@ class KcpPayService {
       rcvr_tel1: receiver.tel || '',
       rcvr_tel2: receiver.hp || '',
       rcvr_mail: buyer.email || '',
-      rcvr_zipx: receiver.zip || '',
+      rcvr_zipx: rcvrZipx,
       rcvr_add1: receiver.addr1 || '',
       rcvr_add2: receiver.addr2 || '',
+      payco_direct: '',
+      naverpay_direct: 'A',
+      kakaopay_direct: 'A',
+      quotaopt: '12',
       currency: 'WON',
       module_type: '01',
+      epnt_issu: '',
       res_cd: '',
       res_msg: '',
       tno: '',
@@ -82,22 +166,32 @@ class KcpPayService {
       enc_data: '',
       ret_pay_method: '',
       tran_cd: '',
-      use_pay_method: '',
-      app_time: '',
-      app_no: '',
-      card_name: '',
       bank_name: '',
-      bankname: '',
-      account: '',
-      va_date: '',
+      bank_issu: '',
+      use_pay_method: '',
+      cash_tsdtime: '',
       cash_yn: '',
+      cash_authno: '',
       cash_tr_code: '',
       cash_id_info: '',
+      good_expr: '0',
+      shop_user_id: String(shopUserId || '').trim(),
+      pt_memcorp_cd: '',
       escw_used: 'Y',
       pay_mod: escrowUse ? 'O' : 'N',
       deli_term: '03',
-      bask_cntx: String(basketCount),
-      good_info: '',
+      bask_cntx: String(lineCount),
+      good_info: goodInfo || '',
+      kcp_noint: 'N',
+      used_card_YN: 'N',
+      used_card: 'CCXA:CCXB:CCXC',
+      wish_vbank_list: '',
+      vcnt_expire_term: '1',
+      vcnt_expire_term_time: '235959',
+      disp_tax_yn: 'N',
+      site_logo: '',
+      eng_flag: 'N',
+      skin_indx: '1',
       kcp_token: token,
     };
 

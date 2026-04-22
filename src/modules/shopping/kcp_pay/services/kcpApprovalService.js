@@ -1,11 +1,78 @@
+const fs = require('fs');
 const path = require('path');
-const { execFile } = require('child_process');
+const { execFile, execFileSync } = require('child_process');
+
+function resolvePhpBinary() {
+  const fromEnv = String(process.env.PHP_PATH || process.env.PHP_BINARY || '').trim();
+  if (fromEnv) {
+    const isWinPathOnUnix =
+      process.platform !== 'win32' && /^[a-zA-Z]:[\\/]/.test(fromEnv);
+    if (isWinPathOnUnix) {
+      console.warn(
+        '[kcpApprovalService] PHP_PATH looks like a Windows path on',
+        process.platform,
+        '— ignored. On Linux set e.g. PHP_PATH=/usr/bin/php'
+      );
+    } else if (fs.existsSync(fromEnv)) {
+      return fromEnv;
+    } else {
+      console.warn('[kcpApprovalService] PHP_PATH not found, will try system php:', fromEnv);
+    }
+  }
+  if (process.platform === 'win32') {
+    const winCandidates = [
+      'C:\\xampp\\php\\php.exe',
+      'C:\\wamp64\\bin\\php\\php8.3.0\\php.exe',
+      'C:\\wamp64\\bin\\php\\php8.2.0\\php.exe',
+      'C:\\wamp64\\bin\\php\\php8.1.0\\php.exe',
+    ];
+    for (const c of winCandidates) {
+      if (fs.existsSync(c)) return c;
+    }
+  }
+  const linuxCandidates = [
+    '/usr/bin/php',
+    '/usr/bin/php8.4',
+    '/usr/bin/php8.3',
+    '/usr/bin/php8.2',
+    '/usr/bin/php8.1',
+    '/usr/bin/php8.0',
+    '/bin/php',
+  ];
+  for (const c of linuxCandidates) {
+    if (fs.existsSync(c)) return c;
+  }
+  if (process.platform !== 'win32') {
+    try {
+      const out = execFileSync('/usr/bin/which', ['php'], {
+        encoding: 'utf8',
+        timeout: 5000,
+        env: { ...process.env, PATH: process.env.PATH || '/usr/local/bin:/usr/bin:/bin' },
+      }).trim();
+      if (out && fs.existsSync(out)) return out;
+    } catch (_) {
+      /* which 실패 */
+    }
+    try {
+      const sh = execFileSync('/bin/sh', ['-c', 'command -v php 2>/dev/null'], {
+        encoding: 'utf8',
+        timeout: 5000,
+        env: { ...process.env, PATH: process.env.PATH || '/usr/local/bin:/usr/bin:/bin' },
+      }).trim();
+      if (sh && fs.existsSync(sh)) return sh;
+    } catch (_) {
+      /* 없음 */
+    }
+  }
+  return 'php';
+}
 
 function runPhpBridge(payload) {
   return new Promise((resolve, reject) => {
+    const phpBin = resolvePhpBinary();
     const scriptPath = path.join(__dirname, 'kcp_approval_bridge.php');
     const child = execFile(
-      'php',
+      phpBin,
       [scriptPath],
       {
         windowsHide: true,
@@ -14,11 +81,13 @@ function runPhpBridge(payload) {
       (error, stdout, stderr) => {
         const stderrText = String(stderr || '').trim();
         if (error) {
-          return reject(
-            new Error(
-              `KCP 승인 브리지 실행 실패: ${stderrText || error.message || 'unknown error'}`
-            )
-          );
+          const msg = String(stderrText || error.message || 'unknown error');
+          const hint =
+            (error.code === 'ENOENT' && String(phpBin) === 'php') ||
+            msg.includes('ENOENT')
+              ? ' (서버에 PHP CLI가 없거나 PATH에 없습니다. Ubuntu: sudo apt update && sudo apt install -y php-cli, 그다음 .env에 PHP_PATH=/usr/bin/php 후 pm2 restart)'
+              : '';
+          return reject(new Error(`KCP 승인 브리지 실행 실패: ${msg}${hint}`));
         }
 
         const text = String(stdout || '').trim();

@@ -43,6 +43,7 @@ class KcpPayController {
         mb_id: mbId,
         cart_ids: rawCartIds,
         payment_method: paymentMethod,
+        pay_method: clientPayMethodBits,
         escrow_use: escrowUse,
         shipping_cost: shippingCost,
         coupon_discount: couponDiscount,
@@ -93,9 +94,14 @@ class KcpPayController {
       }
 
       const config = kcpPayService.getConfig();
-      const mapped = kcpPayService.mapMethod(paymentMethod);
+      const mapped = kcpPayService.mapMethod(paymentMethod, clientPayMethodBits);
       const orderId = this.generateOrderId();
-      const basketCount = await kcpPayRepository.getDistinctItemCountByCartIds(mbId, cartIds);
+      const orderedCarts = cartIds
+        .map((id) => carts.find((c) => Number(c.ct_id) === id))
+        .filter(Boolean);
+      const cartRowsForKcp = orderedCarts.length ? orderedCarts : [...carts];
+      const goodInfo = kcpPayService.buildGoodInfo(orderId, cartRowsForKcp);
+      const basketLineCount = Math.max(1, cartRowsForKcp.length);
 
       const pending = kcpPayStore.createPending({
         mbId,
@@ -127,7 +133,9 @@ class KcpPayController {
         receiver: pending.request.receiver,
         payMethod: mapped.payMethod,
         escrowUse: escrowUse === true,
-        basketCount,
+        basketLineCount,
+        goodInfo,
+        shopUserId: mbId,
       });
 
       kcpPayStore.saveResult(pending.token, {
