@@ -1,10 +1,102 @@
 const pool = require('../../../../config/database');
 
 class ContactRepository {
-  async findByMbId(mbId) {
+  async findRootIdByWrId(wrId) {
     const [rows] = await pool.query(
-      'SELECT * FROM bomiora_write_online WHERE mb_id = ? ORDER BY wr_datetime DESC',
-      [mbId]
+      'SELECT wr_id, wr_parent FROM bomiora_write_online WHERE wr_id = ?',
+      [wrId]
+    );
+    if (!rows.length) return null;
+    const row = rows[0];
+    const parent = Number(row.wr_parent || 0);
+    const id = Number(row.wr_id || 0);
+    if (!parent) return id;
+    return parent === id ? id : parent;
+  }
+
+  async findThreadByRoot(rootWrId) {
+    const [rows] = await pool.query(
+      'SELECT * FROM bomiora_write_online WHERE wr_parent = ? ORDER BY wr_datetime DESC, wr_id DESC',
+      [rootWrId]
+    );
+    return rows;
+  }
+
+  async countFollowUpsByRoot({ rootWrId, mbId, mbEmail }) {
+    const id = (mbId ?? '').toString().trim();
+    const email = (mbEmail ?? '').toString().trim();
+    if (!rootWrId) return 0;
+
+    if (id && email) {
+      const [rows] = await pool.query(
+        `SELECT COUNT(*) AS cnt
+         FROM bomiora_write_online
+         WHERE wr_parent = ?
+           AND wr_id <> ?
+           AND (mb_id = ? OR wr_email = ?)`,
+        [rootWrId, rootWrId, id, email]
+      );
+      return Number(rows[0]?.cnt || 0);
+    }
+    if (email) {
+      const [rows] = await pool.query(
+        `SELECT COUNT(*) AS cnt
+         FROM bomiora_write_online
+         WHERE wr_parent = ?
+           AND wr_id <> ?
+           AND wr_email = ?`,
+        [rootWrId, rootWrId, email]
+      );
+      return Number(rows[0]?.cnt || 0);
+    }
+    const [rows] = await pool.query(
+      `SELECT COUNT(*) AS cnt
+       FROM bomiora_write_online
+       WHERE wr_parent = ?
+         AND wr_id <> ?
+         AND mb_id = ?`,
+      [rootWrId, rootWrId, id]
+    );
+    return Number(rows[0]?.cnt || 0);
+  }
+
+  async findThreadsByIdentity({ mbId, mbEmail }) {
+    const id = (mbId ?? '').toString().trim();
+    const email = (mbEmail ?? '').toString().trim();
+    if (!id && !email) return [];
+
+    // 스레드(=wr_parent)별 최신 작성일 기준으로 "원글만" 반환
+    // 목록 노출 날짜는 최신 작성일을 wr_datetime으로 내려줌 (요구사항: 최근 질문 작성일 기준 정렬)
+    const where = [];
+    const args = [];
+    if (id) {
+      where.push('mb_id = ?');
+      args.push(id);
+    }
+    if (email) {
+      where.push('wr_email = ?');
+      args.push(email);
+    }
+    const whereSql = where.length ? `(${where.join(' OR ')})` : '1=0';
+
+    const [rows] = await pool.query(
+      `
+      SELECT root.*,
+             latest.latest_dt AS thread_last_datetime,
+             latest.followup_cnt AS followup_count
+      FROM bomiora_write_online root
+      JOIN (
+        SELECT wr_parent,
+               MAX(wr_datetime) AS latest_dt,
+               SUM(CASE WHEN wr_id <> wr_parent THEN 1 ELSE 0 END) AS followup_cnt
+        FROM bomiora_write_online
+        WHERE ${whereSql}
+        GROUP BY wr_parent
+      ) latest
+        ON root.wr_id = latest.wr_parent
+      ORDER BY latest.latest_dt DESC, root.wr_id DESC
+      `,
+      args
     );
     return rows;
   }

@@ -1,23 +1,47 @@
 const contactRepository = require('../repositories/ContactRepository');
 
 class ContactController {
+  _asText(value) {
+    if (value == null) return value;
+    // mysql2가 Buffer로 주는 케이스
+    if (Buffer.isBuffer(value)) return value.toString('utf8');
+    // JSON stringify 이후에도 남는 { type: 'Buffer', data: [...] } 형태 방어
+    if (typeof value === 'object' && value.type === 'Buffer' && Array.isArray(value.data)) {
+      try {
+        return Buffer.from(value.data).toString('utf8');
+      } catch (_) {
+        return value;
+      }
+    }
+    return value;
+  }
+
+  _asInt(value, fallback = 0) {
+    if (value == null) return fallback;
+    const n = Number(value);
+    return Number.isFinite(n) ? n : fallback;
+  }
+
   toMap(contact) {
     return {
-      wr_id: contact.wr_id,
-      wr_subject: contact.wr_subject,
-      wr_content: contact.wr_content,
-      mb_id: contact.mb_id,
-      wr_name: contact.wr_name,
-      wr_email: contact.wr_email,
-      wr_datetime: contact.wr_datetime,
+      wr_id: this._asInt(contact.wr_id, 0),
+      wr_subject: this._asText(contact.wr_subject) ?? '',
+      wr_content: this._asText(contact.wr_content) ?? '',
+      mb_id: this._asText(contact.mb_id) ?? '',
+      wr_name: this._asText(contact.wr_name) ?? '',
+      wr_email: this._asText(contact.wr_email) ?? '',
+      // 목록에서는 스레드의 최신 작성일(추가질문 포함)을 표시/정렬 기준으로 사용
+      wr_datetime: contact.thread_last_datetime ?? contact.wr_datetime,
       wr_last: contact.wr_last,
-      wr_comment: contact.wr_comment ?? 0,
-      wr_reply: contact.wr_reply,
-      wr_parent: contact.wr_parent,
-      ca_name: contact.ca_name,
-      wr_hit: contact.wr_hit ?? 0,
-      wr_option: contact.wr_option,
-      wr_is_comment: contact.wr_is_comment ?? 0
+      wr_comment: this._asInt(contact.wr_comment, 0),
+      wr_reply: this._asText(contact.wr_reply) ?? '',
+      wr_parent: this._asInt(contact.wr_parent, 0),
+      ca_name: this._asText(contact.ca_name) ?? '',
+      wr_hit: this._asInt(contact.wr_hit, 0),
+      wr_option: this._asText(contact.wr_option),
+      wr_is_comment: this._asInt(contact.wr_is_comment, 0),
+      followup_count: this._asInt(contact.followup_count, 0),
+      thread_last_datetime: contact.thread_last_datetime ?? null
     };
   }
 
@@ -29,7 +53,10 @@ class ContactController {
 
   async getMyContacts(req, res) {
     try {
-      const contacts = await contactRepository.findByMbId(req.query.mb_id);
+      const contacts = await contactRepository.findThreadsByIdentity({
+        mbId: req.query.mb_id || req.query.mbId,
+        mbEmail: req.query.mb_email || req.query.mbEmail,
+      });
       return res.json({ success: true, data: contacts.map((c) => this.toMap(c)) });
     } catch (error) {
       return res.status(500).json({ success: false, message: `문의내역 조회 실패: ${error.message}` });
@@ -46,7 +73,14 @@ class ContactController {
 
       await contactRepository.update(wrId, { wr_hit: (contact.wr_hit || 0) + 1 });
       const updated = await contactRepository.findById(wrId);
-      return res.json({ success: true, data: this.toMap(updated) });
+      const rootId = await contactRepository.findRootIdByWrId(wrId);
+      const thread = rootId ? await contactRepository.findThreadByRoot(rootId) : [];
+      return res.json({
+        success: true,
+        data: this.toMap(updated),
+        thread: thread.map((c) => this.toMap(c)),
+        root_wr_id: rootId,
+      });
     } catch (error) {
       return res.status(500).json({ success: false, message: `문의 상세 조회 실패: ${error.message}` });
     }
@@ -58,11 +92,30 @@ class ContactController {
       const nextWrNum = (await contactRepository.findMaxWrNum()) + 1;
       const now = new Date();
 
+      const parentWrIdRaw = req.body.parent_wr_id ?? req.body.parentWrId ?? null;
+      const parentWrId = parentWrIdRaw != null ? Number(parentWrIdRaw) : null;
+      const rootId = parentWrId ? await contactRepository.findRootIdByWrId(parentWrId) : null;
+
+      if (parentWrId && !rootId) {
+        return res.status(400).json({ success: false, message: '연결할 문의를 찾을 수 없습니다.' });
+      }
+
+      if (rootId) {
+        const followupCnt = await contactRepository.countFollowUpsByRoot({
+          rootWrId: rootId,
+          mbId: req.body.mb_id,
+          mbEmail: req.body.wr_email,
+        });
+        if (followupCnt >= 2) {
+          return res.status(400).json({ success: false, message: '추가질문은 최대 2회까지 가능합니다.' });
+        }
+      }
+
       const contact = {
         wr_id: nextWrId,
         wr_num: nextWrNum,
         wr_reply: '',
-        wr_parent: nextWrId,
+        wr_parent: rootId ?? nextWrId,
         wr_comment: 0,
         wr_comment_reply: '',
         wr_is_comment: 0,
