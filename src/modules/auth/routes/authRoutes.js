@@ -10,6 +10,7 @@ const otpRoutes = require('./otpRoutes');
  * @access  Public
  */
 router.post('/login', (req, res) => userController.login(req, res));
+router.post('/kakao/login', (req, res) => userController.loginWithKakao(req, res));
 router.post('/check-email', (req, res) => userController.checkEmail(req, res));
 router.post('/check-dup-info', (req, res) => userController.checkDupInfo(req, res));
 

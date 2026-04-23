@@ -1,4 +1,5 @@
 const userRepository = require('../repositories/UserRepository');
+const pointRepository = require('../../user/point/repositories/PointRepository');
 const { verifyPBKDF2Password, mysqlPassword, createPBKDF2Password } = require('../../../utils/passwordUtil');
 const fs = require('fs');
 const path = require('path');
@@ -153,7 +154,17 @@ class UserController {
       console.log('[LOGIN] 비밀번호 일치 여부:', passwordMatch);
 
       if (passwordMatch) {
-        // 로그인 성공 - 마지막 로그인 시간 업데이트
+        // 오늘 첫 로그인 포인트는 mb_today_login 갱신 "전"에 판별해야 함 (그누보드 common.php와 동일)
+        const clientIp = getClientIp(req);
+        try {
+          await pointRepository.grantDailyFirstLoginPoint({
+            mbId: user.mbId,
+            ip: clientIp,
+          });
+        } catch (e) {
+          console.error('[LOGIN] 첫로그인 포인트 지급 실패(로그인은 계속):', e?.message || e);
+        }
+
         user.lastLoginAt = getKstDateTimeString();
         const updatedUser = await userRepository.update(user);
 
@@ -581,6 +592,65 @@ class UserController {
    * 비밀번호 확인(재인증)
    * - Flutter에서 SHA1 해시된 비밀번호 문자열을 전달받아 로그인과 동일한 방식으로 검증
    */
+  /**
+   * 카카오 로그인 (이미 `mb_id = kakao_{kakaoId}` 형태로 가입된 회원만)
+   */
+  async loginWithKakao(req, res) {
+    try {
+      const kakaoId = String(req.body?.kakaoId || '').trim();
+      if (!kakaoId) {
+        return res.status(400).json({
+          success: false,
+          message: 'kakaoId가 필요합니다.',
+        });
+      }
+
+      const sidTail = kakaoId.replace(/[^0-9a-z_]/gi, '');
+      const mbId = `kakao_${sidTail || kakaoId}`.slice(0, 30);
+
+      const user = await userRepository.findByMbId(mbId);
+      if (!user) {
+        return res.json({
+          success: false,
+          message: '카카오로 가입된 회원을 찾을 수 없습니다.',
+        });
+      }
+
+      if (isWithdrawnMember(user)) {
+        return res.json({
+          success: false,
+          message: '탈퇴한 계정입니다.',
+        });
+      }
+
+      const clientIp = getClientIp(req);
+      try {
+        await pointRepository.grantDailyFirstLoginPoint({
+          mbId: user.mbId,
+          ip: clientIp,
+        });
+      } catch (e) {
+        console.error('[KAKAO LOGIN] 첫로그인 포인트 지급 실패(로그인은 계속):', e?.message || e);
+      }
+
+      user.lastLoginAt = getKstDateTimeString();
+      const updatedUser = await userRepository.update(user);
+
+      return res.json({
+        success: true,
+        user: updatedUser.toResponse(),
+        token: 'token_' + Date.now(),
+        message: '로그인 성공',
+      });
+    } catch (error) {
+      console.error('❌ [KAKAO LOGIN] 오류:', error);
+      return res.json({
+        success: false,
+        message: '카카오 로그인 처리 중 오류가 발생했습니다.',
+      });
+    }
+  }
+
   async verifyPassword(req, res) {
     try {
       const { mbId, password } = req.body;

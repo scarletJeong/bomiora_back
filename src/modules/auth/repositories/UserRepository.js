@@ -162,7 +162,11 @@ class UserRepository {
       await conn.beginTransaction();
 
       const mbNo = await this.generateNextMbNo(conn);
-      const mbId = await this.generateUniqueMbId(email, mbIdPrefix || 'direct', conn);
+      const prefix = String(mbIdPrefix || 'direct').toLowerCase();
+      const mbId =
+        prefix === 'direct'
+          ? await this.generateUniqueDirectMbId(conn)
+          : await this.generateUniqueMbId(email, mbIdPrefix || 'direct', conn);
       const normalizedBirth = normalizeBirth(birthday || certInfo?.birthday || '');
       const normalizedSex = normalizeSex(gender || certInfo?.gender || certInfo?.sex_code || '');
       const dupInfo = String(
@@ -278,6 +282,26 @@ class UserRepository {
       console.error('❌ [UserRepository] generateNextMbNo 오류:', error);
       throw error;
     }
+  }
+
+  /**
+   * 직접가입 mb_id: `direct_` + get_uniqid() (PHP 규칙과 동일)
+   * - 16자리 숫자: YYYYMMDDHHIISS(14) + 1/100초(2)
+   */
+  async generateUniqueDirectMbId(executor = pool) {
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      const uniq = getUniqid16DigitsKst();
+      const candidate = `direct_${uniq}`.slice(0, 30);
+      const [rows] = await executor.query(
+        'SELECT COUNT(*) as count FROM bomiora_member WHERE mb_id = ?',
+        [candidate]
+      );
+      if (rows[0].count === 0) {
+        return candidate;
+      }
+      await new Promise((r) => setTimeout(r, 1));
+    }
+    throw new Error('고유한 직접가입 회원 ID 생성에 실패했습니다.');
   }
 
   async generateUniqueMbId(email, prefix = 'direct', executor = pool) {
@@ -540,4 +564,17 @@ function getKstDateTimeBeforeDays(days) {
   const minute = String(dt.getUTCMinutes()).padStart(2, '0');
   const second = String(dt.getUTCSeconds()).padStart(2, '0');
   return `${year}-${month}-${day} ${hour}:${minute}:${second}`;
+}
+
+/** PHP get_uniqid()와 동일한 16자리 숫자 (KST 기준 시각) */
+function getUniqid16DigitsKst() {
+  const d = new Date(Date.now() + 9 * 60 * 60 * 1000);
+  const y = String(d.getUTCFullYear());
+  const mo = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(d.getUTCDate()).padStart(2, '0');
+  const h = String(d.getUTCHours()).padStart(2, '0');
+  const mi = String(d.getUTCMinutes()).padStart(2, '0');
+  const s = String(d.getUTCSeconds()).padStart(2, '0');
+  const hundredth = String(Math.floor(d.getUTCMilliseconds() / 10)).padStart(2, '0');
+  return `${y}${mo}${day}${h}${mi}${s}${hundredth}`;
 }

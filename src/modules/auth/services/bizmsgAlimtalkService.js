@@ -35,9 +35,6 @@ class BizmsgAlimtalkService {
     }
 
     const phn = toE164Korea82(phone);
-    if (!phn || phn.length < 11) {
-      return { ok: false, errorMessage: '휴대폰 번호 형식이 올바르지 않습니다.' };
-    }
     const msg = `[보미오라]인증번호는 ${otp}입니다.`;
 
     // Bizmsg 문서/레거시 연동에서 필드명이 혼재되어 있어,
@@ -61,6 +58,8 @@ class BizmsgAlimtalkService {
         endpoint,
         headers: {
           userid: this.mask(userid, { head: 2, tail: 2 }),
+          userId: this.mask(userid, { head: 2, tail: 2 }),
+          UserId: this.mask(userid, { head: 2, tail: 2 }),
         },
         body: [
           {
@@ -81,8 +80,10 @@ class BizmsgAlimtalkService {
       headers: {
         'Content-Type': 'application/json',
         Accept: 'application/json',
-        // 비즈엠 API는 userid 헤더만 사용(여러 키를 같이 보내면 계정이 꼬여 실패할 수 있음)
+        // Bizmsg 문서/예제에서 헤더명이 userid/userId로 혼재되어 있어 둘 다 전송
         userid,
+        userId: userid,
+        UserId: userid,
       },
       // Bizmsg v2 sender/send 는 단건이어도 JSON 배열 포맷을 요구하는 케이스가 있어
       // 항상 배열로 감싸 전송합니다.
@@ -101,10 +102,21 @@ class BizmsgAlimtalkService {
 
     const isSuccessLike = (obj) => {
       if (!obj || typeof obj !== 'object') return false;
-      if (obj.code === 'success') return true;
-      if (String(obj.result || '').toUpperCase() === 'Y') return true;
-      if (obj.success === true) return true;
-      return false;
+      const code = obj.code ?? obj.resultCode ?? obj.result_code ?? obj.resultCd ?? obj.result_cd;
+      return (
+        obj.success === true ||
+        obj.result === true ||
+        obj.result === 'Y' ||
+        obj.status === 'success' ||
+        obj.status === 'SUCCESS' ||
+        code === 0 ||
+        code === '0' ||
+        code === '200' ||
+        code === 'SUCCESS' ||
+        code === 'success' ||
+        code === 'K000' ||
+        code === 'OK'
+      );
     };
 
     // 운영 이슈 트러블슈팅을 위해 raw를 최소한으로 로그(민감정보 제외)
