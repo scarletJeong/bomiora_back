@@ -64,7 +64,10 @@ function normalize_mod_desc(string $raw): string
     if ($value === '') return 'AUTO_CANCEL';
     $value = preg_replace('/[\r\n\t]+/', ' ', $value);
     if ($value === null) return 'AUTO_CANCEL';
-    return mb_substr($value, 0, 120);
+    if (function_exists('mb_substr')) {
+        return (string)mb_substr($value, 0, 120);
+    }
+    return (string)substr($value, 0, 120);
 }
 
 $input = stream_get_contents(STDIN);
