@@ -45,6 +45,13 @@ router.put('/profile', (req, res) => userController.updateProfile(req, res));
  * @access  Private (추후 인증 미들웨어 추가)
  */
 router.post('/verify-password', (req, res) => userController.verifyPassword(req, res));
+
+/**
+ * @route   POST /api/user/change-password
+ * @desc    비밀번호 변경(현재 비밀번호 확인 후 변경)
+ * @access  Private (추후 인증 미들웨어 추가)
+ */
+router.post('/change-password', (req, res) => userController.changePassword(req, res));
 router.post('/profile/image', upload.single('file'), (req, res) =>
   userController.uploadProfileImage(req, res)
 );

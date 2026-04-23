@@ -848,6 +848,54 @@ class UserController {
   }
 
   /**
+   * 세션 유효성(탈퇴 여부) 확인
+   * - 다른 탭/세션에서 탈퇴된 경우, 다음 액션/새로고침 시 즉시 로그아웃 처리용
+   * @route GET /api/auth/session?mb_id=...  (mbId도 허용)
+   */
+  async session(req, res) {
+    try {
+      const mbId = String(req.query?.mb_id || req.query?.mbId || '').trim();
+      if (!mbId) {
+        return res.status(400).json({
+          success: false,
+          active: false,
+          message: 'mb_id가 필요합니다.',
+        });
+      }
+
+      const user = await userRepository.findByMbId(mbId);
+      if (!user) {
+        return res.json({
+          success: true,
+          active: false,
+          message: '사용자를 찾을 수 없습니다.',
+        });
+      }
+
+      if (isWithdrawnMember(user)) {
+        return res.json({
+          success: true,
+          active: false,
+          message: '탈퇴한 계정입니다.',
+        });
+      }
+
+      return res.json({
+        success: true,
+        active: true,
+        message: '정상 회원입니다.',
+      });
+    } catch (error) {
+      console.error('❌ [SESSION] 오류:', error);
+      return res.status(500).json({
+        success: false,
+        active: false,
+        message: '세션 확인 중 오류가 발생했습니다.',
+      });
+    }
+  }
+
+  /**
    * 비밀번호 확인(재인증)
    * - Flutter에서 SHA1 해시된 비밀번호 문자열을 전달받아 로그인과 동일한 방식으로 검증
    */
@@ -977,6 +1025,107 @@ class UserController {
       return res.status(500).json({
         success: false,
         message: '비밀번호 확인 중 오류가 발생했습니다.',
+      });
+    }
+  }
+
+  async changePassword(req, res) {
+    try {
+      const mbId = String(req.body?.mbId || req.body?.mb_id || '').trim();
+      const currentPassword = String(
+        req.body?.currentPassword ?? req.body?.current_password ?? req.body?.password ?? ''
+      );
+      const newPassword = String(
+        req.body?.newPassword ??
+          req.body?.new_password ??
+          req.body?.password_new ??
+          req.body?.new_pw ??
+          req.body?.newPw ??
+          ''
+      );
+
+      // currentPassword는 선택(이미 verify-password로 재인증을 끝낸 플로우 대응)
+      if (!mbId || !newPassword) {
+        return res.status(400).json({
+          success: false,
+          message: 'mbId와 newPassword가 필요합니다.',
+        });
+      }
+
+      const user = await userRepository.findByMbId(mbId);
+      if (!user) {
+        return res.status(404).json({
+          success: false,
+          message: '사용자를 찾을 수 없습니다.',
+        });
+      }
+
+      if (isWithdrawnMember(user)) {
+        return res.json({
+          success: false,
+          message: '탈퇴한 계정입니다.',
+        });
+      }
+
+      const storedHash = Buffer.isBuffer(user.password)
+        ? user.password.toString('utf8')
+        : String(user.password || '');
+
+      if (!storedHash) {
+        return res.status(400).json({
+          success: false,
+          message: '비밀번호가 설정되어 있지 않습니다.',
+        });
+      }
+
+      // currentPassword가 들어오면 검증까지 수행 (클라이언트 구현에 따라 선택적으로 사용)
+      if (currentPassword) {
+        let passwordMatch = false;
+        if (storedHash.startsWith('sha256:')) {
+          passwordMatch = verifyPBKDF2Password(currentPassword, storedHash);
+        } else if (storedHash.startsWith('*') && storedHash.length === 41) {
+          const mysqlHash = mysqlPassword(currentPassword);
+          passwordMatch = mysqlHash === storedHash;
+        } else {
+          return res.status(400).json({
+            success: false,
+            message: '비밀번호 형식 오류',
+          });
+        }
+
+        if (!passwordMatch) {
+          return res.status(400).json({
+            success: false,
+            message: '현재 비밀번호가 일치하지 않습니다.',
+          });
+        }
+      }
+
+      // newPassword가 평문일 때만 정책 검사. (SHA1/hex 등 이미 해시된 값이면 클라이언트에서 정책 검증됨)
+      const looksHashed = /^[a-f0-9]{40}$/i.test(newPassword);
+      if (!looksHashed) {
+        const passwordRule =
+          /^(?=.*[A-Za-z])(?=.*\d)(?=.*[!@#$%^&*(),.?":{}|<>_\-[\]\\/~`+=;]).{8,16}$/;
+        if (!passwordRule.test(newPassword)) {
+          return res.status(400).json({
+            success: false,
+            message: '비밀번호는 8~16자의 영문, 숫자, 특수문자를 모두 포함해야 합니다.',
+          });
+        }
+      }
+
+      const nextPasswordHash = createPBKDF2Password(newPassword);
+      await userRepository.updatePasswordByMbNo(user.id, nextPasswordHash);
+
+      return res.json({
+        success: true,
+        message: '비밀번호가 변경되었습니다.',
+      });
+    } catch (error) {
+      console.error('❌ [CHANGE PASSWORD] 오류:', error);
+      return res.status(500).json({
+        success: false,
+        message: '비밀번호 변경 중 오류가 발생했습니다.',
       });
     }
   }
