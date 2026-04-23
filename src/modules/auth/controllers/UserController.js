@@ -1,5 +1,6 @@
 const userRepository = require('../repositories/UserRepository');
 const pointRepository = require('../../user/point/repositories/PointRepository');
+const otpRepository = require('../repositories/OtpRepository');
 const { verifyPBKDF2Password, mysqlPassword, createPBKDF2Password } = require('../../../utils/passwordUtil');
 const fs = require('fs');
 const path = require('path');
@@ -350,33 +351,101 @@ class UserController {
 
   /**
    * 아이디 찾기
+   * - 본인인증(KCP): `from_kcp` + `mb_dupinfo` 로만 조회
+   * - 소유인증(OTP): `otpToken`(용도 id_find 검증) + 이름 + 휴대폰
    */
   async findId(req, res) {
     try {
-      const { name, phone } = req.body;
+      const name = String(req.body?.name || '').trim();
+      const phone = String(req.body?.phone || '').trim();
+      const otpToken = String(req.body?.otpToken || req.body?.otp_token || '').trim();
+      const fromKcp = req.body?.from_kcp === true || req.body?.from_kcp === 1 || req.body?.fromKcp === true;
+      const mbDupinfo = String(req.body?.mb_dupinfo || req.body?.mbDupinfo || '').trim();
 
-      if (!name || !phone) {
-        return res.status(400).json({
-          success: false,
-          message: '이름과 휴대폰 번호를 입력해 주세요.',
-        });
-      }
+      // 본인인증: 본인인증값(mb_dupinfo)으로만 조회 (이름·휴대폰은 인증서와 교차검증용으로 선택)
+      if (fromKcp && mbDupinfo) {
+        let users = await userRepository.findByMbDupinfo(mbDupinfo);
+        if (!users.length) {
+          return res.json({
+            success: false,
+            message: '일치하는 회원 정보를 찾을 수 없습니다.',
+          });
+        }
+        if (name && phone) {
+          const reqDigits = String(phone).replace(/[^0-9]/g, '');
+          const narrowed = users.filter((u) => {
+            const uDigits = String(u.mbHp || '')
+              .replace(/[^0-9]/g, '');
+            return (
+              String(u.name || '').trim() === name &&
+              uDigits &&
+              reqDigits &&
+              uDigits === reqDigits
+            );
+          });
+          if (!narrowed.length) {
+            return res.json({
+              success: false,
+              message: '일치하는 회원 정보를 찾을 수 없습니다.',
+            });
+          }
+          users = narrowed;
+        }
 
-      const users = await userRepository.findByNameAndPhone(name, phone);
-      if (!users.length) {
         return res.json({
-          success: false,
-          message: '일치하는 회원 정보를 찾을 수 없습니다.',
+          success: true,
+          accounts: users.map((user) => ({
+            email: user.email,
+            name: user.name,
+            mb_id: user.mbId,
+          })),
+          message: '등록된 아이디를 찾았습니다.',
         });
       }
 
-      return res.json({
-        success: true,
-        accounts: users.map((user) => ({
-          email: user.email,
-          name: user.name,
-        })),
-        message: '등록된 아이디를 찾았습니다.',
+      // 소유인증: OTP 검증 후 이름 + 휴대폰만 조회
+      if (otpToken) {
+        if (!name || !phone) {
+          return res.status(400).json({
+            success: false,
+            message: '이름과 휴대폰 번호를 입력해 주세요.',
+          });
+        }
+        const otpCheck = await assertOtpVerifiedForPasswordFind({
+          otpToken,
+          name,
+          phone,
+          purpose: 'id_find',
+        });
+        if (!otpCheck.ok) {
+          return res.status(400).json({
+            success: false,
+            message: otpCheck.message,
+          });
+        }
+
+        const users = await userRepository.findByNameAndPhone(name, phone);
+        if (!users.length) {
+          return res.json({
+            success: false,
+            message: '일치하는 회원 정보를 찾을 수 없습니다.',
+          });
+        }
+
+        return res.json({
+          success: true,
+          accounts: users.map((user) => ({
+            email: user.email,
+            name: user.name,
+            mb_id: user.mbId,
+          })),
+          message: '등록된 아이디를 찾았습니다.',
+        });
+      }
+
+      return res.status(400).json({
+        success: false,
+        message: '본인인증을 완료하거나 휴대폰 인증을 완료해 주세요.',
       });
     } catch (error) {
       console.error('❌ [FIND ID] 오류:', error);
@@ -389,10 +458,120 @@ class UserController {
 
   async forgotPassword(req, res) {
     try {
-      const email = normalizeEmail(req.body?.email);
       const name = String(req.body?.name || '').trim();
       const phone = String(req.body?.phone || '').trim();
+      const otpToken = String(req.body?.otpToken || req.body?.otp_token || '').trim();
+      const identifierRaw =
+        req.body?.identifier ??
+        req.body?.loginOrEmail ??
+        req.body?.ss_pwfind_pw_reset_email ??
+        req.body?.email;
+      const fromKcp = req.body?.from_kcp === true || req.body?.from_kcp === 1 || req.body?.fromKcp === true;
+      const mbDupinfo = String(req.body?.mb_dupinfo || req.body?.mbDupinfo || '').trim();
 
+      // 본인인증(KCP): 가입 이메일(mb_email) + 본인인증값(mb_dupinfo) — 아이디 찾기는 소유인증(OTP)였어도 동일
+      if (fromKcp && mbDupinfo) {
+        const emailForMatch = normalizeEmail(identifierRaw);
+        if (!emailForMatch) {
+          return res.status(400).json({
+            success: false,
+            message: '가입 이메일을 입력해 주세요.',
+          });
+        }
+        const user = await userRepository.findByDupinfoAndEmail(mbDupinfo, emailForMatch);
+        if (!user) {
+          return res.json({
+            success: false,
+            message: '일치하는 회원 정보를 찾을 수 없습니다.',
+          });
+        }
+        if (isWithdrawnMember(user)) {
+          return res.json({
+            success: false,
+            message: '탈퇴한 계정입니다.',
+          });
+        }
+        return res.json({
+          success: true,
+          message: '비밀번호 재설정이 가능합니다.',
+          account: {
+            email: user.email,
+            name: user.name,
+            mbId: user.mbId,
+            hasDupinfo: String(user.mbDupinfo || '').trim().length > 0,
+          },
+        });
+      }
+
+      if (!name || !phone) {
+        return res.status(400).json({
+          success: false,
+          message: '이름과 휴대폰 번호를 입력해 주세요.',
+        });
+      }
+
+      // 소유인증(OTP) 후: 가입 이메일(mb_email) + 이름 + 휴대폰 — 본인인증값이 있는 회원은 OTP로 재설정 불가
+      if (otpToken) {
+        const emailForMatch = normalizeEmail(identifierRaw);
+        if (!emailForMatch) {
+          return res.status(400).json({
+            success: false,
+            message: '가입 이메일을 입력해 주세요.',
+          });
+        }
+        const otpCheck = await assertOtpVerifiedForPasswordFind({
+          otpToken,
+          name,
+          phone,
+          purpose: 'password_find',
+        });
+        if (!otpCheck.ok) {
+          return res.status(400).json({
+            success: false,
+            message: otpCheck.message,
+          });
+        }
+
+        const matched = await userRepository.findMembersMatchingPasswordEmail(
+          name,
+          phone,
+          emailForMatch
+        );
+        if (!matched.length) {
+          return res.json({
+            success: false,
+            message: '일치하는 회원 정보를 찾을 수 없습니다.',
+          });
+        }
+        if (matched.length > 1) {
+          return res.json({
+            success: false,
+            message: '동일 정보로 조회된 계정이 여러 개입니다. 고객센터로 문의해 주세요.',
+          });
+        }
+
+        const user = matched[0];
+        if (isWithdrawnMember(user)) {
+          return res.json({
+            success: false,
+            message: '탈퇴한 계정입니다.',
+          });
+        }
+
+        return res.json({
+          success: true,
+          message: '비밀번호 재설정이 가능합니다.',
+          account: {
+            email: user.email,
+            name: user.name,
+            mbId: user.mbId,
+            hasDupinfo: String(user.mbDupinfo || '').trim().length > 0,
+          },
+        });
+      }
+
+      // 레거시: 이메일(정확히 로그인 이메일) + 이름 + 휴대폰
+      const email = normalizeEmail(req.body?.email);
       if (!email || !name || !phone) {
         return res.status(400).json({
           success: false,
@@ -415,6 +594,7 @@ class UserController {
           email: user.email,
           name: user.name,
           mbId: user.mbId,
+          hasDupinfo: String(user.mbDupinfo || '').trim().length > 0,
         },
       });
     } catch (error) {
@@ -428,15 +608,17 @@ class UserController {
 
   async resetPassword(req, res) {
     try {
-      const email = normalizeEmail(req.body?.email);
       const name = String(req.body?.name || '').trim();
       const phone = String(req.body?.phone || '').trim();
       const password = String(req.body?.password || '');
+      const otpToken = String(req.body?.otpToken || req.body?.otp_token || '').trim();
+      const fromKcp = req.body?.from_kcp === true || req.body?.from_kcp === 1 || req.body?.fromKcp === true;
+      const mbDupinfoBody = String(req.body?.mb_dupinfo || req.body?.mbDupinfo || '').trim();
 
-      if (!email || !name || !phone || !password) {
+      if (!password) {
         return res.status(400).json({
           success: false,
-          message: '이메일, 이름, 휴대폰 번호, 새 비밀번호를 입력해 주세요.',
+          message: '새 비밀번호를 입력해 주세요.',
         });
       }
 
@@ -449,7 +631,84 @@ class UserController {
         });
       }
 
-      const user = await userRepository.findByEmailNameAndPhone(email, name, phone);
+      let user = null;
+
+      // 본인인증: mb_dupinfo + 가입 이메일(mb_email)
+      if (fromKcp && mbDupinfoBody) {
+        const emailForMatch = normalizeEmail(
+          req.body?.identifier ??
+            req.body?.loginOrEmail ??
+            req.body?.ss_pwfind_pw_reset_email ??
+            req.body?.email
+        );
+        if (!emailForMatch) {
+          return res.status(400).json({
+            success: false,
+            message: '가입 이메일을 입력해 주세요.',
+          });
+        }
+        user = await userRepository.findByDupinfoAndEmail(mbDupinfoBody, emailForMatch);
+      } else if (otpToken) {
+        if (!name || !phone) {
+          return res.status(400).json({
+            success: false,
+            message: '이름, 휴대폰 번호, 새 비밀번호를 입력해 주세요.',
+          });
+        }
+        const emailForMatch = normalizeEmail(
+          req.body?.identifier ??
+            req.body?.loginOrEmail ??
+            req.body?.ss_pwfind_pw_reset_email ??
+            req.body?.email
+        );
+        if (!emailForMatch) {
+          return res.status(400).json({
+            success: false,
+            message: '가입 이메일을 입력해 주세요.',
+          });
+        }
+        const otpCheck = await assertOtpVerifiedForPasswordFind({
+          otpToken,
+          name,
+          phone,
+          purpose: 'password_find',
+        });
+        if (!otpCheck.ok) {
+          return res.status(400).json({
+            success: false,
+            message: otpCheck.message,
+          });
+        }
+
+        const matched = await userRepository.findMembersMatchingPasswordEmail(
+          name,
+          phone,
+          emailForMatch
+        );
+        if (!matched.length || matched.length > 1) {
+          return res.json({
+            success: false,
+            message: '일치하는 회원 정보를 찾을 수 없습니다.',
+          });
+        }
+        user = matched[0];
+      } else {
+        if (!name || !phone) {
+          return res.status(400).json({
+            success: false,
+            message: '이름, 휴대폰 번호, 새 비밀번호를 입력해 주세요.',
+          });
+        }
+        const email = normalizeEmail(req.body?.email);
+        if (!email) {
+          return res.status(400).json({
+            success: false,
+            message: '이메일, 이름, 휴대폰 번호, 새 비밀번호를 입력해 주세요.',
+          });
+        }
+        user = await userRepository.findByEmailNameAndPhone(email, name, phone);
+      }
+
       if (!user) {
         return res.json({
           success: false,
@@ -782,6 +1041,34 @@ class UserController {
 
 function normalizeEmail(value) {
   return String(value || '').trim().toLowerCase();
+}
+
+async function assertOtpVerifiedForPasswordFind({ otpToken, name, phone, purpose }) {
+  const row = await otpRepository.findByToken(otpToken);
+  if (!row) {
+    return {
+      ok: false,
+      message: '유효하지 않은 인증 요청입니다. 인증번호를 다시 발송해 주세요.',
+    };
+  }
+  if (String(row.verified_yn || '').toUpperCase() !== 'Y') {
+    return { ok: false, message: '휴대폰 인증을 완료해 주세요.' };
+  }
+  const rowPurpose = String(row.otp_purpose || '').trim();
+  if (purpose && rowPurpose && rowPurpose !== purpose) {
+    return { ok: false, message: '인증 용도가 일치하지 않습니다.' };
+  }
+  const rowDigits = String(row.mb_hp || '').replace(/[^0-9]/g, '');
+  const reqDigits = String(phone || '').replace(/[^0-9]/g, '');
+  if (!rowDigits || rowDigits !== reqDigits) {
+    return { ok: false, message: '인증된 휴대폰 번호가 일치하지 않습니다.' };
+  }
+  const rowName = String(row.mb_name || '').trim();
+  const reqName = String(name || '').trim();
+  if (rowName !== reqName) {
+    return { ok: false, message: '인증된 이름이 일치하지 않습니다.' };
+  }
+  return { ok: true };
 }
 
 function normalizePhone(value) {

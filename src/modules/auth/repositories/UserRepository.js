@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const pool = require('../../../config/database');
 const User = require('../models/User');
 
@@ -79,6 +80,57 @@ class UserRepository {
       console.error('❌ [UserRepository] findByNameAndPhone 오류:', error);
       throw error;
     }
+  }
+
+  /**
+   * 소유인증(OTP) 후 비밀번호 재설정: 이름+휴대폰 후보 중 **가입 이메일(mb_email)** 과 일치하는 회원만
+   */
+  async findMembersMatchingPasswordEmail(name, phone, emailInput) {
+    const emailNorm = normalizeEmailForPasswordLookup(emailInput);
+    if (!emailNorm) return [];
+    const users = await this.findByNameAndPhone(name, phone);
+    return users.filter(
+      (u) => normalizeEmailForPasswordLookup(u.email) === emailNorm
+    );
+  }
+
+  /**
+   * 아이디 찾기(본인인증): mb_dupinfo 로만 조회
+   */
+  async findByMbDupinfo(mbDupinfo) {
+    const dup = String(mbDupinfo || '').trim();
+    if (!dup) return [];
+    const [rows] = await pool.query(
+      `SELECT *
+       FROM bomiora_member
+       WHERE mb_dupinfo = ?
+       ORDER BY mb_no DESC`,
+      [dup]
+    );
+    return rows.map((row) => new User(row));
+  }
+
+  /**
+   * 비밀번호 재설정(본인인증): mb_dupinfo + 가입 이메일(mb_email)
+   */
+  async findByDupinfoAndEmail(mbDupinfo, email) {
+    const dup = String(mbDupinfo || '').trim();
+    const emailNorm = normalizeEmailForPasswordLookup(email);
+    if (!dup || !emailNorm) return null;
+    const [rows] = await pool.query(
+      `SELECT *
+       FROM bomiora_member
+       WHERE mb_dupinfo = ?
+         AND LOWER(TRIM(IFNULL(mb_email, ''))) = ?
+       ORDER BY mb_no DESC
+       LIMIT 2`,
+      [dup, emailNorm]
+    );
+    if (!rows.length) return null;
+    if (rows.length > 1) {
+      console.warn('[UserRepository.findByDupinfoAndEmail] 동일 본인인증+이메일로 복수 행 — 최신 mb_no 사용');
+    }
+    return new User(rows[0]);
   }
 
   async findByEmailNameAndPhone(email, name, phone) {
@@ -165,7 +217,7 @@ class UserRepository {
       const prefix = String(mbIdPrefix || 'direct').toLowerCase();
       const mbId =
         prefix === 'direct'
-          ? await this.generateUniqueDirectMbId(conn)
+          ? await this.generateUniqueDirectMbId(conn, mbNo)
           : await this.generateUniqueMbId(email, mbIdPrefix || 'direct', conn);
       const normalizedBirth = normalizeBirth(birthday || certInfo?.birthday || '');
       const normalizedSex = normalizeSex(gender || certInfo?.gender || certInfo?.sex_code || '');
@@ -287,19 +339,47 @@ class UserRepository {
   /**
    * 직접가입 mb_id: `direct_` + get_uniqid() (PHP 규칙과 동일)
    * - 16자리 숫자: YYYYMMDDHHIISS(14) + 1/100초(2)
+   * - 이미 확보된 `mb_no`(회원 PK)를 36진 접미사로 붙여 동시 가입·재시도 시 충돌을 원천적으로 줄임
    */
-  async generateUniqueDirectMbId(executor = pool) {
-    for (let attempt = 0; attempt < 30; attempt += 1) {
+  async generateUniqueDirectMbId(executor = pool, mbNo) {
+    const mbNoNum = Number(mbNo);
+    const mbTail =
+      Number.isFinite(mbNoNum) && mbNoNum > 0 ? mbNoNum.toString(36) : '';
+
+    for (let attempt = 0; attempt < 50; attempt += 1) {
       const uniq = getUniqid16DigitsKst();
-      const candidate = `direct_${uniq}`.slice(0, 30);
+      const salt =
+        attempt === 0
+          ? mbTail
+          : `${mbTail}${crypto.randomBytes(4).toString('hex').slice(0, 8)}`;
+      const candidate = `direct_${uniq}${salt}`.slice(0, 30);
+
+      try {
+        console.log('[UserRepository.generateUniqueDirectMbId] try', {
+          attempt,
+          mbNo,
+          uniq,
+          salt: salt || '(none)',
+          candidate,
+        });
+      } catch (_) {}
+
       const [rows] = await executor.query(
         'SELECT COUNT(*) as count FROM bomiora_member WHERE mb_id = ?',
         [candidate]
       );
-      if (rows[0].count === 0) {
+      const count = Number(rows[0]?.count ?? 0);
+      try {
+        console.log('[UserRepository.generateUniqueDirectMbId] lookup', {
+          candidate,
+          count,
+        });
+      } catch (_) {}
+
+      if (count === 0) {
         return candidate;
       }
-      await new Promise((r) => setTimeout(r, 1));
+      await new Promise((r) => setTimeout(r, 2));
     }
     throw new Error('고유한 직접가입 회원 ID 생성에 실패했습니다.');
   }
@@ -577,4 +657,8 @@ function getUniqid16DigitsKst() {
   const s = String(d.getUTCSeconds()).padStart(2, '0');
   const hundredth = String(Math.floor(d.getUTCMilliseconds() / 10)).padStart(2, '0');
   return `${y}${mo}${day}${h}${mi}${s}${hundredth}`;
+}
+
+function normalizeEmailForPasswordLookup(email) {
+  return String(email || '').trim().toLowerCase();
 }

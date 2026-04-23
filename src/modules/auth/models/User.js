@@ -29,6 +29,7 @@ class User {
     this.lastLoginAt = data.mb_today_login || null;
     this.leaveDate = toString(data.mb_leave_date);
     this.memo = toString(data.mb_memo);
+    this.mbDupinfo = toString(data.mb_dupinfo);
   }
 
   /**

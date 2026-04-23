@@ -35,20 +35,6 @@ function getClientIp(req) {
   return String(ip).replace('::ffff:', '').trim();
 }
 
-function toMysqlDateTime(date) {
-  // DB timezone이 +09:00으로 설정되어 있으니 NOW()를 쓰는 게 가장 안전하지만,
-  // insert에 값을 넣어야 해서 'YYYY-MM-DD HH:mm:ss' 형태로 만든다.
-  const pad = (n) => String(n).padStart(2, '0');
-  const d = new Date(date.getTime());
-  const yyyy = d.getFullYear();
-  const mm = pad(d.getMonth() + 1);
-  const dd = pad(d.getDate());
-  const hh = pad(d.getHours());
-  const mi = pad(d.getMinutes());
-  const ss = pad(d.getSeconds());
-  return `${yyyy}-${mm}-${dd} ${hh}:${mi}:${ss}`;
-}
-
 class OtpController {
   async send(req, res) {
     try {
@@ -83,8 +69,6 @@ class OtpController {
       const otp = String(100000 + Math.floor(Math.random() * 900000));
       const token = makeToken32();
       const codeHash = sha256Hex(otp);
-      const expiresAt = new Date(Date.now() + OTP_EXPIRE_SECONDS * 1000);
-      const expiresAtStr = toMysqlDateTime(expiresAt);
       const ipAddr = getClientIp(req);
 
       const otpId = await otpRepository.insertOtp({
@@ -93,7 +77,7 @@ class OtpController {
         mbHp,
         mbName: name,
         codeHash,
-        expiresAt: expiresAtStr,
+        expireSeconds: OTP_EXPIRE_SECONDS,
         ipAddr,
       });
 
@@ -113,6 +97,9 @@ class OtpController {
           message: sendResult.errorMessage || '인증번호 발송에 실패했습니다.',
         });
       }
+
+      const saved = await otpRepository.findByToken(token);
+      const expiresAtStr = saved?.expires_at || null;
 
       return res.json({
         success: true,

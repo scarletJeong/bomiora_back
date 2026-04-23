@@ -31,14 +31,14 @@ class OtpRepository {
     mbHp,
     mbName,
     codeHash,
-    expiresAt,
+    expireSeconds,
     ipAddr,
   }) {
     const [result] = await pool.query(
       `INSERT INTO bm_member_sms_otp
        (otp_token, otp_purpose, mb_hp, mb_name, otp_code_hash, expires_at, verified_yn, try_count, ip_addr, reg_time)
-       VALUES (?, ?, ?, ?, ?, ?, 'N', 0, ?, NOW())`,
-      [token, purpose, mbHp, mbName, codeHash, expiresAt, ipAddr]
+       VALUES (?, ?, ?, ?, ?, DATE_ADD(NOW(), INTERVAL ? SECOND), 'N', 0, ?, NOW())`,
+      [token, purpose, mbHp, mbName, codeHash, Number(expireSeconds || 0), ipAddr]
     );
     return result?.insertId;
   }

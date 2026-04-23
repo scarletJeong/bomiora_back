@@ -8,8 +8,13 @@ function toE164Korea82(phone) {
 
 class BizmsgAlimtalkService {
   getConfig() {
-    const userid = String(process.env.BOMIORA_OTP_BIZM_USERID || 'bomioramall01').trim();
-    const profile = String(process.env.BOMIORA_OTP_BIZM_PROFILE || '').trim();
+    // 공백/개행만 다른 userid로 Bizmsg가 "존재하지 않는 사용자 계정"을 반환하는 경우 방지
+    const userid = String(process.env.BOMIORA_OTP_BIZM_USERID || 'bomioramall01')
+      .trim()
+      .replace(/\s+/g, '');
+    const profile = String(process.env.BOMIORA_OTP_BIZM_PROFILE || '')
+      .trim()
+      .replace(/\s+/g, '');
     const tmplId = String(process.env.BOMIORA_OTP_TMPL_ID || 'bomiora_pwfind_otp').trim();
     const endpoint = String(process.env.BOMIORA_OTP_BIZM_ENDPOINT || 'https://alimtalk-api.bizmsg.kr/v2/sender/send').trim();
     return { userid, profile, tmplId, endpoint };
@@ -58,8 +63,6 @@ class BizmsgAlimtalkService {
         endpoint,
         headers: {
           userid: this.mask(userid, { head: 2, tail: 2 }),
-          userId: this.mask(userid, { head: 2, tail: 2 }),
-          UserId: this.mask(userid, { head: 2, tail: 2 }),
         },
         body: [
           {
@@ -80,10 +83,9 @@ class BizmsgAlimtalkService {
       headers: {
         'Content-Type': 'application/json',
         Accept: 'application/json',
-        // Bizmsg 문서/예제에서 헤더명이 userid/userId로 혼재되어 있어 둘 다 전송
+        // Bizmsg는 userid 헤더만 사용.
+        // userId/UserId 등을 같이 보내면 "존재하지 않는 사용자 계정"으로 실패하는 케이스가 있어 제거.
         userid,
-        userId: userid,
-        UserId: userid,
       },
       // Bizmsg v2 sender/send 는 단건이어도 JSON 배열 포맷을 요구하는 케이스가 있어
       // 항상 배열로 감싸 전송합니다.
