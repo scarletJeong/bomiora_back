@@ -124,8 +124,23 @@ class OrderController {
     const xff = String(req.headers['x-forwarded-for'] || '')
       .split(',')[0]
       .trim();
-    if (xff) return xff;
-    return String(req.ip || req.connection?.remoteAddress || '127.0.0.1');
+    const raw = xff || String(req.ip || req.connection?.remoteAddress || '127.0.0.1');
+    return raw.replace(/^::ffff:/, '').trim();
+  }
+
+  /**
+   * KCP 취소(mod_ip)는 "파트너관리자에 등록된 결제서버 IP"가 들어가야 하는 케이스가 있다.
+   * 프록시 환경에서는 req.ip가 ::1/127.0.0.1 로 잡히므로 환경변수로 고정 IP를 우선 사용한다.
+   */
+  resolveKcpModIp(req) {
+    const fromEnv = String(
+      process.env.KCP_PAY_MOD_IP ||
+      process.env.KCP_MOD_IP ||
+      process.env.KCP_CANCEL_MOD_IP ||
+      ''
+    ).trim();
+    if (fromEnv) return fromEnv.replace(/^::ffff:/, '').trim();
+    return this.resolveClientIp(req);
   }
 
   computeOrderTotal(row) {
@@ -347,14 +362,19 @@ class OrderController {
 
       const order = await orderRepository.findById(odId);
       if (!order) throw new Error('주문을 찾을 수 없습니다.');
-      if (order.mb_id !== mbId) throw new Error('주문 정보가 일치하지 않습니다.');
-      if (!['주문', '입금', '준비'].includes(order.od_status)) throw new Error('취소할 수 없는 상태입니다.');
+      if (this.bufferToString(order.mb_id || '').trim() !== String(mbId || '').trim()) {
+        throw new Error('주문 정보가 일치하지 않습니다.');
+      }
+      const odStatus = this.bufferToString(order.od_status || '').trim();
+      if (!['주문', '입금', '준비'].includes(odStatus)) {
+        throw new Error(`취소할 수 없는 상태입니다. (현재상태: ${odStatus || 'UNKNOWN'})`);
+      }
       if (this.toInt(order.od_cancel_price) > 0) throw new Error('이미 취소된 주문입니다.');
 
       if (this.isKcpCardNetworkCancelTarget(order)) {
         const tno = this.bufferToString(order.od_tno || '').trim();
         const modType = this.resolveKcpCancelModTypeForOrder(order);
-        const clientIp = this.resolveClientIp(req);
+        const clientIp = this.resolveKcpModIp(req);
         let kcpResult;
         try {
           kcpResult = await kcpApprovalService.cancel({
