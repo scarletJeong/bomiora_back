@@ -48,7 +48,7 @@ class WishRepository {
     if (!itIds.length) return [];
     const placeholders = itIds.map(() => '?').join(', ');
     const [rows] = await pool.query(
-      `SELECT it_id, it_name, it_price, it_kind, it_img1, it_flutter_image_url
+      `SELECT it_id, it_name, it_price, it_kind, it_img1, it_flutter_image_url, it_basic
        FROM bomiora_shop_item_new
        WHERE it_id IN (${placeholders})`,
       itIds

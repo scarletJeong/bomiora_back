@@ -76,6 +76,7 @@ class WishController {
             row.image_url = this.toImage(p);
             row.it_img = this.toImage(p);
             row.it_img1 = this.toImage(p);
+            row.it_basic = p.it_basic;
           }
           return row;
         })
