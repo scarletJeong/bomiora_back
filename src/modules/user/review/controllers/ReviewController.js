@@ -29,6 +29,49 @@ class ReviewController {
     return s;
   }
 
+  /** bomiora_shop_item_new 조인 it_img1~9 중 첫 유효값 → 앱 productImage */
+  _firstShopItemImage(row) {
+    for (let i = 1; i <= 9; i += 1) {
+      const t = this.trimSqlText(row[`it_img${i}`]);
+      if (t) return t;
+    }
+    return null;
+  }
+
+  /** 디버그 로그용: 조인으로 넘어온 상품 이미지 컬럼만 (값 있을 때만 키 생성) */
+  _shopItemImageFieldsForLog(row) {
+    const out = {};
+    for (let i = 1; i <= 9; i += 1) {
+      const raw = this.normalizeSqlUtf8(row[`it_img${i}`]);
+      if (raw == null || raw === '') continue;
+      const s = String(raw).trim();
+      if (!s) continue;
+      out[`it_img${i}`] = s.length > 160 ? `${s.slice(0, 160)}…` : s;
+    }
+    return out;
+  }
+
+  /** it_kind 기준으로 앱에서 카드 타입이 갈리는지 로그용 힌트 */
+  _reviewUiHintFromItKind(itKind) {
+    const k = String(itKind ?? '')
+      .trim()
+      .toLowerCase()
+      .replace(/[\s_-]/g, '');
+    if (!k) return 'empty_join_or_unknown';
+    if (
+      k.includes('prescription') ||
+      k.includes('nonface') ||
+      k === 'rx' ||
+      k.includes('telemedicine')
+    ) {
+      return 'prescription_card';
+    }
+    if (k === 'general' || k === 'normal' || k === 'goods' || k === 'product') {
+      return 'general_card';
+    }
+    return `other:${k}`;
+  }
+
   toReviewResponse(row) {
     const images = [
       row.is_img1, row.is_img2, row.is_img3, row.is_img4, row.is_img5,
@@ -39,12 +82,27 @@ class ReviewController {
     const s2 = Number(row.is_score2 || 0);
     const s3 = Number(row.is_score3 || 0);
     const s4 = Number(row.is_score4 || 0);
+    const totalRaw = row.total_is_score;
+    const totalIsScore =
+      totalRaw !== undefined && totalRaw !== null && String(totalRaw).trim() !== ''
+        ? Number(totalRaw)
+        : null;
+    const totalNum = Number.isFinite(totalIsScore) ? totalIsScore : null;
+    const avgFour = (s1 + s2 + s3 + s4) / 4;
+    /** 목록/배지용: 공통 만족도 컬럼이 있으면 우선, 없으면 세부 4항 평균 */
+    const averageScore = totalNum != null ? totalNum : avgFour;
+
+    const itKindRaw = this.normalizeSqlUtf8(row.it_kind);
+    const itKind =
+      itKindRaw != null && String(itKindRaw).trim() !== '' ? String(itKindRaw).trim() : null;
+    const productImage = this._firstShopItemImage(row);
 
     return {
       isId: row.is_id,
       itId: row.it_id,
       itName: row.it_name,
-      itKind: row.it_kind,
+      itKind,
+      productImage,
       mbId: row.mb_id,
       isName: row.is_name,
       isTime: row.is_time,
@@ -53,7 +111,8 @@ class ReviewController {
       isScore2: row.is_score2,
       isScore3: row.is_score3,
       isScore4: row.is_score4,
-      averageScore: (s1 + s2 + s3 + s4) / 4,
+      totalIsScore: totalNum,
+      averageScore,
       isRvkind: row.is_rvkind,
       isRecommend: row.is_recommend,
       isGood: row.is_good,
@@ -125,6 +184,10 @@ class ReviewController {
         is_score2: req.body.isScore2 ?? 0,
         is_score3: req.body.isScore3 ?? 0,
         is_score4: req.body.isScore4 ?? 0,
+        total_is_score:
+          req.body.totalIsScore !== undefined && req.body.totalIsScore !== null
+            ? Number(req.body.totalIsScore)
+            : null,
         is_rvkind: req.body.isRvkind || 'general',
         is_recommend: req.body.isRecommend || 'y',
         is_good: 0,
@@ -180,9 +243,27 @@ class ReviewController {
     try {
       const { page, size } = this._reviewListPagination(req);
       const result = await reviewRepository.findByMember(req.params.mbId, page, size);
+      const reviews = result.rows.map((r) => this.toReviewResponse(r));
+
+      if (process.env.NODE_ENV !== 'production') {
+        result.rows.forEach((row, idx) => {
+          const rev = reviews[idx];
+          console.log('[ReviewController.getMemberReviews]', {
+            isId: rev.isId,
+            itId: this.trimSqlText(row.it_id) || rev.itId,
+            itName: rev.itName,
+            itKind: rev.itKind,
+            reviewUiHint: this._reviewUiHintFromItKind(rev.itKind),
+            productImage: rev.productImage,
+            shopItemImagesFromJoin: this._shopItemImageFieldsForLog(row),
+            reviewAttachCount: Array.isArray(rev.images) ? rev.images.length : 0,
+          });
+        });
+      }
+
       return res.json({
         success: true,
-        reviews: result.rows.map((r) => this.toReviewResponse(r)),
+        reviews,
         ...this.pagePayload(page, size, result.total)
       });
     } catch (error) {
@@ -320,6 +401,9 @@ class ReviewController {
       if (req.body.isScore2 != null) fields.is_score2 = req.body.isScore2;
       if (req.body.isScore3 != null) fields.is_score3 = req.body.isScore3;
       if (req.body.isScore4 != null) fields.is_score4 = req.body.isScore4;
+      if (req.body.totalIsScore !== undefined && req.body.totalIsScore !== null) {
+        fields.total_is_score = Number(req.body.totalIsScore);
+      }
       if (req.body.isPositiveReviewText != null) fields.is_positive_review_text = req.body.isPositiveReviewText;
       if (req.body.isNegativeReviewText != null) fields.is_negative_review_text = req.body.isNegativeReviewText;
       if (req.body.isMoreReviewText != null) fields.is_more_review_text = req.body.isMoreReviewText;

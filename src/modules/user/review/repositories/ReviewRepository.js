@@ -1,5 +1,26 @@
 const pool = require('../../../../config/database');
 
+/**
+ * 상품 전체 만족도(0.5~5, 0.5 단위). TINYINT 이면 소수 저장 불가 → 아래로 변경 권장:
+ * ALTER TABLE bomiora_shop_item_use MODIFY COLUMN total_is_score DECIMAL(2,1) NULL DEFAULT NULL COMMENT '상품만족도' AFTER is_score4;
+ * (컬럼 없을 때) ADD COLUMN total_is_score DECIMAL(2,1) NULL DEFAULT NULL COMMENT '상품만족도' AFTER is_score4;
+ */
+
+/** bomiora_shop_item_use r LEFT JOIN bomiora_shop_item_new n 시 상품 메타·썸네일 */
+/** 상품 쪽 썸네일(it_img1~9). DB에 it_img10 컬럼이 있으면 아래 한 줄 추가하면 됨. */
+const JOIN_SHOP_ITEM_NEW_SELECT = `
+              COALESCE(n.it_name, n.it_subject) AS it_name,
+              n.it_kind AS it_kind,
+              n.it_img1 AS it_img1,
+              n.it_img2 AS it_img2,
+              n.it_img3 AS it_img3,
+              n.it_img4 AS it_img4,
+              n.it_img5 AS it_img5,
+              n.it_img6 AS it_img6,
+              n.it_img7 AS it_img7,
+              n.it_img8 AS it_img8,
+              n.it_img9 AS it_img9`;
+
 class ReviewRepository {
   async existsByMbIdAndOdId(mbId, odId) {
     const [rows] = await pool.query(
@@ -12,14 +33,15 @@ class ReviewRepository {
   async create(fields) {
     const [result] = await pool.query(
       `INSERT INTO bomiora_shop_item_use
-      (mb_id, od_id, it_id, is_name, is_time, is_confirm, is_score1, is_score2, is_score3, is_score4, is_rvkind, is_recommend, is_good,
+      (mb_id, od_id, it_id, is_name, is_time, is_confirm, is_score1, is_score2, is_score3, is_score4, total_is_score, is_rvkind, is_recommend, is_good,
        is_positive_review_text, is_negative_review_text, is_more_review_text,
        is_img1, is_img2, is_img3, is_img4, is_img5, is_img6, is_img7, is_img8, is_img9, is_img10,
        is_birthday, is_weight, is_height, is_pay_mthod, is_outage_num)
-      VALUES (?, ?, ?, ?, NOW(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      VALUES (?, ?, ?, ?, NOW(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         fields.mb_id, fields.od_id, fields.it_id, fields.is_name, fields.is_confirm,
-        fields.is_score1, fields.is_score2, fields.is_score3, fields.is_score4, fields.is_rvkind, fields.is_recommend, fields.is_good,
+        fields.is_score1, fields.is_score2, fields.is_score3, fields.is_score4, fields.total_is_score ?? null,
+        fields.is_rvkind, fields.is_recommend, fields.is_good,
         fields.is_positive_review_text, fields.is_negative_review_text, fields.is_more_review_text,
         fields.is_img1, fields.is_img2, fields.is_img3, fields.is_img4, fields.is_img5, fields.is_img6, fields.is_img7, fields.is_img8, fields.is_img9, fields.is_img10,
         fields.is_birthday, fields.is_weight, fields.is_height, fields.is_pay_mthod, fields.is_outage_num
@@ -32,8 +54,7 @@ class ReviewRepository {
   async findById(isId) {
     const [rows] = await pool.query(
       `SELECT r.*,
-              COALESCE(n.it_name, n.it_subject) AS it_name,
-              n.it_kind AS it_kind
+${JOIN_SHOP_ITEM_NEW_SELECT}
        FROM bomiora_shop_item_use r
        LEFT JOIN bomiora_shop_item_new n ON n.it_id = r.it_id
        WHERE r.is_id = ?`,
@@ -202,8 +223,7 @@ class ReviewRepository {
     const offset = page * size;
     const [rows] = await pool.query(
       `SELECT r.*,
-              COALESCE(n.it_name, n.it_subject) AS it_name,
-              n.it_kind AS it_kind
+${JOIN_SHOP_ITEM_NEW_SELECT}
        FROM bomiora_shop_item_use r
        LEFT JOIN bomiora_shop_item_new n ON n.it_id = r.it_id
        WHERE ${where.join(' AND ')}
@@ -223,8 +243,7 @@ class ReviewRepository {
     const offset = page * size;
     const [rows] = await pool.query(
       `SELECT r.*,
-              COALESCE(n.it_name, n.it_subject) AS it_name,
-              n.it_kind AS it_kind
+${JOIN_SHOP_ITEM_NEW_SELECT}
        FROM bomiora_shop_item_use r
        LEFT JOIN bomiora_shop_item_new n ON n.it_id = r.it_id
        WHERE r.mb_id = ?
@@ -251,8 +270,7 @@ class ReviewRepository {
     const offset = page * size;
     const [rows] = await pool.query(
       `SELECT r.*,
-              COALESCE(n.it_name, n.it_subject) AS it_name,
-              n.it_kind AS it_kind
+${JOIN_SHOP_ITEM_NEW_SELECT}
        FROM bomiora_shop_item_use r
        LEFT JOIN bomiora_shop_item_new n ON n.it_id = r.it_id
        WHERE ${where.join(' AND ')}
