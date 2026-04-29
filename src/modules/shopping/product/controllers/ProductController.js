@@ -77,6 +77,26 @@ class ProductController {
       itBasicRaw != null && String(itBasicRaw).trim() !== ''
         ? String(itBasicRaw).trim()
         : null;
+    const itPrecautionsRaw = this.bufferToString(row.it_precautions);
+    const itPrecautionsStr =
+      itPrecautionsRaw != null && String(itPrecautionsRaw).trim() !== ''
+        ? String(itPrecautionsRaw).trim()
+        : null;
+    const itBaesongContentRaw = this.bufferToString(row.it_baesong_content);
+    const itBaesongContentStr =
+      itBaesongContentRaw != null && String(itBaesongContentRaw).trim() !== ''
+        ? String(itBaesongContentRaw).trim()
+        : null;
+    const itShippingProcessRaw = this.bufferToString(row.it_shipping_process);
+    const itShippingProcessStr =
+      itShippingProcessRaw != null && String(itShippingProcessRaw).trim() !== ''
+        ? String(itShippingProcessRaw).trim()
+        : null;
+    const itChangeContentRaw = this.bufferToString(row.it_change_content);
+    const itChangeContentStr =
+      itChangeContentRaw != null && String(itChangeContentRaw).trim() !== ''
+        ? String(itChangeContentRaw).trim()
+        : null;
     const imageFields = {};
     for (let i = 1; i <= 9; i += 1) {
       const key = `it_img${i}`;
@@ -91,6 +111,10 @@ class ProductController {
       description: itExplain,
       it_basic: itBasicStr,
       it_subject: itSubjectStr,
+      it_precautions: itPrecautionsStr,
+      it_baesong_content: itBaesongContentStr,
+      it_shipping_process: itShippingProcessStr,
+      it_change_content: itChangeContentStr,
       price: row.it_price,
       originalPrice: row.it_cust_price,
       imageUrl: this.processImageUrl(row),
@@ -108,6 +132,10 @@ class ProductController {
         it_explain: itExplain,
         it_subject: itSubjectStr,
         it_basic: itBasicStr,
+        it_precautions: itPrecautionsStr,
+        it_baesong_content: itBaesongContentStr,
+        it_shipping_process: itShippingProcessStr,
+        it_change_content: itChangeContentStr,
         it_prescription: row.it_prescription,
         it_takeway: row.it_takeway,
         it_package: row.it_package,
