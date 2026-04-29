@@ -9,13 +9,23 @@ class WishRepository {
     return rows.length ? rows[0] : null;
   }
 
-  async insertWish({ mbId, itId, wiIp }) {
+  async insertWish({ mbId, itId, wiIp, wiItKind }) {
+    const kind = wiItKind != null ? String(wiItKind).trim() : '';
     const [result] = await pool.query(
-      `INSERT INTO bomiora_shop_wish (mb_id, it_id, inf_code, wi_time, wi_ip)
-       VALUES (?, ?, '', NOW(), ?)`,
-      [mbId, itId, wiIp || '127.0.0.1']
+      `INSERT INTO bomiora_shop_wish (mb_id, it_id, wi_it_kind, inf_code, wi_time, wi_ip)
+       VALUES (?, ?, ?, '', NOW(), ?)`,
+      [mbId, itId, kind, wiIp || '127.0.0.1']
     );
     return result.insertId;
+  }
+
+  /** 찜 추가 시 it_kind 조회 (bomiora_shop_item_new) */
+  async findProductKindByItId(itId) {
+    const [rows] = await pool.query(
+      `SELECT it_kind FROM bomiora_shop_item_new WHERE it_id = ? LIMIT 1`,
+      [itId]
+    );
+    return rows.length ? rows[0] : null;
   }
 
   async deleteById(wiId) {
