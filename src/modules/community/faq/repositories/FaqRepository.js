@@ -67,36 +67,6 @@ class FaqRepository {
         .filter((s) => s.isNotEmpty),
     };
   }
-
-  async findById(id) {
-    const [rows] = await pool.query(
-      `SELECT
-          id,
-          category,
-          question,
-          answer,
-          view_count,
-          writer_name,
-          created_by,
-          created_at,
-          updated_by,
-          updated_at
-       FROM bm_faq
-       WHERE id = ? AND is_deleted = 0
-       LIMIT 1`,
-      [id]
-    );
-    return rows.length ? rows[0] : null;
-  }
-
-  async increaseHit(id) {
-    await pool.query(
-      `UPDATE bm_faq
-          SET view_count = view_count + 1
-        WHERE id = ? AND is_deleted = 0`,
-      [id]
-    );
-  }
 }
 
 module.exports = new FaqRepository();

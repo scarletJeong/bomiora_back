@@ -51,29 +51,6 @@ class FaqController {
       });
     }
   }
-
-  async getDetail(req, res) {
-    try {
-      const id = Number(req.params.id);
-      if (!Number.isFinite(id) || id <= 0) {
-        return res.status(400).json({ success: false, message: '유효한 FAQ ID가 아닙니다.' });
-      }
-
-      const row = await faqRepository.findById(id);
-      if (!row) {
-        return res.status(404).json({ success: false, message: 'FAQ를 찾을 수 없습니다.' });
-      }
-
-      await faqRepository.increaseHit(id);
-      const updated = await faqRepository.findById(id);
-      return res.json({ success: true, data: this.toMap(updated || row) });
-    } catch (error) {
-      return res.status(500).json({
-        success: false,
-        message: `FAQ 상세 조회 실패: ${error.message}`,
-      });
-    }
-  }
 }
 
 module.exports = new FaqController();
