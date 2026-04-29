@@ -3,13 +3,20 @@ const MenstrualCycle = require('../models/MenstrualCycle');
 
 class MenstrualCycleRepository {
   async create(menstrualCycleData) {
-    const { mbId, lastPeriodStart, cycleLength, periodLength } = menstrualCycleData;
+    const {
+      mbId,
+      lastPeriodStart,
+      periodStartDate = null,
+      periodEndDate = null,
+      cycleLength,
+      periodLength
+    } = menstrualCycleData;
 
     const [result] = await pool.query(
       `INSERT INTO bm_menstrual_cycle
-      (mb_id, last_period_start, cycle_length, period_length, created_at, updated_at)
-      VALUES (?, ?, ?, ?, NOW(), NOW())`,
-      [mbId, lastPeriodStart, cycleLength, periodLength]
+      (mb_id, last_period_start, period_start_date, period_end_date, cycle_length, period_length, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+      [mbId, lastPeriodStart, periodStartDate, periodEndDate, cycleLength, periodLength]
     );
 
     return this.findById(result.insertId);
@@ -31,6 +38,14 @@ class MenstrualCycleRepository {
     if (Object.prototype.hasOwnProperty.call(fields, 'lastPeriodStart')) {
       updateFields.push('last_period_start = ?');
       updateValues.push(fields.lastPeriodStart);
+    }
+    if (Object.prototype.hasOwnProperty.call(fields, 'periodStartDate')) {
+      updateFields.push('period_start_date = ?');
+      updateValues.push(fields.periodStartDate);
+    }
+    if (Object.prototype.hasOwnProperty.call(fields, 'periodEndDate')) {
+      updateFields.push('period_end_date = ?');
+      updateValues.push(fields.periodEndDate);
     }
     if (Object.prototype.hasOwnProperty.call(fields, 'cycleLength')) {
       updateFields.push('cycle_length = ?');

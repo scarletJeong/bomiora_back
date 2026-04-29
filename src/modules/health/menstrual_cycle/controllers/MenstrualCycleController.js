@@ -3,7 +3,14 @@ const menstrualCycleRepository = require('../repositories/MenstrualCycleReposito
 class MenstrualCycleController {
   async addRecord(req, res) {
     try {
-      const { mb_id, last_period_start, cycle_length, period_length } = req.body;
+      const {
+        mb_id,
+        last_period_start,
+        period_start_date,
+        period_end_date,
+        cycle_length,
+        period_length
+      } = req.body;
 
       if (!mb_id || !last_period_start || cycle_length == null || period_length == null) {
         return res.status(400).json({
@@ -15,6 +22,8 @@ class MenstrualCycleController {
       const saved = await menstrualCycleRepository.create({
         mbId: mb_id,
         lastPeriodStart: last_period_start,
+        periodStartDate: period_start_date ?? null,
+        periodEndDate: period_end_date ?? null,
         cycleLength: Number(cycle_length),
         periodLength: Number(period_length)
       });
@@ -36,7 +45,13 @@ class MenstrualCycleController {
   async updateRecord(req, res) {
     try {
       const id = Number(req.params.id);
-      const { last_period_start, cycle_length, period_length } = req.body;
+      const {
+        last_period_start,
+        period_start_date,
+        period_end_date,
+        cycle_length,
+        period_length
+      } = req.body;
 
       const exists = await menstrualCycleRepository.existsById(id);
       if (!exists) {
@@ -48,6 +63,8 @@ class MenstrualCycleController {
 
       const updateFields = {};
       if (last_period_start != null) updateFields.lastPeriodStart = last_period_start;
+      if (period_start_date !== undefined) updateFields.periodStartDate = period_start_date;
+      if (period_end_date !== undefined) updateFields.periodEndDate = period_end_date;
       if (cycle_length != null) updateFields.cycleLength = Number(cycle_length);
       if (period_length != null) updateFields.periodLength = Number(period_length);
 
