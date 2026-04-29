@@ -48,25 +48,42 @@ class CouponRepository {
   }
 
   async findUsedCoupons(userId) {
+    // "사용한 쿠폰"의 기준은 coupon_log(bomiora_shop_coupon_log)이며,
+    // 사용시간은 log.cl_datetime 이다. 쿠폰 테이블(bomiora_shop_coupon)은 메타 정보 제공용.
     const [rows] = await pool.query(
-      `SELECT DISTINCT c.*,
-         COALESCE(NULLIF(c.od_id, 0), lg.max_od_id) AS resolved_od_id
+      `SELECT
+         c.cp_no,
+         CAST(c.cp_id AS CHAR) AS cp_id,
+         c.cp_subject,
+         c.cp_method,
+         c.cp_target,
+         c.mb_id,
+         c.cz_id,
+         c.cp_start,
+         c.cp_end,
+         c.cp_price,
+         c.cp_type,
+         c.cp_trunc,
+         c.cp_minimum,
+         c.cp_maximum,
+         lg.max_od_id AS od_id,
+         c.cp_datetime,
+         DATE_FORMAT(lg.max_cl_datetime, '%Y-%m-%d %H:%i:%s') AS cl_datetime
        FROM bomiora_shop_coupon c
-       LEFT JOIN (
-         SELECT mb_id, cp_id, MAX(od_id) AS max_od_id
+       JOIN (
+         SELECT mb_id, cp_id,
+                MAX(cl_datetime) AS max_cl_datetime,
+                MAX(od_id) AS max_od_id
          FROM bomiora_shop_coupon_log
+         WHERE mb_id = ?
          GROUP BY mb_id, cp_id
-       ) lg ON lg.mb_id = c.mb_id AND lg.cp_id = c.cp_id
+       ) lg
+         ON lg.mb_id = c.mb_id AND lg.cp_id = c.cp_id
        WHERE c.mb_id = ?
-         AND ${this._usedByCouponSql('c')}
-       ORDER BY c.cp_datetime DESC, c.cp_no DESC`,
-      [userId]
+       ORDER BY lg.max_cl_datetime DESC, c.cp_no DESC`,
+      [userId, userId]
     );
-    return rows.map((r) => {
-      const resolved = r.resolved_od_id != null ? Number(r.resolved_od_id) : 0;
-      const orig = r.od_id != null ? Number(r.od_id) : 0;
-      return { ...r, od_id: resolved > 0 ? resolved : orig };
-    });
+    return rows;
   }
 
   async findExpiredCoupons(userId) {

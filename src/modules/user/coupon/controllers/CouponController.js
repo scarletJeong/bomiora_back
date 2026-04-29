@@ -19,6 +19,9 @@ class CouponController {
       cp_minimum: c.cp_minimum,
       cp_maximum: c.cp_maximum,
       od_id: c.od_id,
+      // 사용완료(사용한 쿠폰) 기준 시각: coupon_log.cl_datetime 우선
+      // repository에서 DATE_FORMAT으로 문자열로 내려줌(타임존 변형 방지)
+      cl_datetime: c.cl_datetime ?? null,
       cp_datetime: c.cp_datetime,
       applied_product: c._applied_product ?? null
     };
