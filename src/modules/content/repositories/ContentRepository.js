@@ -44,6 +44,7 @@ class ContentRepository {
           is_notice,
           is_published,
           view_count,
+          recommend_count,
           sort_order,
           writer_name,
           created_by,
@@ -89,6 +90,7 @@ class ContentRepository {
           is_notice,
           is_published,
           view_count,
+          recommend_count,
           sort_order,
           writer_name,
           created_by,
@@ -114,6 +116,87 @@ class ContentRepository {
           AND is_deleted = 0`,
       [id]
     );
+  }
+
+  async incrementRecommend(id) {
+    await pool.query(
+      `UPDATE bm_content
+          SET recommend_count = recommend_count + 1
+        WHERE id = ?
+          AND is_deleted = 0`,
+      [id]
+    );
+  }
+
+  /**
+   * 콘텐츠 추천 이력 — 회원(mb_id) + 문진 프로필(pf_no, 없으면 0)당 글당 1회
+   * @returns {Promise<boolean>} true: 신규 반영(카운트 증가), false: 이미 추천함
+   */
+  async tryRecordRecommendAndIncrement(contentId, mbId, pfNo) {
+    const connection = await pool.getConnection();
+    try {
+      await connection.beginTransaction();
+      const [ins] = await connection.query(
+        `INSERT INTO bm_content_recommend_log (content_id, mb_id, pf_no)
+         VALUES (?, ?, ?)`,
+        [contentId, mbId, pfNo]
+      );
+      if (ins.affectedRows !== 1) {
+        await connection.rollback();
+        return false;
+      }
+      const [up] = await connection.query(
+        `UPDATE bm_content
+            SET recommend_count = recommend_count + 1
+          WHERE id = ?
+            AND is_deleted = 0`,
+        [contentId]
+      );
+      if (up.affectedRows !== 1) {
+        await connection.rollback();
+        return false;
+      }
+      await connection.commit();
+      return true;
+    } catch (e) {
+      await connection.rollback();
+      if (e && (e.code === 'ER_DUP_ENTRY' || e.errno === 1062)) {
+        return false;
+      }
+      throw e;
+    } finally {
+      connection.release();
+    }
+  }
+
+  /**
+   * 상세/목록 — 해당 회원·프로필이 이 글을 추천했는지
+   */
+  async hasUserRecommended(contentId, mbId, pfNo) {
+    const [rows] = await pool.query(
+      `SELECT 1 AS ok
+         FROM bm_content_recommend_log
+        WHERE content_id = ?
+          AND mb_id = ?
+          AND pf_no = ?
+        LIMIT 1`,
+      [contentId, mbId, pfNo]
+    );
+    return rows.length > 0;
+  }
+
+  /** pf_no > 0 일 때 해당 회원 소유 문진인지 */
+  async isProfileOwnedByMember(pfNo, mbId) {
+    if (!pfNo || pfNo <= 0) return true;
+    const [rows] = await pool.query(
+      `SELECT 1 AS ok
+         FROM bomiora_member_health_profiles
+        WHERE pf_no = ?
+          AND mb_id = ?
+        LIMIT 1`,
+      [pfNo, mbId]
+    );
+    return rows.length > 0;
   }
 
   async findAdjacentById(id) {
