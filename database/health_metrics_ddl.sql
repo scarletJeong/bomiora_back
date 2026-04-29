@@ -117,6 +117,15 @@ CREATE TABLE IF NOT EXISTS bm_menstrual_cycle (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
 COMMENT='생리주기 기록';
 
+-- bm_menstrual_cycle: 표시용 생리 시작/끝 날짜(계산 로직과 분리)
+-- - period_start_date/period_end_date는 "달력 표시/수정"용이며,
+--   기존 last_period_start/cycle_length/period_length(계산용)는 그대로 유지한다.
+ALTER TABLE `bm_menstrual_cycle`
+  ADD COLUMN `period_start_date` DATE NULL COMMENT '표시용 생리 시작일(수정 가능)' AFTER `last_period_start`,
+  ADD COLUMN `period_end_date` DATE NULL COMMENT '표시용 생리 종료일(수정 가능)' AFTER `period_start_date`,
+  ADD KEY `idx_period_start_date` (`period_start_date`),
+  ADD KEY `idx_period_end_date` (`period_end_date`);
+
 
 -- -----------------------------------------------------------------------------
 -- 6. 걸음수 (헬스 연동) — bm_steps
