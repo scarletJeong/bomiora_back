@@ -41,7 +41,9 @@ class ContactController {
       wr_option: this._asText(contact.wr_option),
       wr_is_comment: this._asInt(contact.wr_is_comment, 0),
       followup_count: this._asInt(contact.followup_count, 0),
-      thread_last_datetime: contact.thread_last_datetime ?? null
+      thread_last_datetime: contact.thread_last_datetime ?? null,
+      latest_wr_id: this._asInt(contact.latest_wr_id, 0),
+      latest_wr_is_comment: this._asInt(contact.latest_wr_is_comment, 0),
     };
   }
 

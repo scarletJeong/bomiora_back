@@ -83,15 +83,32 @@ class ContactRepository {
       `
       SELECT root.*,
              latest.latest_dt AS thread_last_datetime,
-             latest.followup_cnt AS followup_count
+             latest.followup_cnt AS followup_count,
+             latest.latest_wr_id AS latest_wr_id,
+             latest.latest_wr_is_comment AS latest_wr_is_comment
       FROM bomiora_write_online root
       JOIN (
-        SELECT wr_parent,
-               MAX(wr_datetime) AS latest_dt,
-               SUM(CASE WHEN wr_id <> wr_parent THEN 1 ELSE 0 END) AS followup_cnt
-        FROM bomiora_write_online
-        WHERE ${whereSql}
-        GROUP BY wr_parent
+        SELECT t.wr_parent,
+               t.latest_dt,
+               t.followup_cnt,
+               p.wr_id AS latest_wr_id,
+               p.wr_is_comment AS latest_wr_is_comment
+        FROM (
+          SELECT wr_parent,
+                 MAX(wr_datetime) AS latest_dt,
+                 SUM(CASE WHEN wr_id <> wr_parent THEN 1 ELSE 0 END) AS followup_cnt
+          FROM bomiora_write_online
+          WHERE ${whereSql}
+          GROUP BY wr_parent
+        ) t
+        JOIN (
+          SELECT wr_parent, wr_datetime, MAX(wr_id) AS wr_id
+          FROM bomiora_write_online
+          GROUP BY wr_parent, wr_datetime
+        ) x
+          ON x.wr_parent = t.wr_parent AND x.wr_datetime = t.latest_dt
+        JOIN bomiora_write_online p
+          ON p.wr_parent = x.wr_parent AND p.wr_datetime = x.wr_datetime AND p.wr_id = x.wr_id
       ) latest
         ON root.wr_id = latest.wr_parent
       ORDER BY latest.latest_dt DESC, root.wr_id DESC
