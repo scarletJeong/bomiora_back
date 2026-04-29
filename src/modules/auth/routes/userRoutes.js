@@ -40,6 +40,18 @@ const upload = multer({
 router.put('/profile', (req, res) => userController.updateProfile(req, res));
 
 /**
+ * @route   GET /api/user/refund-account?mb_id=
+ * @desc    환불계좌 조회
+ */
+router.get('/refund-account', (req, res) => userController.getRefundAccount(req, res));
+
+/**
+ * @route   PUT /api/user/refund-account
+ * @desc    환불계좌 저장
+ */
+router.put('/refund-account', (req, res) => userController.putRefundAccount(req, res));
+
+/**
  * @route   POST /api/user/verify-password
  * @desc    비밀번호 확인(재인증)
  * @access  Private (추후 인증 미들웨어 추가)

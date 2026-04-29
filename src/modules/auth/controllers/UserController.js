@@ -792,6 +792,98 @@ class UserController {
     }
   }
 
+  _bufferToString(value) {
+    if (value == null) return '';
+    if (typeof value === 'string') return value;
+    if (Buffer.isBuffer(value)) return value.toString('utf8');
+    if (value && value.type === 'Buffer' && Array.isArray(value.data)) {
+      return Buffer.from(value.data).toString('utf8');
+    }
+    return String(value);
+  }
+
+  /**
+   * 환불계좌 조회
+   */
+  async getRefundAccount(req, res) {
+    try {
+      const mbId = String(req.query.mb_id || req.query.mbId || '').trim();
+      if (!mbId) {
+        return res.status(400).json({ success: false, message: 'mb_id가 필요합니다.' });
+      }
+      const row = await userRepository.findRefundAccountByMbId(mbId);
+      if (!row) {
+        return res.status(404).json({ success: false, message: '사용자를 찾을 수 없습니다.' });
+      }
+      const s = (v) => this._bufferToString(v).trim();
+      return res.json({
+        success: true,
+        refundBank: s(row.mb_refund_bank),
+        refundAccount: s(row.mb_refund_account),
+        refundHolder: s(row.mb_refund_holder),
+      });
+    } catch (error) {
+      console.error('❌ [GET REFUND ACCOUNT] 오류:', error);
+      return res.status(500).json({
+        success: false,
+        message: '환불계좌 조회 중 오류가 발생했습니다.',
+      });
+    }
+  }
+
+  /**
+   * 환불계좌 저장
+   */
+  async putRefundAccount(req, res) {
+    try {
+      const mbId = String(req.body.mbId || req.body.mb_id || '').trim();
+      const bank = String(req.body.refundBank || req.body.mb_refund_bank || '').trim();
+      const account = String(req.body.refundAccount || req.body.mb_refund_account || '')
+        .replace(/[^0-9]/g, '');
+      const holder = String(req.body.refundHolder || req.body.mb_refund_holder || '').trim();
+
+      if (!mbId) {
+        return res.status(400).json({ success: false, message: 'mbId가 필요합니다.' });
+      }
+      const user = await userRepository.findByMbId(mbId);
+      if (!user) {
+        return res.status(404).json({ success: false, message: '사용자를 찾을 수 없습니다.' });
+      }
+      if (!bank) {
+        return res.status(400).json({ success: false, message: '은행을 선택해 주세요.' });
+      }
+      if (!account || account.length < 10) {
+        return res.status(400).json({ success: false, message: '계좌번호를 확인해 주세요.' });
+      }
+      if (!holder) {
+        return res.status(400).json({ success: false, message: '예금주명을 입력해 주세요.' });
+      }
+      if (bank.length > 64 || account.length > 64 || holder.length > 64) {
+        return res.status(400).json({ success: false, message: '입력값이 너무 깁니다.' });
+      }
+
+      await userRepository.updateRefundAccountByMbId(mbId, {
+        bank,
+        account,
+        holder,
+      });
+
+      return res.json({
+        success: true,
+        message: '환불계좌가 저장되었습니다.',
+        refundBank: bank,
+        refundAccount: account,
+        refundHolder: holder,
+      });
+    } catch (error) {
+      console.error('❌ [PUT REFUND ACCOUNT] 오류:', error);
+      return res.status(500).json({
+        success: false,
+        message: '환불계좌 저장 중 오류가 발생했습니다.',
+      });
+    }
+  }
+
   /**
    * 회원 본인 탈퇴(Soft Delete)
    */

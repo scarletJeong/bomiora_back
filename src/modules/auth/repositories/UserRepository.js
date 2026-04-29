@@ -592,6 +592,41 @@ class UserRepository {
       }
     }
   }
+
+  /**
+   * mb_id 기준 환불계좌 조회
+   */
+  async findRefundAccountByMbId(mbId) {
+    try {
+      const [rows] = await pool.query(
+        `SELECT mb_refund_bank, mb_refund_account, mb_refund_holder
+         FROM bomiora_member WHERE mb_id = ? LIMIT 1`,
+        [mbId]
+      );
+      return rows.length ? rows[0] : null;
+    } catch (error) {
+      console.error('❌ [UserRepository] findRefundAccountByMbId 오류:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * mb_id 기준 환불계좌 저장
+   */
+  async updateRefundAccountByMbId(mbId, { bank, account, holder }) {
+    try {
+      const [result] = await pool.query(
+        `UPDATE bomiora_member
+         SET mb_refund_bank = ?, mb_refund_account = ?, mb_refund_holder = ?
+         WHERE mb_id = ?`,
+        [String(bank ?? ''), String(account ?? ''), String(holder ?? ''), mbId]
+      );
+      return result.affectedRows > 0;
+    } catch (error) {
+      console.error('❌ [UserRepository] updateRefundAccountByMbId 오류:', error);
+      throw error;
+    }
+  }
 }
 
 module.exports = new UserRepository();
