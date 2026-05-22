@@ -7,6 +7,9 @@ const OTP_EXPIRE_SECONDS = Number(process.env.BOMIORA_OTP_EXPIRE_SEC || 180);
 const RESEND_COOLDOWN_SECONDS = 5;
 const MAX_TRY_COUNT = Number(process.env.BOMIORA_OTP_MAX_TRY || 5);
 
+/** 알림톡 OTP 허용 용도 (DB `otp_purpose` VARCHAR — 값만 일치하면 저장 가능) */
+const OTP_PURPOSES = new Set(['id_find', 'password_find', 'profile_phone']);
+
 function normalizePhoneHyphen(value) {
   const digits = String(value || '').replace(/[^0-9]/g, '');
   if (digits.length === 11) {
@@ -39,6 +42,13 @@ class OtpController {
   async send(req, res) {
     try {
       const purpose = String(req.body?.purpose || req.body?.otp_purpose || 'password_find').trim();
+      if (!OTP_PURPOSES.has(purpose)) {
+        return res.status(400).json({
+          success: false,
+          code: 'INVALID_PURPOSE',
+          message: '지원하지 않는 인증 용도입니다.',
+        });
+      }
       const name = String(req.body?.name || req.body?.mb_name || '').trim();
       const phoneRaw = String(req.body?.phone || req.body?.mb_hp || '').trim();
 
@@ -131,6 +141,14 @@ class OtpController {
           success: false,
           code: 'BAD_REQUEST',
           message: 'otpToken과 인증번호를 입력해 주세요.',
+        });
+      }
+
+      if (purpose && !OTP_PURPOSES.has(purpose)) {
+        return res.status(400).json({
+          success: false,
+          code: 'INVALID_PURPOSE',
+          message: '지원하지 않는 인증 용도입니다.',
         });
       }
 
