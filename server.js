@@ -58,6 +58,7 @@ app.use('/api/event', require('./src/modules/shopping/event/routes/eventRoutes')
 app.use('/api/announcement', require('./src/modules/community/announcement/routes/announcementRoutes'));
 app.use('/api/faq', require('./src/modules/community/faq/routes/faqRoutes'));
 app.use('/api/content', require('./src/modules/content/routes/contentRoutes'));
+app.use('/api/search', require('./src/modules/search/routes/searchRoutes'));
 app.use('/api/cart', require('./src/modules/shopping/cart/routes/cartRoutes'));
 app.use('/api/kcp-pay', require('./src/modules/shopping/kcp_pay/routes/kcpPayRoutes'));
 app.use('/api/proxy', require('./src/modules/common/imageProxy/routes/imageProxyRoutes'));
