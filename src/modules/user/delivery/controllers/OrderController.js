@@ -34,6 +34,31 @@ class OrderController {
     return `${yyyy}.${mm}.${dd} ${hh}:${mi}`;
     }
 
+  /**
+   * MySQL DATE가 mysql2에서 Date 객체로 올 때 String().substring(0,10) → "Mon Apr 21" 등으로 잘림.
+   * CartController.formatSqlDateForApi 와 동일하게 YYYY-MM-DD 로 정규화.
+   */
+  formatSqlDateForApi(value) {
+    if (value == null || value === '') return null;
+    if (value instanceof Date) {
+      if (Number.isNaN(value.getTime())) return null;
+      const y = value.getFullYear();
+      const m = String(value.getMonth() + 1).padStart(2, '0');
+      const d = String(value.getDate()).padStart(2, '0');
+      return `${y}-${m}-${d}`;
+    }
+    const s = String(value).trim();
+    if (!s) return null;
+    const iso = s.match(/^(\d{4}-\d{2}-\d{2})/);
+    if (iso) return iso[1];
+    const parsed = new Date(s);
+    if (Number.isNaN(parsed.getTime())) return null;
+    const y = parsed.getFullYear();
+    const m = String(parsed.getMonth() + 1).padStart(2, '0');
+    const d = String(parsed.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+
   getDisplayStatus(odStatus, deliveryCompleted, adminCompleted, autoConfirmAt) {
     if (Number(deliveryCompleted || 0) === 1) return '배송완료';
     if (Number(adminCompleted || 0) === 1 && autoConfirmAt && new Date(autoConfirmAt) < new Date()) return '배송완료';
@@ -292,6 +317,9 @@ class OrderController {
       const products = carts.map((c) => this.toOrderItem(c, imageUrlMap));
       const settleCase = this.bufferToString(row.od_settle_case) || '';
       const bankAccount = this.bufferToString(row.od_bank_account) || '';
+      const couponDiscount =
+        this.toInt(row.od_cart_coupon) + this.toInt(row.od_send_coupon) + this.toInt(row.od_coupon);
+      const pointDiscount = this.toInt(row.od_receipt_point);
 
       const detail = {
         odId: String(row.od_id),
@@ -308,11 +336,14 @@ class OrderController {
         products,
         productPrice: this.toInt(row.od_cart_price),
         deliveryFee: this.toInt(row.od_send_cost) + this.toInt(row.od_send_cost2),
-        discountAmount: this.toInt(row.od_cart_coupon) + this.toInt(row.od_send_coupon) + this.toInt(row.od_coupon) + this.toInt(row.od_receipt_point),
+        discountAmount: couponDiscount + pointDiscount,
+        couponDiscount,
+        pointDiscount,
         totalPrice: this.computeOrderTotal(row),
         isPrescriptionOrder: false,
         paymentMethod: settleCase || ((this.toInt(row.od_misu) > 0 && bankAccount.includes('/')) ? '가상계좌' : ''),
         paymentMethodDetail: null,
+        odBankAccount: bankAccount || null,
         ordererName: row.od_b_name,
         ordererPhone: row.od_b_hp,
         ordererEmail: row.od_email,
@@ -337,8 +368,14 @@ class OrderController {
 
       const reservation = await orderRepository.getReservation(mbId, odId);
       if (reservation) {
-        detail.reservationDate = reservation.hp_rsvt_date ? String(reservation.hp_rsvt_date).substring(0, 10) : null;
-        detail.reservationTime = reservation.hp_rsvt_stime || null;
+        let rawDate = reservation.hp_rsvt_date;
+        if (rawDate != null && !(rawDate instanceof Date)) {
+          rawDate = this.bufferToString(rawDate) || rawDate;
+        }
+        detail.reservationDate = this.formatSqlDateForApi(rawDate);
+        detail.reservationTime = reservation.hp_rsvt_stime
+          ? String(this.bufferToString(reservation.hp_rsvt_stime) || reservation.hp_rsvt_stime).trim()
+          : null;
       }
       detail.isPrescriptionOrder = await orderRepository.isPrescriptionOrder(mbId, odId);
 
@@ -451,9 +488,12 @@ class OrderController {
 
       const order = await orderRepository.findById(odId);
       if (!order) throw new Error('주문을 찾을 수 없습니다.');
-      if (order.mb_id !== mbId) throw new Error('주문 정보가 일치하지 않습니다.');
-      if (!['주문', '입금'].includes(order.od_status)) {
-        throw new Error('예약 시간은 결제 완료 상태에서만 변경할 수 있습니다.');
+      if (this.bufferToString(order.mb_id || '').trim() !== String(mbId || '').trim()) {
+        throw new Error('주문 정보가 일치하지 않습니다.');
+      }
+      const odStatus = this.bufferToString(order.od_status || '').trim();
+      if (!['주문', '입금', '준비'].includes(odStatus)) {
+        throw new Error('예약 시간은 결제 완료·배송준비 단계에서만 변경할 수 있습니다.');
       }
       if (await orderRepository.isPrescriptionOrder(mbId, odId)) {
         throw new Error('처방 주문은 예약 시간 변경이 불가능합니다.');
@@ -471,29 +511,50 @@ class OrderController {
     }
   }
 
+  /** bomiora_shop_order_address 한 행 — mysql2 Buffer 필드를 문자열로 정규화 */
+  normalizeAddressRowForOrder(row) {
+    if (!row) return null;
+    return {
+      ad_name: this.bufferToString(row.ad_name) || '',
+      ad_tel: this.bufferToString(row.ad_tel) || '',
+      ad_hp: this.bufferToString(row.ad_hp) || '',
+      ad_zip1: this.bufferToString(row.ad_zip1) || '',
+      ad_zip2: this.bufferToString(row.ad_zip2) || '',
+      ad_addr1: this.bufferToString(row.ad_addr1) || '',
+      ad_addr2: this.bufferToString(row.ad_addr2) || '',
+      ad_addr3: this.bufferToString(row.ad_addr3) || '',
+      ad_jibeon: this.bufferToString(row.ad_jibeon) || '',
+    };
+  }
+
   async changeDeliveryAddress(req, res) {
     try {
       const odId = this.toOdId(req.params.odId);
       if (!odId) return res.status(400).json({ error: '주문번호가 필요합니다.' });
-      const mbId = req.body.mbId;
-      const addressId = Number(req.body.addressId || req.body.adId);
+      const mbIdRaw = req.body.mbId ?? req.body.mb_id;
+      const mbId = mbIdRaw != null ? String(mbIdRaw).trim() : '';
+      const addressId = Number(req.body.addressId ?? req.body.adId);
 
-      if (!mbId || !String(mbId).trim()) return res.status(400).json({ error: '회원 ID가 필요합니다.' });
+      if (!mbId) return res.status(400).json({ error: '회원 ID가 필요합니다.' });
       if (!addressId || Number.isNaN(addressId)) return res.status(400).json({ error: '배송지 ID가 필요합니다.' });
 
       const order = await orderRepository.findById(odId);
       if (!order) throw new Error('주문을 찾을 수 없습니다.');
-      if (order.mb_id !== mbId) throw new Error('주문 정보가 일치하지 않습니다.');
-      if (!['주문', '입금', '준비'].includes(order.od_status)) {
+      if (this.bufferToString(order.mb_id || '').trim() !== mbId) {
+        throw new Error('주문 정보가 일치하지 않습니다.');
+      }
+      const odStatus = this.bufferToString(order.od_status || '').trim();
+      if (!['주문', '입금', '준비'].includes(odStatus)) {
         throw new Error('배송지는 결제대기/배송준비 상태에서만 변경할 수 있습니다.');
       }
       if (await orderRepository.isPrescriptionOrder(mbId, odId)) {
         throw new Error('처방 주문은 배송지 변경이 불가능합니다.');
       }
 
-      const address = await orderRepository.getAddressById(mbId, addressId);
-      if (!address) throw new Error('선택한 배송지를 찾을 수 없습니다.');
+      const addressRow = await orderRepository.getAddressById(mbId, addressId);
+      if (!addressRow) throw new Error('선택한 배송지를 찾을 수 없습니다.');
 
+      const address = this.normalizeAddressRowForOrder(addressRow);
       const changed = await orderRepository.updateOrderAddress(odId, mbId, address);
       if (!changed) throw new Error('배송지 변경에 실패했습니다.');
 

@@ -106,9 +106,9 @@ class ProductController {
     
     return {
       id: itIdStr,
-      name: row.it_name,
+      name: this.bufferToString(row.it_name),
       // 목록용 짧은 설명(it_basic). 상세 본문은 it_explain → description
-      description: itExplain,
+      description: this.bufferToString(itExplain),
       it_basic: itBasicStr,
       it_subject: itSubjectStr,
       it_precautions: itPrecautionsStr,
@@ -118,7 +118,7 @@ class ProductController {
       price: row.it_price,
       originalPrice: row.it_cust_price,
       imageUrl: this.processImageUrl(row),
-      categoryId: row.ca_id,
+      categoryId: this.bufferToString(row.ca_id),
       categoryName: this.categoryName(row.ca_id),
       productKind: itKindStr,
       isNew: Number(row.it_type3 || 0) === 1,
@@ -129,7 +129,7 @@ class ProductController {
       additionalInfo: {
         it_id: itIdStr,
         it_kind: itKindStr,
-        it_explain: itExplain,
+        it_explain: this.bufferToString(itExplain),
         it_subject: itSubjectStr,
         it_basic: itBasicStr,
         it_precautions: itPrecautionsStr,
@@ -145,6 +145,37 @@ class ProductController {
         it_option_subject: row.it_option_subject,
         ...imageFields
       }
+    };
+  }
+
+  /**
+   * 검색 결과용: payload 최소화 (긴 HTML 필드 제거)
+   */
+  toProductSearchDto(row) {
+    const base = this.toProductDto(row);
+    return {
+      id: base.id,
+      name: base.name,
+      it_basic: base.it_basic,
+      it_subject: base.it_subject,
+      price: base.price,
+      originalPrice: base.originalPrice,
+      imageUrl: base.imageUrl,
+      categoryId: base.categoryId,
+      categoryName: base.categoryName,
+      productKind: base.productKind,
+      isNew: base.isNew,
+      isBest: base.isBest,
+      stock: base.stock,
+      rating: base.rating,
+      reviewCount: base.reviewCount,
+      // description 및 추가 HTML 필드는 제거
+      additionalInfo: {
+        it_id: base.id,
+        it_kind: base.productKind,
+        it_subject: base.it_subject,
+        it_basic: base.it_basic,
+      },
     };
   }
 
