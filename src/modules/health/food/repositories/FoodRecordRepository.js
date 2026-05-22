@@ -69,6 +69,15 @@ class FoodRecordRepository {
     return this.findById(id);
   }
 
+  /** 식사 사진 URL만 갱신 (image_path / photo) */
+  async updatePhoto(id, photo) {
+    await pool.query(
+      `UPDATE bm_food_records SET photo = ?, updated_at = NOW() WHERE id = ?`,
+      [photo, id]
+    );
+    return this.findById(id);
+  }
+
   async deleteById(id) {
     const [result] = await pool.query(
       'DELETE FROM bm_food_records WHERE id = ?',

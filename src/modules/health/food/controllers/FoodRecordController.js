@@ -1,7 +1,13 @@
+const fs = require('fs');
+const path = require('path');
 const foodRecordRepository = require('../repositories/FoodRecordRepository');
 const foodRepository = require('../repositories/FoodRepository');
 const { toIsoUtcString } = require('../../../../utils/healthDateTime');
 const { calculateConvertedNutrition } = require('../utils/calorieConverter');
+
+const UPLOAD_DIR =
+  process.env.FOOD_IMAGE_UPLOAD_DIR ||
+  path.join(process.cwd(), 'uploads', 'food_images');
 
 function mapFoodItemRows(rows) {
   return (rows || []).map((row) => ({
@@ -28,6 +34,7 @@ function serializeFoodRecordRow(r, items = []) {
     food_time: String(r.food_time || '').toLowerCase(),
     eaten_at: toIsoUtcString(r.eaten_at),
     photo: r.photo,
+    image_path: r.photo,
     description: r.description,
     calories: r.calories != null ? Number(r.calories) : null,
     protein: r.protein != null ? Number(r.protein) : null,
@@ -41,6 +48,121 @@ function serializeFoodRecordRow(r, items = []) {
 }
 
 class FoodRecordController {
+  getUploadDir() {
+    return UPLOAD_DIR;
+  }
+
+  /** POST /api/health/food/upload-image - 식사 사진 업로드 */
+  async uploadImage(req, res) {
+    try {
+      if (!req.file) {
+        return res.status(400).json({
+          success: false,
+          message: '이미지 업로드 실패: 파일이 없습니다.'
+        });
+      }
+
+      const fileUrl = `/api/health/food/images/${req.file.filename}`;
+
+      return res.json({
+        success: true,
+        filename: req.file.filename,
+        url: fileUrl,
+        message: '이미지 업로드 성공'
+      });
+    } catch (error) {
+      return res.status(400).json({
+        success: false,
+        message: `이미지 업로드 실패: ${error.message}`
+      });
+    }
+  }
+
+  /** GET /api/health/food/images/:filename - 업로드된 식사 사진 */
+  async getImage(req, res) {
+    try {
+      const filePath = path.join(UPLOAD_DIR, req.params.filename);
+      if (!fs.existsSync(filePath)) {
+        return res.status(404).end();
+      }
+
+      const ext = path.extname(filePath).toLowerCase();
+      const contentTypeMap = {
+        '.png': 'image/png',
+        '.gif': 'image/gif',
+        '.webp': 'image/webp',
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg'
+      };
+
+      res.setHeader('Content-Type', contentTypeMap[ext] || 'image/jpeg');
+      return res.sendFile(filePath);
+    } catch (error) {
+      return res.status(400).end();
+    }
+  }
+
+  /** PUT /api/health/food/records/:foodRecordId - 식사 기록 수정 (사진 URL 등) */
+  async update(req, res) {
+    try {
+      const foodRecordId = Number(req.params.foodRecordId);
+      if (!Number.isFinite(foodRecordId) || foodRecordId <= 0) {
+        return res.status(400).json({
+          success: false,
+          message: '유효하지 않은 foodRecordId 입니다.'
+        });
+      }
+
+      const record = await foodRecordRepository.findById(foodRecordId);
+      if (!record) {
+        return res.status(404).json({
+          success: false,
+          message: '식사 기록을 찾을 수 없습니다.'
+        });
+      }
+
+      const hasImagePath =
+        Object.prototype.hasOwnProperty.call(req.body, 'image_path') ||
+        Object.prototype.hasOwnProperty.call(req.body, 'photo');
+
+      if (hasImagePath) {
+        const photo =
+          req.body.image_path !== undefined
+            ? req.body.image_path
+            : req.body.photo;
+        await foodRecordRepository.updatePhoto(foodRecordId, photo ?? null);
+      } else {
+        await foodRecordRepository.update(foodRecordId, {
+          eatenAt: req.body.eaten_at,
+          photo: req.body.photo,
+          description: req.body.description,
+          calories: req.body.calories,
+          protein: req.body.protein,
+          carbs: req.body.carbs,
+          fat: req.body.fat,
+          other: req.body.other
+        });
+      }
+
+      const updated = await foodRecordRepository.findById(foodRecordId);
+      const items = await foodRecordRepository.findFoodItemsByFoodRecordId(
+        foodRecordId
+      );
+
+      return res.json({
+        success: true,
+        message: '식사 기록이 수정되었습니다.',
+        data: serializeFoodRecordRow(updated, mapFoodItemRows(items))
+      });
+    } catch (error) {
+      console.error('[FoodRecordController.update]', error.message);
+      return res.status(500).json({
+        success: false,
+        message: `식사 기록 수정 실패: ${error.message}`
+      });
+    }
+  }
+
   /** POST /api/health/food/records - 식사 기록 생성 */
   async create(req, res) {
     try {
