@@ -26,6 +26,36 @@ class ImageProxyController {
     return 'application/octet-stream';
   }
 
+  /** 본문 바이트로 실제 이미지 여부 판별 (잘못된 Content-Type:text/html 대응) */
+  sniffImageMimeFromBuffer(buf) {
+    if (!buf || buf.length < 12) return null;
+    if (buf[0] === 0xff && buf[1] === 0xd8) return 'image/jpeg';
+    if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return 'image/png';
+    if (buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46) return 'image/gif';
+    try {
+      const head = buf.slice(0, 12).toString('ascii');
+      if (head.startsWith('RIFF') && buf.slice(8, 12).toString('ascii') === 'WEBP') {
+        return 'image/webp';
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  bufferLooksLikeHtml(buf) {
+    const s = buf.slice(0, 512).toString('latin1').trimStart().toLowerCase();
+    return (
+      s.startsWith('<!') ||
+      s.startsWith('<html') ||
+      s.startsWith('<head') ||
+      s.startsWith('<?xml') ||
+      s.startsWith('<body')
+    );
+  }
+
+  urlLooksLikeImagePath(url) {
+    return /\.(png|jpe?g|jpeg|gif|webp|bmp)(\?|#|$)/i.test(String(url));
+  }
+
   isLocalXamppUrl(url) {
     return (
       url.startsWith('https://localhost/bomiora/www/') ||
@@ -92,17 +122,41 @@ class ImageProxyController {
         return res.sendStatus(response.status);
       }
 
-      const responseContentType = (response.headers.get('content-type') || '').toLowerCase();
-      // 이미지 요청인데 HTML/문서가 내려오면 Flutter 웹에서 ImageCodecException이 발생하므로 차단
-      if (responseContentType && !responseContentType.startsWith('image/')) {
+      const bytes = Buffer.from(await response.arrayBuffer());
+      const urlStr = String(targetUrl);
+      const urlLooksImage = this.urlLooksLikeImagePath(urlStr);
+
+      const sniffed = this.sniffImageMimeFromBuffer(bytes);
+      if (sniffed) {
+        res.setHeader('Content-Type', sniffed);
+        res.setHeader('Cache-Control', 'no-store');
+        return res.status(200).send(bytes);
+      }
+
+      const rawCt = response.headers.get('content-type') || '';
+      const base = rawCt.split(';')[0].trim().toLowerCase();
+      const isImage = base.startsWith('image/');
+      const isBinaryImage =
+        urlLooksImage &&
+        (base === '' ||
+          base === 'application/octet-stream' ||
+          base === 'binary/octet-stream');
+      const isBadDoc =
+        base.includes('html') ||
+        base === 'application/json' ||
+        base.startsWith('text/');
+
+      if (urlLooksImage && this.bufferLooksLikeHtml(bytes)) {
         return res.sendStatus(415);
       }
 
-      const bytes = Buffer.from(await response.arrayBuffer());
-      const contentType = this.detectContentType(
-        String(targetUrl),
-        response.headers.get('content-type')
-      );
+      if (!isImage && !isBinaryImage) {
+        if (isBadDoc || !urlLooksImage) {
+          return res.sendStatus(415);
+        }
+      }
+
+      const contentType = this.detectContentType(urlStr, response.headers.get('content-type'));
       res.setHeader('Content-Type', contentType);
       res.setHeader('Cache-Control', 'no-store');
       return res.status(200).send(bytes);

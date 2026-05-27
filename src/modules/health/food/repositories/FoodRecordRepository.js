@@ -69,13 +69,24 @@ class FoodRecordRepository {
     return this.findById(id);
   }
 
-  /** 식사 사진 URL만 갱신 (image_path / photo) */
-  async updatePhoto(id, photo) {
+  /** 식사 사진 URL만 갱신 (대표 photo + photos JSON 배열) */
+  async updatePhotos(id, photo, photos = []) {
+    const list = Array.isArray(photos) ? photos.filter(Boolean).slice(0, 3) : [];
+    const representative = photo ?? list[0] ?? null;
+    const photosJson = list.length > 0 ? JSON.stringify(list) : null;
     await pool.query(
-      `UPDATE bm_food_records SET photo = ?, updated_at = NOW() WHERE id = ?`,
-      [photo, id]
+      `UPDATE bm_food_records
+       SET photo = ?, photos = ?, updated_at = NOW()
+       WHERE id = ?`,
+      [representative, photosJson, id]
     );
     return this.findById(id);
+  }
+
+  /** @deprecated 단일 사진 — updatePhotos 사용 권장 */
+  async updatePhoto(id, photo) {
+    const path = photo ? String(photo).trim() : null;
+    return this.updatePhotos(id, path, path ? [path] : []);
   }
 
   async deleteById(id) {

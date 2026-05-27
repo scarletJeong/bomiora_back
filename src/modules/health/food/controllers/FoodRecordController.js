@@ -9,12 +9,46 @@ const UPLOAD_DIR =
   process.env.FOOD_IMAGE_UPLOAD_DIR ||
   path.join(process.cwd(), 'uploads', 'food_images');
 
+function bufferFieldToString(value) {
+  if (value == null || value === '') return null;
+  if (typeof value === 'string') return value;
+  if (Buffer.isBuffer(value)) return value.toString('utf8');
+  if (
+    typeof value === 'object' &&
+    value.type === 'Buffer' &&
+    Array.isArray(value.data)
+  ) {
+    return Buffer.from(value.data).toString('utf8');
+  }
+  return String(value);
+}
+
+/** MySQL DATE → YYYY-MM-DD (KST 달력 기준) */
+function formatRecordDateYmd(value) {
+  if (value == null || value === '') return null;
+  if (typeof value === 'string') {
+    const t = value.trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return t;
+    const d = new Date(t);
+    if (!Number.isNaN(d.getTime())) {
+      const kst = new Date(d.getTime() + 9 * 60 * 60 * 1000);
+      return kst.toISOString().slice(0, 10);
+    }
+    return t.length >= 10 ? t.slice(0, 10) : t;
+  }
+  if (value instanceof Date) {
+    const kst = new Date(value.getTime() + 9 * 60 * 60 * 1000);
+    return kst.toISOString().slice(0, 10);
+  }
+  return String(value);
+}
+
 function mapFoodItemRows(rows) {
   return (rows || []).map((row) => ({
     item_id: row.item_id,
     food_record_id: row.food_record_id,
-    food_code: row.food_code,
-    food_name: row.food_name,
+    food_code: bufferFieldToString(row.food_code),
+    food_name: bufferFieldToString(row.food_name),
     serving_quantity: row.serving_quantity != null ? Number(row.serving_quantity) : null,
     kcal: row.kcal != null ? Number(row.kcal) : null,
     carbohydrate: row.carbohydrate != null ? Number(row.carbohydrate) : null,
@@ -25,16 +59,118 @@ function mapFoodItemRows(rows) {
   }));
 }
 
+const MAX_MEAL_PHOTOS = 3;
+
+function parsePhotoPathList(raw) {
+  const paths = [];
+  if (raw == null) return paths;
+
+  let value = raw;
+  if (Buffer.isBuffer(value)) {
+    value = value.toString('utf8');
+  } else if (typeof value === 'object' && value.type === 'Buffer' && Array.isArray(value.data)) {
+    value = Buffer.from(value.data).toString('utf8');
+  }
+
+  if (typeof value === 'string') {
+    const trimmed = value.trim().replace(/^\uFEFF/, '');
+    if (!trimmed) return paths;
+    if (trimmed.startsWith('[')) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (Array.isArray(parsed)) {
+          for (const p of parsed) {
+            if (typeof p === 'string' && p.trim()) paths.push(p.trim());
+          }
+        }
+      } catch (_) {
+        /* ignore */
+      }
+      return paths;
+    }
+    paths.push(trimmed);
+    return paths;
+  }
+
+  if (Array.isArray(value)) {
+    for (const p of value) {
+      if (typeof p === 'string' && p.trim()) paths.push(p.trim());
+    }
+  }
+  return paths;
+}
+
+function parsePhotosFromRow(row) {
+  const paths = [];
+  const seen = new Set();
+
+  const addPaths = (list) => {
+    for (const p of list) {
+      const key = String(p).trim();
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      paths.push(key);
+    }
+  };
+
+  if (row && row.photos != null) {
+    addPaths(parsePhotoPathList(row.photos));
+  }
+
+  if (paths.length === 0 && row && row.photo != null) {
+    addPaths(parsePhotoPathList(row.photo));
+  }
+
+  return paths.slice(0, MAX_MEAL_PHOTOS);
+}
+
+function normalizePhotoPayload(body) {
+  if (Object.prototype.hasOwnProperty.call(body, 'image_paths')) {
+    const raw = body.image_paths;
+    if (!Array.isArray(raw)) {
+      return { photo: null, photos: [] };
+    }
+    const photos = raw
+      .filter((p) => typeof p === 'string' && p.trim())
+      .map((p) => p.trim())
+      .slice(0, MAX_MEAL_PHOTOS);
+    return { photo: photos[0] || null, photos };
+  }
+
+  const hasSingle =
+    Object.prototype.hasOwnProperty.call(body, 'image_path') ||
+    Object.prototype.hasOwnProperty.call(body, 'photo');
+  if (!hasSingle) return null;
+
+  const single =
+    body.image_path !== undefined ? body.image_path : body.photo;
+  if (single === null || single === '') {
+    return { photo: null, photos: [] };
+  }
+  const path = String(single).trim();
+  return { photo: path, photos: path ? [path] : [] };
+}
+
 function serializeFoodRecordRow(r, items = []) {
   if (!r) return null;
+  const imagePaths = parsePhotosFromRow(r);
+  const representative = imagePaths[0] || r.photo || null;
   return {
     id: r.id,
-    mb_id: r.mb_id,
-    record_date: r.record_date,
+    mb_id: bufferFieldToString(r.mb_id),
+    record_date: formatRecordDateYmd(r.record_date),
     food_time: String(r.food_time || '').toLowerCase(),
     eaten_at: toIsoUtcString(r.eaten_at),
-    photo: r.photo,
-    image_path: r.photo,
+    photo: representative,
+    image_path: representative,
+    image_paths: imagePaths,
+    photos: imagePaths,
+    photos_json:
+      r.photos != null && typeof r.photos === 'string'
+        ? r.photos
+        : imagePaths.length > 0
+          ? JSON.stringify(imagePaths)
+          : null,
     description: r.description,
     calories: r.calories != null ? Number(r.calories) : null,
     protein: r.protein != null ? Number(r.protein) : null,
@@ -121,16 +257,14 @@ class FoodRecordController {
         });
       }
 
-      const hasImagePath =
-        Object.prototype.hasOwnProperty.call(req.body, 'image_path') ||
-        Object.prototype.hasOwnProperty.call(req.body, 'photo');
+      const photoPayload = normalizePhotoPayload(req.body);
 
-      if (hasImagePath) {
-        const photo =
-          req.body.image_path !== undefined
-            ? req.body.image_path
-            : req.body.photo;
-        await foodRecordRepository.updatePhoto(foodRecordId, photo ?? null);
+      if (photoPayload) {
+        await foodRecordRepository.updatePhotos(
+          foodRecordId,
+          photoPayload.photo,
+          photoPayload.photos
+        );
       } else {
         await foodRecordRepository.update(foodRecordId, {
           eatenAt: req.body.eaten_at,
