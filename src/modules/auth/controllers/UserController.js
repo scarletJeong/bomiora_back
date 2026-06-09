@@ -765,7 +765,21 @@ class UserController {
       }
       
       if (nickname !== undefined && nickname !== null) {
-        user.nickname = nickname;
+        const nextNick = String(nickname).trim();
+        const prevNick = String(user.nickname || '').trim();
+        if (nextNick !== prevNick) {
+          const nickCheck = assertNicknameChangeAllowed(user.mbNickDate, 6);
+          if (!nickCheck.ok) {
+            return res.status(400).json({
+              success: false,
+              code: 'NICKNAME_CHANGE_TOO_SOON',
+              message: nickCheck.message,
+              nextChangeDate: nickCheck.nextChangeDate || '',
+            });
+          }
+          user.nickname = nextNick;
+          user.mbNickDate = getKstDateString();
+        }
       }
       
       if (phone !== undefined && phone !== null) {
@@ -1343,6 +1357,81 @@ function getKstDateTimeString() {
   const minute = String(now.getUTCMinutes()).padStart(2, '0');
   const second = String(now.getUTCSeconds()).padStart(2, '0');
   return `${year}-${month}-${day} ${hour}:${minute}:${second}`;
+}
+
+function getKstDateString() {
+  return getKstDateTimeString().slice(0, 10);
+}
+
+function parseMbNickDate(value) {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    const y = value.getFullYear();
+    if (y < 1900) return null;
+    return new Date(y, value.getMonth(), value.getDate());
+  }
+  const raw = String(value || '').trim();
+  if (!raw || raw.startsWith('0000-00-00')) return null;
+  const iso = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (iso) {
+    const y = Number(iso[1]);
+    const m = Number(iso[2]);
+    const d = Number(iso[3]);
+    if (!y || m < 1 || m > 12 || d < 1 || d > 31) return null;
+    return new Date(y, m - 1, d);
+  }
+  const digits = raw.replace(/[^0-9]/g, '');
+  if (digits.length < 8) return null;
+  const y = Number(digits.slice(0, 4));
+  const m = Number(digits.slice(4, 6));
+  const d = Number(digits.slice(6, 8));
+  if (!y || m < 1 || m > 12 || d < 1 || d > 31) return null;
+  return new Date(y, m - 1, d);
+}
+
+function formatYmd(date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function addCalendarMonths(date, months) {
+  const next = new Date(date.getTime());
+  next.setMonth(next.getMonth() + months);
+  return next;
+}
+
+function getKstTodayDate() {
+  return parseMbNickDate(getKstDateString());
+}
+
+/**
+ * 닉네임 변경 가능 여부 (mb_nick_date 기준, 마지막 변경일로부터 N개월)
+ */
+function assertNicknameChangeAllowed(mbNickDate, monthInterval = 6) {
+  const last = parseMbNickDate(mbNickDate);
+  if (!last) {
+    return { ok: true };
+  }
+  const nextAllowed = addCalendarMonths(last, monthInterval);
+  const today = getKstTodayDate();
+  if (!today) {
+    return { ok: true };
+  }
+  const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const nextStart = new Date(
+    nextAllowed.getFullYear(),
+    nextAllowed.getMonth(),
+    nextAllowed.getDate()
+  );
+  if (todayStart < nextStart) {
+    return {
+      ok: false,
+      message: '닉네임은 6개월에 1번만 변경할 수 있습니다.',
+      nextChangeDate: formatYmd(nextStart),
+    };
+  }
+  return { ok: true };
 }
 
 function isWithdrawnMember(user) {

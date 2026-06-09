@@ -431,6 +431,10 @@ class UserRepository {
         updateFields.push('mb_nick = ?');
         updateValues.push(user.nickname);
       }
+      if (user.mbNickDate !== undefined) {
+        updateFields.push('mb_nick_date = ?');
+        updateValues.push(user.mbNickDate);
+      }
       if (user.mbHp !== undefined) {
         updateFields.push('mb_hp = ?');
         updateValues.push(user.mbHp);

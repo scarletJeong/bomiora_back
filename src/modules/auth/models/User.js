@@ -21,6 +21,8 @@ class User {
     this.password = data.mb_password || null;
     this.name = toString(data.mb_name);
     this.nickname = toString(data.mb_nick);
+    /** 닉네임 마지막 변경일 (YYYY-MM-DD) — 6개월 1회 변경 제한용 */
+    this.mbNickDate = User.normalizeMbNickDate(data.mb_nick_date, toString);
     this.mbHp = toString(data.mb_hp);
     this.mbBirth = User.normalizeMbBirth(data.mb_birth, toString);
     this.mbSex = toString(data.mb_sex);
@@ -30,6 +32,28 @@ class User {
     this.leaveDate = toString(data.mb_leave_date);
     this.memo = toString(data.mb_memo);
     this.mbDupinfo = toString(data.mb_dupinfo);
+  }
+
+  static normalizeMbNickDate(raw, toString) {
+    if (raw == null || raw === '') return null;
+    if (raw instanceof Date && !Number.isNaN(raw.getTime())) {
+      const y = raw.getFullYear();
+      if (y <= 0 || y < 1900) return null;
+      const m = String(raw.getMonth() + 1).padStart(2, '0');
+      const d = String(raw.getDate()).padStart(2, '0');
+      return `${y}-${m}-${d}`;
+    }
+    const s = String(toString(raw) || '').trim();
+    if (!s || s.startsWith('0000-00-00')) return null;
+    const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (iso) {
+      return `${iso[1]}-${iso[2]}-${iso[3]}`;
+    }
+    const digits = s.replace(/\D/g, '');
+    if (digits.length >= 8) {
+      return `${digits.slice(0, 4)}-${digits.slice(4, 6)}-${digits.slice(6, 8)}`;
+    }
+    return null;
   }
 
   /**
@@ -66,6 +90,8 @@ class User {
       name: this.name,
       mb_nick: this.nickname,
       nickname: this.nickname,
+      mb_nick_date: this.mbNickDate || '',
+      nicknameChangedAt: this.mbNickDate || '',
       mb_hp: this.mbHp,
       phone: this.mbHp,
       profile_img: this.profileImg || '',
