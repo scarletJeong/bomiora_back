@@ -84,7 +84,7 @@ class OrderRepository {
               od_memo, od_status, od_cart_count, od_cart_price, od_cart_coupon,
               od_send_cost, od_send_cost2, od_send_coupon, od_receipt_price, od_cancel_price, od_receipt_point, od_coupon, od_misu,
               od_settle_case, od_bank_account, od_delivery_company, od_invoice,
-              od_pg, od_tno, od_test, od_other_pay_type,
+              od_pg, od_tno, od_app_no, od_test, od_other_pay_type,
               od_shop_memo, od_mod_history,
               NULLIF(od_time, '0000-00-00 00:00:00') AS od_time,
               NULLIF(od_invoice_time, '0000-00-00 00:00:00') AS od_invoice_time,
@@ -128,7 +128,7 @@ class OrderRepository {
 
   async getReservation(mbId, odId) {
     const [rows] = await pool.query(
-      `SELECT hp_rsvt_date, hp_rsvt_stime
+      `SELECT hp_rsvt_date, hp_rsvt_stime, hp_rsvt_etime
        FROM bomiora_shop_health_profiles_cart
        WHERE mb_id = ? AND od_id = ?
        ORDER BY hp_no DESC

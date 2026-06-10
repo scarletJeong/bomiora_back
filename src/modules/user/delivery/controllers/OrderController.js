@@ -31,7 +31,8 @@ class OrderController {
     if (!withTime) return `${yyyy}.${mm}.${dd}`;
     const hh = String(d.getHours()).padStart(2, '0');
     const mi = String(d.getMinutes()).padStart(2, '0');
-    return `${yyyy}.${mm}.${dd} ${hh}:${mi}`;
+    const ss = String(d.getSeconds()).padStart(2, '0');
+    return `${yyyy}.${mm}.${dd} ${hh}:${mi}:${ss}`;
     }
 
   /**
@@ -317,6 +318,8 @@ class OrderController {
       const products = carts.map((c) => this.toOrderItem(c, imageUrlMap));
       const settleCase = this.bufferToString(row.od_settle_case) || '';
       const bankAccount = this.bufferToString(row.od_bank_account) || '';
+      const odTno = this.bufferToString(row.od_tno || '').trim() || null;
+      const odAppNo = this.bufferToString(row.od_app_no || '').trim() || null;
       const couponDiscount =
         this.toInt(row.od_cart_coupon) + this.toInt(row.od_send_coupon) + this.toInt(row.od_coupon);
       const pointDiscount = this.toInt(row.od_receipt_point);
@@ -343,6 +346,10 @@ class OrderController {
         isPrescriptionOrder: false,
         paymentMethod: settleCase || ((this.toInt(row.od_misu) > 0 && bankAccount.includes('/')) ? '가상계좌' : ''),
         paymentMethodDetail: null,
+        odTno,
+        od_tno: odTno,
+        odAppNo,
+        od_app_no: odAppNo,
         odBankAccount: bankAccount || null,
         ordererName: row.od_b_name,
         ordererPhone: row.od_b_hp,
@@ -350,7 +357,8 @@ class OrderController {
         cancelReason: null,
         cancelType: null,
         reservationDate: null,
-        reservationTime: null
+        reservationTime: null,
+        reservationEndTime: null
       };
 
       if (bankAccount && (settleCase.includes('가상계좌') || settleCase.includes('무통장'))) {
@@ -373,9 +381,14 @@ class OrderController {
           rawDate = this.bufferToString(rawDate) || rawDate;
         }
         detail.reservationDate = this.formatSqlDateForApi(rawDate);
-        detail.reservationTime = reservation.hp_rsvt_stime
+        const stime = reservation.hp_rsvt_stime
           ? String(this.bufferToString(reservation.hp_rsvt_stime) || reservation.hp_rsvt_stime).trim()
           : null;
+        const etime = reservation.hp_rsvt_etime
+          ? String(this.bufferToString(reservation.hp_rsvt_etime) || reservation.hp_rsvt_etime).trim()
+          : null;
+        detail.reservationTime = stime;
+        detail.reservationEndTime = etime;
       }
       detail.isPrescriptionOrder = await orderRepository.isPrescriptionOrder(mbId, odId);
 
