@@ -15,7 +15,8 @@ class AddressController {
       ad_addr1: row.ad_addr1,
       ad_addr2: row.ad_addr2,
       ad_addr3: row.ad_addr3,
-      ad_jibeon: row.ad_jibeon
+      ad_jibeon: row.ad_jibeon,
+      ad_memo: row.ad_memo ?? '',
     };
   }
 
@@ -43,14 +44,21 @@ class AddressController {
   async addAddress(req, res) {
     try {
       const dto = req.body;
-      if (Number(dto.ad_default || 0) === 1) {
-        await addressRepository.clearDefaultByMbId(dto.mb_id || dto.mbId);
+      const mbId = dto.mb_id || dto.mbId;
+      const existingCount = await addressRepository.countByMbId(mbId);
+      let adDefault = Number(dto.ad_default ?? dto.adDefault ?? 0);
+      // 최초 등록 배송지는 무조건 기본 배송지
+      if (existingCount === 0) {
+        adDefault = 1;
+      }
+      if (adDefault === 1) {
+        await addressRepository.clearDefaultByMbId(mbId);
       }
 
       const saved = await addressRepository.create({
-        mb_id: dto.mb_id || dto.mbId,
+        mb_id: mbId,
         ad_subject: dto.ad_subject || dto.adSubject,
-        ad_default: Number(dto.ad_default ?? dto.adDefault ?? 0),
+        ad_default: adDefault,
         ad_name: dto.ad_name || dto.adName,
         ad_tel: dto.ad_tel || dto.adTel || '',
         ad_hp: dto.ad_hp || dto.adHp || '',
@@ -59,7 +67,8 @@ class AddressController {
         ad_addr1: dto.ad_addr1 || dto.adAddr1 || '',
         ad_addr2: dto.ad_addr2 || dto.adAddr2 || '',
         ad_addr3: dto.ad_addr3 || dto.adAddr3 || '',
-        ad_jibeon: dto.ad_jibeon || dto.adJibeon || ''
+        ad_jibeon: dto.ad_jibeon || dto.adJibeon || '',
+        ad_memo: dto.ad_memo ?? dto.adMemo ?? '',
       });
 
       return res.json({ success: true, data: this.mapAddress(saved), message: '배송지가 추가되었습니다.' });
@@ -88,7 +97,8 @@ class AddressController {
         ad_addr1: dto.ad_addr1 || dto.adAddr1 || '',
         ad_addr2: dto.ad_addr2 || dto.adAddr2 || '',
         ad_addr3: dto.ad_addr3 || dto.adAddr3 || '',
-        ad_jibeon: dto.ad_jibeon || dto.adJibeon || ''
+        ad_jibeon: dto.ad_jibeon || dto.adJibeon || '',
+        ad_memo: dto.ad_memo ?? dto.adMemo ?? '',
       });
       if (!updated) {
         return res.status(400).json({ error: '배송지를 찾을 수 없습니다.' });

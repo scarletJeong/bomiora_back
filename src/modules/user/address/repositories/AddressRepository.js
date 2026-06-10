@@ -1,6 +1,14 @@
 const pool = require('../../../../config/database');
 
 class AddressRepository {
+  async countByMbId(mbId) {
+    const [rows] = await pool.query(
+      'SELECT COUNT(*) AS cnt FROM bomiora_shop_order_address WHERE mb_id = ?',
+      [mbId]
+    );
+    return Number(rows[0]?.cnt ?? 0);
+  }
+
   async findByMbId(mbId) {
     const [rows] = await pool.query(
       `SELECT a.*
@@ -36,11 +44,12 @@ class AddressRepository {
   async create(data) {
     const [result] = await pool.query(
       `INSERT INTO bomiora_shop_order_address
-      (mb_id, ad_subject, ad_default, ad_name, ad_tel, ad_hp, ad_zip1, ad_zip2, ad_addr1, ad_addr2, ad_addr3, ad_jibeon)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      (mb_id, ad_subject, ad_default, ad_name, ad_tel, ad_hp, ad_zip1, ad_zip2, ad_addr1, ad_addr2, ad_addr3, ad_jibeon, ad_memo)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         data.mb_id, data.ad_subject, data.ad_default, data.ad_name, data.ad_tel, data.ad_hp,
-        data.ad_zip1, data.ad_zip2, data.ad_addr1, data.ad_addr2, data.ad_addr3, data.ad_jibeon
+        data.ad_zip1, data.ad_zip2, data.ad_addr1, data.ad_addr2, data.ad_addr3, data.ad_jibeon,
+        data.ad_memo ?? '',
       ]
     );
     return this.findByIdAndMbId(result.insertId, data.mb_id);
@@ -50,11 +59,11 @@ class AddressRepository {
     await pool.query(
       `UPDATE bomiora_shop_order_address
        SET ad_subject = ?, ad_default = ?, ad_name = ?, ad_tel = ?, ad_hp = ?, ad_zip1 = ?, ad_zip2 = ?,
-           ad_addr1 = ?, ad_addr2 = ?, ad_addr3 = ?, ad_jibeon = ?
+           ad_addr1 = ?, ad_addr2 = ?, ad_addr3 = ?, ad_jibeon = ?, ad_memo = ?
        WHERE ad_id = ? AND mb_id = ?`,
       [
         data.ad_subject, data.ad_default, data.ad_name, data.ad_tel, data.ad_hp, data.ad_zip1, data.ad_zip2,
-        data.ad_addr1, data.ad_addr2, data.ad_addr3, data.ad_jibeon, id, mbId
+        data.ad_addr1, data.ad_addr2, data.ad_addr3, data.ad_jibeon, data.ad_memo ?? '', id, mbId
       ]
     );
     return this.findByIdAndMbId(id, mbId);
