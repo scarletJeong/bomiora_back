@@ -1,9 +1,7 @@
 const pool = require('../../../../config/database');
 
 /**
- * 상품 전체 만족도(0.5~5, 0.5 단위). TINYINT 이면 소수 저장 불가 → 아래로 변경 권장:
- * ALTER TABLE bomiora_shop_item_use MODIFY COLUMN total_is_score DECIMAL(2,1) NULL DEFAULT NULL COMMENT '상품만족도' AFTER is_score4;
- * (컬럼 없을 때) ADD COLUMN total_is_score DECIMAL(2,1) NULL DEFAULT NULL COMMENT '상품만족도' AFTER is_score4;
+ * 상품 전체 만족도(0.1~5, 0.1 단위). TINYINT 이면 3.1→3 으로 잘림 → sql/review_total_score_decimal.sql 실행.
  */
 
 /** bomiora_shop_item_use r LEFT JOIN bomiora_shop_item_new n 시 상품 메타·썸네일 */

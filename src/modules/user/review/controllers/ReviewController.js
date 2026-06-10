@@ -1,10 +1,85 @@
+const fs = require('fs');
+const path = require('path');
 const reviewRepository = require('../repositories/ReviewRepository');
 const mainReviewRepository = require('../repositories/MainReviewRepository');
+
+const REVIEW_UPLOAD_DIR =
+  process.env.REVIEW_IMAGE_UPLOAD_DIR || path.join(process.cwd(), 'uploads', 'review_images');
+const MAX_REVIEW_IMAGES = 3;
 
 /** 리뷰 목록 한 번에 가져올 수 있는 최대 건수 (무제한에 가깝게; 과도한 부하 방지용 상한) */
 const MAX_REVIEW_PAGE_SIZE = 100000;
 
 class ReviewController {
+  /** 0.1 단위 만족도 (DB DECIMAL(3,1) 권장; TINYINT면 소수 잘림) */
+  _normalizeTenthScore(value) {
+    if (value === undefined || value === null || value === '') return null;
+    const n = Number(value);
+    if (!Number.isFinite(n)) return null;
+    return Math.round(n * 10) / 10;
+  }
+
+  getUploadDir() {
+    return REVIEW_UPLOAD_DIR;
+  }
+
+  /** POST /api/user/reviews/upload-image */
+  async uploadImage(req, res) {
+    try {
+      if (!req.file) {
+        return res.status(400).json({
+          success: false,
+          message: '이미지 업로드 실패: 파일이 없습니다.'
+        });
+      }
+
+      const fileUrl = `/api/user/reviews/images/${req.file.filename}`;
+      return res.json({
+        success: true,
+        filename: req.file.filename,
+        url: fileUrl,
+        message: '이미지 업로드 성공'
+      });
+    } catch (error) {
+      return res.status(400).json({
+        success: false,
+        message: `이미지 업로드 실패: ${error.message}`
+      });
+    }
+  }
+
+  /** GET /api/user/reviews/images/:filename */
+  async getImage(req, res) {
+    try {
+      const filePath = path.join(REVIEW_UPLOAD_DIR, req.params.filename);
+      if (!fs.existsSync(filePath)) {
+        return res.status(404).end();
+      }
+
+      const ext = path.extname(filePath).toLowerCase();
+      const contentTypeMap = {
+        '.png': 'image/png',
+        '.gif': 'image/gif',
+        '.webp': 'image/webp',
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg'
+      };
+
+      res.setHeader('Content-Type', contentTypeMap[ext] || 'image/jpeg');
+      return res.sendFile(filePath);
+    } catch (error) {
+      return res.status(404).end();
+    }
+  }
+
+  _normalizeReviewImages(images) {
+    if (!Array.isArray(images)) return [];
+    return images
+      .map((x) => (x == null ? '' : String(x).trim()))
+      .filter(Boolean)
+      .slice(0, MAX_REVIEW_IMAGES);
+  }
+
   /**
    * mysql2 가 BINARY/VARBINARY/BLOB 등을 Buffer 로 반환할 때 JSON 에는 { type, data } 로 나가
    * 앱에서 한글이 깨지므로 응답 직전 UTF-8 문자열로 통일
@@ -172,7 +247,7 @@ class ReviewController {
         }
       }
 
-      const images = Array.isArray(req.body.images) ? req.body.images : [];
+      const images = this._normalizeReviewImages(req.body.images);
       const imageOrEmpty = (index) => images[index] || '';
       const saved = await reviewRepository.create({
         mb_id: req.body.mbId,
@@ -180,20 +255,21 @@ class ReviewController {
         it_id: req.body.itId,
         is_name: req.body.isName,
         is_confirm: 0,
-        is_score1: req.body.isScore1 ?? 0,
-        is_score2: req.body.isScore2 ?? 0,
-        is_score3: req.body.isScore3 ?? 0,
-        is_score4: req.body.isScore4 ?? 0,
-        total_is_score:
-          req.body.totalIsScore !== undefined && req.body.totalIsScore !== null
-            ? Number(req.body.totalIsScore)
-            : null,
+        is_score1: Math.round(Number(req.body.isScore1 ?? 0)),
+        is_score2: Math.round(Number(req.body.isScore2 ?? 0)),
+        is_score3: Math.round(Number(req.body.isScore3 ?? 0)),
+        is_score4: Math.round(Number(req.body.isScore4 ?? 0)),
+        total_is_score: this._normalizeTenthScore(req.body.totalIsScore),
         is_rvkind: req.body.isRvkind || 'general',
         is_recommend: req.body.isRecommend || 'y',
         is_good: 0,
         is_positive_review_text: req.body.isPositiveReviewText || null,
         is_negative_review_text: req.body.isNegativeReviewText || null,
-        is_more_review_text: req.body.isMoreReviewText || null,
+        is_more_review_text:
+          req.body.isMoreReviewText != null &&
+          String(req.body.isMoreReviewText).trim() !== ''
+            ? String(req.body.isMoreReviewText).trim()
+            : null,
         is_img1: imageOrEmpty(0),
         is_img2: imageOrEmpty(1),
         is_img3: imageOrEmpty(2),
@@ -395,18 +471,22 @@ class ReviewController {
         return res.json({ success: false, message: '리뷰를 수정할 권한이 없습니다.' });
       }
 
-      const images = Array.isArray(req.body.images) ? req.body.images : null;
+      const images = req.body.images != null ? this._normalizeReviewImages(req.body.images) : null;
       const fields = {};
-      if (req.body.isScore1 != null) fields.is_score1 = req.body.isScore1;
-      if (req.body.isScore2 != null) fields.is_score2 = req.body.isScore2;
-      if (req.body.isScore3 != null) fields.is_score3 = req.body.isScore3;
-      if (req.body.isScore4 != null) fields.is_score4 = req.body.isScore4;
+      if (req.body.isScore1 != null) fields.is_score1 = Math.round(Number(req.body.isScore1));
+      if (req.body.isScore2 != null) fields.is_score2 = Math.round(Number(req.body.isScore2));
+      if (req.body.isScore3 != null) fields.is_score3 = Math.round(Number(req.body.isScore3));
+      if (req.body.isScore4 != null) fields.is_score4 = Math.round(Number(req.body.isScore4));
       if (req.body.totalIsScore !== undefined && req.body.totalIsScore !== null) {
-        fields.total_is_score = Number(req.body.totalIsScore);
+        fields.total_is_score = this._normalizeTenthScore(req.body.totalIsScore);
       }
       if (req.body.isPositiveReviewText != null) fields.is_positive_review_text = req.body.isPositiveReviewText;
       if (req.body.isNegativeReviewText != null) fields.is_negative_review_text = req.body.isNegativeReviewText;
-      if (req.body.isMoreReviewText != null) fields.is_more_review_text = req.body.isMoreReviewText;
+      if (req.body.isMoreReviewText !== undefined) {
+        const memo = req.body.isMoreReviewText;
+        fields.is_more_review_text =
+          memo == null ? '' : String(memo).trim();
+      }
       if (req.body.isRecommend != null) fields.is_recommend = req.body.isRecommend;
       if (images) {
         fields.is_img1 = images[0] || '';

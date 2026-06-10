@@ -1,6 +1,31 @@
+const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 const express = require('express');
+const multer = require('multer');
 const router = express.Router();
 const reviewController = require('../controllers/ReviewController');
+
+const uploadDir = reviewController.getUploadDir();
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir, { recursive: true });
+}
+
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, uploadDir),
+  filename: (req, file, cb) => {
+    const extension = path.extname(file.originalname || '') || '.jpg';
+    cb(null, `${crypto.randomUUID()}${extension}`);
+  }
+});
+
+const upload = multer({
+  storage,
+  limits: { fileSize: 5 * 1024 * 1024 }
+});
+
+router.post('/upload-image', upload.single('file'), (req, res) => reviewController.uploadImage(req, res));
+router.get('/images/:filename', (req, res) => reviewController.getImage(req, res));
 
 router.post('/', (req, res) => reviewController.createReview(req, res));
 router.get('/product/:itId/stats', (req, res) => reviewController.getProductReviewStats(req, res));
