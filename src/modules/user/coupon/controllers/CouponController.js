@@ -1,5 +1,5 @@
-const pool = require('../../../../config/database');
 const couponRepository = require('../repositories/CouponRepository');
+const { HelpCouponError } = couponRepository;
 
 class CouponController {
   toMap(c) {
@@ -110,50 +110,39 @@ class CouponController {
 
   async downloadHelpCoupon(req, res) {
     try {
-      const mbId = req.body.mbId;
-      const itId = req.body.itId;
-      const isId = Number(req.body.isId);
+      const mbId = String(req.body.mbId ?? req.body.mb_id ?? '').trim();
+      const itId = String(req.body.itId ?? req.body.it_id ?? '').trim();
+      const isId = Number(req.body.isId ?? req.body.is_id);
 
-      const [reviewRows] = await pool.query(
-        'SELECT * FROM bomiora_shop_item_use WHERE is_id = ? LIMIT 1',
-        [isId]
-      );
-      if (!reviewRows.length) return res.json({ success: false, message: '리뷰가 존재하지 않습니다.' });
-      const review = reviewRows[0];
-
-      if (review.is_rvkind !== 'supporter') {
-        return res.json({ success: false, message: '서포터 리뷰만 도움쿠폰을 다운로드할 수 있습니다.' });
+      if (!mbId) {
+        return res.json({ success: false, message: '회원 로그인 후 이용해 주십시오.' });
       }
-      if (Number(review.is_confirm || 0) !== 1) {
-        return res.json({ success: false, message: '승인된 리뷰만 도움쿠폰을 다운로드할 수 있습니다.' });
+      if (!itId || !Number.isFinite(isId) || isId <= 0) {
+        return res.json({ success: false, message: '올바른 방법으로 이용해 주십시오.' });
       }
 
-      const alreadyDownloaded = await couponRepository.existsByUserIdAndReviewId(mbId, isId);
-      if (alreadyDownloaded) {
-        return res.json({ success: false, message: '이미 다운로드하신 쿠폰입니다.' });
+      const authMbId = req.user?.mb_id ?? req.user?.mbId;
+      if (authMbId && String(authMbId).trim() !== mbId) {
+        return res.json({ success: false, message: '회원 정보가 일치하지 않습니다.' });
       }
 
-      const cpId = await couponRepository.createHelpCoupon({
+      const { cpId, downloadCount } = await couponRepository.downloadHelpCoupon({
         mbId,
         itId,
-        reviewId: isId,
-        reviewerName: review.is_name,
-        productName: review.it_name
+        isId
       });
-
-      const nextDownload = Number(review.cz_download || 0) + 1;
-      await pool.query(
-        'UPDATE bomiora_shop_item_use SET cz_download = ? WHERE is_id = ?',
-        [nextDownload, isId]
-      );
 
       return res.json({
         success: true,
         message: '쿠폰 발급이 완료되었습니다.\n지금 바로 할인 받고 구매해보세요!\n쿠폰은 [마이페이지 > 내쿠폰] 또는 결제 전 [쿠폰 선택]에서 확인할 수 있습니다.',
-        downloadCount: nextDownload,
+        downloadCount,
         cpId
       });
     } catch (error) {
+      if (error instanceof HelpCouponError) {
+        return res.json({ success: false, message: error.message });
+      }
+      console.error('[downloadHelpCoupon]', error);
       return res.status(500).json({ success: false, message: '쿠폰 다운로드 중 오류가 발생했습니다.' });
     }
   }

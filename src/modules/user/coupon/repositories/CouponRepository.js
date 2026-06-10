@@ -1,5 +1,41 @@
 const crypto = require('crypto');
 const pool = require('../../../../config/database');
+const { addDaysToYmdDateString } = require('../../../../utils/healthDateTime');
+
+const COUPON_ID_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ123456789';
+
+class HelpCouponError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'HelpCouponError';
+  }
+}
+
+/** PHP cut_str() — UTF-8 문자 단위 절단 */
+function cutStr(str, len, suffix = '…') {
+  if (str == null || str === '') return '';
+  const chars = [...String(str)];
+  if (chars.length >= len) {
+    return chars.slice(0, len).join('') + (chars.length > len ? suffix : '');
+  }
+  return chars.join('');
+}
+
+/** PHP get_coupon_id() — 16자 + XXXX-XXXX-XXXX-XXXX */
+function generateCouponId() {
+  let str = '';
+  for (let i = 0; i < 16; i += 1) {
+    str += COUPON_ID_CHARS[crypto.randomInt(0, COUPON_ID_CHARS.length)];
+  }
+  return str.replace(
+    /([0-9A-Z]{4})([0-9A-Z]{4})([0-9A-Z]{4})([0-9A-Z]{4})/,
+    '$1-$2-$3-$4'
+  );
+}
+
+function kstTodayYmd() {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Seoul' }).format(new Date());
+}
 
 /** cp_target 에 들어 있는 ca_id / it_id 목록 (/, |, 쉼표, 공백 구분) */
 function parseTargetIds(raw) {
@@ -202,33 +238,90 @@ class CouponRepository {
     );
   }
 
-  async createHelpCoupon({ mbId, itId, reviewId, reviewerName, productName }) {
-    const cpId = `HELP_${crypto.randomUUID().substring(0, 8).toUpperCase()}`;
-    const shortName = productName ? (productName.length > 10 ? `${productName.substring(0, 10)}...` : productName) : '제품';
-    const cpSubject = `[도움쿠폰] ${reviewerName || '익명'}님의 ${shortName} 할인쿠폰 (5%)`;
+  async _generateUniqueCouponId(conn, maxRetries = 8) {
+    for (let attempt = 0; attempt < maxRetries; attempt += 1) {
+      const cpId = generateCouponId();
+      const [rows] = await conn.query(
+        'SELECT COUNT(*) AS count FROM bomiora_shop_coupon WHERE cp_id = ?',
+        [cpId]
+      );
+      if (Number(rows[0].count) === 0) return cpId;
+    }
+    throw new Error('쿠폰 ID 생성에 실패했습니다.');
+  }
 
-    await this.create({
-      cp_id: cpId,
-      cp_subject: cpSubject,
-      cp_method: 0,
-      cp_target: itId,
-      mb_id: mbId,
-      cz_id: 0,
-      cp_start: new Date(),
-      cp_end: new Date(Date.now() + 6 * 24 * 60 * 60 * 1000),
-      cp_price: 5,
-      cp_type: 1,
-      cp_trunc: 1,
-      cp_minimum: 5000,
-      cp_maximum: 5000,
-      od_id: 0,
-      cp_datetime: new Date(),
-      mb_inf_id: '',
-      is_id: reviewId
-    });
+  /**
+   * PHP shop/ajax.infcoupondownload.php 와 동일한 트랜잭션:
+   * 리뷰 검증 → 중복 차단 → it_nocoupon → INSERT 쿠폰 → cz_download +1
+   */
+  async downloadHelpCoupon({ mbId, itId, isId }) {
+    const conn = await pool.getConnection();
+    try {
+      await conn.beginTransaction();
 
-    return cpId;
+      const [reviewRows] = await conn.query(
+        `SELECT a.is_id, a.is_name, a.cz_download, c.it_id,
+                COALESCE(c.it_name, c.it_subject) AS it_name
+         FROM bomiora_shop_item_use a
+         JOIN bomiora_shop_item_new c ON a.it_id = c.it_id
+         WHERE c.it_id = ? AND a.is_id = ?
+           AND a.is_rvkind = 'supporter' AND a.is_confirm = 1`,
+        [itId, isId]
+      );
+      if (!reviewRows.length) {
+        throw new HelpCouponError('제품 또는 리뷰가 존재하지 않습니다.');
+      }
+      const review = reviewRows[0];
+
+      const [dupRows] = await conn.query(
+        'SELECT COUNT(*) AS count FROM bomiora_shop_coupon WHERE mb_id = ? AND is_id = ?',
+        [mbId, isId]
+      );
+      if (Number(dupRows[0].count) > 0) {
+        throw new HelpCouponError('이미 다운로드하신 쿠폰입니다.');
+      }
+
+      const [itemRows] = await conn.query(
+        `SELECT COUNT(*) AS count FROM bomiora_shop_item_new
+         WHERE it_id = ? AND COALESCE(it_nocoupon, '0') = '0'`,
+        [itId]
+      );
+      if (!Number(itemRows[0].count)) {
+        throw new HelpCouponError('쿠폰이 적용되지 않는 제품 입니다.');
+      }
+
+      const cpId = await this._generateUniqueCouponId(conn);
+      const cpStart = kstTodayYmd();
+      const cpEnd = addDaysToYmdDateString(cpStart, 6);
+      const cpSubject = `[도움쿠폰] ${review.is_name}님의 ${cutStr(review.it_name, 5)} 할인쿠폰 (5%)`;
+
+      await conn.query(
+        `INSERT INTO bomiora_shop_coupon
+          (cp_id, cp_subject, cp_method, cp_target, mb_id, cz_id, cp_start, cp_end,
+           cp_type, cp_price, cp_trunc, cp_minimum, cp_maximum, od_id, cp_datetime, mb_inf_id, is_id)
+         VALUES (?, ?, 0, ?, ?, 0, ?, ?, 1, 5, 1, 5000, 5000, 0, NOW(), '', ?)`,
+        [cpId, cpSubject, itId, mbId, cpStart, cpEnd, isId]
+      );
+
+      await conn.query(
+        'UPDATE bomiora_shop_item_use SET cz_download = cz_download + 1 WHERE is_id = ?',
+        [isId]
+      );
+
+      await conn.commit();
+
+      return {
+        cpId,
+        downloadCount: Number(review.cz_download || 0) + 1
+      };
+    } catch (error) {
+      await conn.rollback();
+      throw error;
+    } finally {
+      conn.release();
+    }
   }
 }
 
 module.exports = new CouponRepository();
+module.exports.HelpCouponError = HelpCouponError;
