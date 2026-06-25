@@ -265,6 +265,50 @@ class ProductController {
     }
   }
 
+  async getCategoriesWithProducts(req, res) {
+    try {
+      const itKind = String(req.query.it_kind || '').trim();
+      if (!itKind) {
+        return res.status(400).json({
+          success: false,
+          message: 'it_kind 파라미터가 필요합니다.',
+          data: []
+        });
+      }
+
+      const rows = await productRepository.findCategoriesWithProducts(itKind);
+      const categories = rows.map((row) => ({
+        categoryId: this.bufferToString(row.ca_id),
+        categoryName: this.bufferToString(row.ca_name),
+        productKind: itKind,
+        sortOrder: row.ca_order != null ? Number(row.ca_order) : 0
+      }));
+
+      return res.json({ success: true, data: categories });
+    } catch (error) {
+      return res.status(500).json({
+        success: false,
+        message: `카테고리 목록 조회 실패: ${error.message}`,
+        data: []
+      });
+    }
+  }
+
+  async getMdPickProducts(req, res) {
+    try {
+      const limit = Number(req.query.limit || 4);
+      const itKind = req.query.it_kind || null;
+      const rows = await productRepository.findMdPickProducts(limit, itKind);
+      return res.json({ success: true, data: rows.map((r) => this.toProductDto(r)) });
+    } catch (error) {
+      return res.status(500).json({
+        success: false,
+        message: `MD pick 조회 실패: ${error.message}`,
+        data: []
+      });
+    }
+  }
+
   async getProductOptions(req, res) {
     try {
       const rows = await productOptionRepository.findByProductId(req.params.productId);

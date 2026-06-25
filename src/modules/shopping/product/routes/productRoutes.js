@@ -6,6 +6,11 @@ router.get('/list', (req, res) => productController.getProductsByCategory(req, r
 router.get('/detail', (req, res) => productController.getProductDetail(req, res));
 router.get('/popular', (req, res) => productController.getPopularProducts(req, res));
 router.get('/new', (req, res) => productController.getNewProducts(req, res));
+router.get('/md-pick', (req, res) => productController.getMdPickProducts(req, res));
+router.get(
+  '/categories-with-products',
+  (req, res) => productController.getCategoriesWithProducts(req, res)
+);
 router.get('/:productId/options', (req, res) => productController.getProductOptions(req, res));
 
 module.exports = router;
