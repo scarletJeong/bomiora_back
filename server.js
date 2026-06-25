@@ -54,6 +54,7 @@ app.use('/api/orders', require('./src/modules/user/delivery/routes/orderRoutes')
 app.use('/api/user/orders', require('./src/modules/user/delivery/routes/orderRoutes'));
 app.use('/api/products', require('./src/modules/shopping/product/routes/productRoutes'));
 app.use('/api/wish', require('./src/modules/shopping/wish/routes/wishRoutes'));
+app.use('/api/recent-view', require('./src/modules/shopping/recent_view/routes/recentViewRoutes'));
 app.use('/api/event', require('./src/modules/shopping/event/routes/eventRoutes'));
 app.use('/api/announcement', require('./src/modules/community/announcement/routes/announcementRoutes'));
 app.use('/api/faq', require('./src/modules/community/faq/routes/faqRoutes'));
