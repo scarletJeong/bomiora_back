@@ -29,3 +29,8 @@ Thumbs.db
 # Build
 dist/
 build/
+
+# Firebase Admin SDK (비밀키 — git에 올리지 않음)
+config/firebase-bomiora.json
+config/firebase-*.json
+!config/firebase-bomiora.json.example

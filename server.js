@@ -34,6 +34,7 @@ app.get('/api/users', (req, res) => userController.getAllUsers(req, res));
 // 인증 모듈 라우트
 app.use('/api/auth', require('./src/modules/auth/routes/authRoutes'));
 app.use('/api/user', require('./src/modules/auth/routes/userRoutes'));
+app.use('/api/user', require('./src/modules/user/notification/routes/notificationRoutes'));
 app.use('/api/health/weight', require('./src/modules/health/weight/routes/weightRoutes'));
 app.use('/api/health/health-goal', require('./src/modules/health/health_goal/routes/healthGoalRoutes'));
 app.use('/api/health/blood-sugar', require('./src/modules/health/blood_sugar/routes/bloodSugarRoutes'));
@@ -69,6 +70,9 @@ app.use('/api/address', require('./src/modules/common/address/routes/addressSear
 app.use('/api/get-category', require('./src/modules/common/get_category/routes/getCategoryRoutes'));
 app.use('/api/get_category', require('./src/modules/common/get_category/routes/getCategoryRoutes'));
 
+// 내부 연동 (PHP 관리자 → FCM 등)
+app.use('/api/internal', require('./src/modules/internal/notify/routes/internalNotifyRoutes'));
+
 // 브라우저 기본 favicon 요청으로 콘솔에 404가 쌓이지 않도록
 app.get('/favicon.ico', (req, res) => {
   res.status(204).end();
@@ -90,6 +94,13 @@ app.use((err, req, res, next) => {
     message: process.env.NODE_ENV === 'development' ? err.message : '서버 오류가 발생했습니다.'
   });
 });
+
+// Firebase Admin (FCM 발송)
+try {
+  require('./config/firebaseAdmin').initFirebaseAdmin();
+} catch (e) {
+  console.warn('[FCM] Admin SDK 초기화 스킵:', e.message);
+}
 
 // 서버 시작
 app.listen(PORT, () => {
