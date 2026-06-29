@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const userController = require('../controllers/UserController');
+const socialAuthController = require('../../user/social/controllers/SocialAuthController');
 const kcpRoutes = require('./kcpRoutes');
 const otpRoutes = require('./otpRoutes');
 
@@ -10,7 +11,10 @@ const otpRoutes = require('./otpRoutes');
  * @access  Public
  */
 router.post('/login', (req, res) => userController.login(req, res));
-router.post('/kakao/login', (req, res) => userController.loginWithKakao(req, res));
+router.post('/kakao/login', (req, res) => socialAuthController.loginKakao(req, res));
+router.post('/naver/login', (req, res) => socialAuthController.loginNaver(req, res));
+router.post('/social/login', (req, res) => socialAuthController.login(req, res));
+router.post('/social/register', (req, res) => socialAuthController.register(req, res));
 router.post('/check-email', (req, res) => userController.checkEmail(req, res));
 router.post('/check-dup-info', (req, res) => userController.checkDupInfo(req, res));
 
