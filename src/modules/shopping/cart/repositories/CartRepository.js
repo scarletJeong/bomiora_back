@@ -67,6 +67,51 @@ class CartRepository {
     const [result] = await pool.query('DELETE FROM bomiora_shop_cart WHERE ct_id = ?', [ctId]);
     return result.affectedRows > 0;
   }
+
+  /**
+   * 장바구니 선택 상태(ct_select) 동기화 — 동일 mb_id·ct_status(·ct_kind) 범위에서
+   * 전부 0으로 초기화한 뒤 selectedCtIds만 1로 설정 (레거시 cartupdate.php buy 흐름과 동일).
+   */
+  async syncSelection({ mbId, ctStatus, ctKind, selectedCtIds = [] }) {
+    const connection = await pool.getConnection();
+    try {
+      await connection.beginTransaction();
+
+      let where = 'mb_id = ? AND ct_status = ?';
+      const baseParams = [mbId, ctStatus];
+      if (ctKind) {
+        where += ' AND ct_kind = ?';
+        baseParams.push(ctKind);
+      }
+
+      await connection.query(
+        `UPDATE bomiora_shop_cart
+         SET ct_select = 0, ct_select_time = '0000-00-00 00:00:00'
+         WHERE ${where}`,
+        baseParams
+      );
+
+      const ids = (selectedCtIds || [])
+        .map((id) => Number(id))
+        .filter((id) => Number.isFinite(id) && id > 0);
+      if (ids.length) {
+        const placeholders = ids.map(() => '?').join(', ');
+        await connection.query(
+          `UPDATE bomiora_shop_cart
+           SET ct_select = 1, ct_select_time = NOW()
+           WHERE ${where} AND ct_id IN (${placeholders})`,
+          [...baseParams, ...ids]
+        );
+      }
+
+      await connection.commit();
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
+  }
 }
 
 module.exports = new CartRepository();

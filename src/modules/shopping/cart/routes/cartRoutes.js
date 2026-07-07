@@ -8,6 +8,7 @@ router.post('/generate-order-id', (req, res) => cartController.generateOrderIdEn
 router.post('/healthprofile', (req, res) => cartController.saveHealthProfileForPrescription(req, res));
 router.post('/save-health-profile-cart', (req, res) => cartController.saveHealthProfileCart(req, res));
 router.put('/update/:ctId', (req, res) => cartController.updateCartQuantity(req, res));
+router.put('/select', (req, res) => cartController.syncCartSelection(req, res));
 router.delete('/remove/:ctId', (req, res) => cartController.removeCartItem(req, res));
 
 module.exports = router;

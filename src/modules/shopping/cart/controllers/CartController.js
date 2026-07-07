@@ -148,6 +148,7 @@ class CartController {
       ct_qty: cart.ct_qty,
       io_id: this.bufferToString(cart.io_id) || '',
       io_price: cart.io_price,
+      ct_select: this.toInt(cart.ct_select, 0) ? 1 : 0,
       ct_kind: this.bufferToString(cart.ct_kind) || 'general',
       ct_mb_inf: this.bufferToString(cart.ct_mb_inf) || '',
       point_usage_rate: this.toInt(
@@ -607,6 +608,54 @@ class CartController {
       return res.json({ success: true, message: '장바구니에서 삭제되었습니다.' });
     } catch (error) {
       return res.status(500).json({ success: false, message: '장바구니 삭제 중 오류가 발생했습니다.', error: error.message });
+    }
+  }
+
+  normalizeCartKind(value) {
+    const normalized = this.bufferToString(value);
+    if (normalized == null) return null;
+    const kind = String(normalized).trim().toLowerCase();
+    if (kind === 'prescription' || kind === 'general') return kind;
+    return null;
+  }
+
+  async syncCartSelection(req, res) {
+    try {
+      const mbId = req.body.mb_id || req.body.mbId;
+      if (!mbId) {
+        return res.status(400).json({ success: false, message: 'mb_id가 필요합니다.' });
+      }
+
+      const ctStatus = this.normalizeCartStatus(req.body.ct_status || req.body.ctStatus);
+      const ctKind = this.normalizeCartKind(req.body.ct_kind || req.body.ctKind);
+      const rawIds = req.body.ct_ids || req.body.ctIds || [];
+      const selectedCtIds = Array.isArray(rawIds) ? rawIds : [];
+
+      await cartRepository.syncSelection({
+        mbId,
+        ctStatus,
+        ctKind,
+        selectedCtIds
+      });
+
+      const carts = await cartRepository.findByMbIdAndStatus(mbId, ctStatus);
+      const scoped = ctKind
+        ? carts.filter((c) => this.normalizeCartKind(c.ct_kind) === ctKind)
+        : carts;
+      const data = await Promise.all(scoped.map((c) => this.convertCartToMap(c)));
+
+      return res.json({
+        success: true,
+        message: '장바구니 선택이 저장되었습니다.',
+        data,
+        selected_count: selectedCtIds.length
+      });
+    } catch (error) {
+      return res.status(500).json({
+        success: false,
+        message: '장바구니 선택 저장 중 오류가 발생했습니다.',
+        error: error.message
+      });
     }
   }
 }
