@@ -134,7 +134,7 @@ class CouponController {
 
       return res.json({
         success: true,
-        message: '쿠폰 발급이 완료되었습니다.\n지금 바로 할인 받고 구매해보세요!\n쿠폰은 [마이페이지 > 내쿠폰] 또는 결제 전 [쿠폰 선택]에서 확인할 수 있습니다.',
+        message: '쿠폰 발급이 완료되었습니다.',
         downloadCount,
         cpId
       });
