@@ -989,6 +989,7 @@ class UserController {
       return res.json({
         success: true,
         active: true,
+        user: user.toResponse(),
         message: '정상 회원입니다.',
       });
     } catch (error) {

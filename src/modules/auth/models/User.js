@@ -32,6 +32,7 @@ class User {
     this.leaveDate = toString(data.mb_leave_date);
     this.memo = toString(data.mb_memo);
     this.mbDupinfo = toString(data.mb_dupinfo);
+    this.mbLevel = Number(data.mb_level) || 0;
   }
 
   static normalizeMbNickDate(raw, toString) {
@@ -99,6 +100,8 @@ class User {
       // Flutter UserModel.fromJson: birthDate / sex + mb_birth / mb_sex
       ...(birth ? { mb_birth: birth, birthDate: birth } : {}),
       ...(sex ? { mb_sex: sex, sex } : {}),
+      mb_level: this.mbLevel,
+      mbLevel: this.mbLevel,
     };
   }
 }
