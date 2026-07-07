@@ -140,16 +140,14 @@ class ContactRepository {
     await pool.query(
       `INSERT INTO bomiora_write_online
       (wr_id, wr_num, wr_reply, wr_parent, wr_comment, wr_comment_reply, wr_is_comment, ca_name, wr_option,
-       wr_subject, wr_content, wr_seo_title, wr_link1, wr_link2, wr_link1_hit, wr_link2_hit, wr_hit, wr_good, wr_nogood,
-       mb_id, wr_password, wr_name, wr_email, wr_homepage, wr_datetime, wr_file, wr_last, wr_ip, wr_facebook_user, wr_twitter_user,
+       wr_subject, wr_content, wr_hit, mb_id, wr_password, wr_name, wr_email, wr_datetime, wr_file, wr_last, wr_ip,
        wr_1, wr_2, wr_3, wr_4, wr_5, wr_6, wr_7, wr_8, wr_9, wr_10)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         contact.wr_id, contact.wr_num, contact.wr_reply, contact.wr_parent, contact.wr_comment, contact.wr_comment_reply, contact.wr_is_comment,
-        contact.ca_name, contact.wr_option, contact.wr_subject, contact.wr_content, contact.wr_seo_title, contact.wr_link1, contact.wr_link2,
-        contact.wr_link1_hit, contact.wr_link2_hit, contact.wr_hit, contact.wr_good, contact.wr_nogood, contact.mb_id, contact.wr_password,
-        contact.wr_name, contact.wr_email, contact.wr_homepage, contact.wr_datetime, contact.wr_file, contact.wr_last, contact.wr_ip,
-        contact.wr_facebook_user, contact.wr_twitter_user, contact.wr_1, contact.wr_2, contact.wr_3, contact.wr_4, contact.wr_5, contact.wr_6,
+        contact.ca_name, contact.wr_option, contact.wr_subject, contact.wr_content, contact.wr_hit, contact.mb_id, contact.wr_password,
+        contact.wr_name, contact.wr_email, contact.wr_datetime, contact.wr_file, contact.wr_last, contact.wr_ip,
+        contact.wr_1, contact.wr_2, contact.wr_3, contact.wr_4, contact.wr_5, contact.wr_6,
         contact.wr_7, contact.wr_8, contact.wr_9, contact.wr_10
       ]
     );
@@ -172,6 +170,73 @@ class ContactRepository {
     values.push(wrId);
     await pool.query(`UPDATE bomiora_write_online SET ${pairs.join(', ')} WHERE wr_id = ?`, values);
     return this.findById(wrId);
+  }
+
+  _startOfDay(date) {
+    const d = new Date(date);
+    d.setHours(0, 0, 0, 0);
+    return d;
+  }
+
+  _isClosedRow(contact) {
+    if (!contact) return false;
+    if (contact.is_closed != null && contact.is_closed !== undefined) {
+      return Number(contact.is_closed) === 1;
+    }
+    const wr8 = String(contact.wr_8 ?? '').trim();
+    return wr8 === '1' || wr8.toLowerCase() === 'closed' || wr8 === 'Y';
+  }
+
+  _isAnsweredRow(row) {
+    if (!row || Number(row.wr_is_comment) !== 1) return false;
+    const wr7 = String(row.wr_7 ?? '').trim();
+    const wrReply = String(row.wr_reply ?? '').trim();
+    return wr7.length > 0 || wrReply.length > 0;
+  }
+
+  /** 스레드 최신 질문의 답변일 (없으면 null) */
+  async findLastQuestionAnswerDate(rootWrId) {
+    const rows = await this.findThreadByRoot(rootWrId);
+    if (!rows.length) return null;
+
+    const sorted = [...rows].sort((a, b) => {
+      const dtCmp = new Date(a.wr_datetime) - new Date(b.wr_datetime);
+      if (dtCmp !== 0) return dtCmp;
+      return Number(a.wr_id) - Number(b.wr_id);
+    });
+
+    const lastQuestion = sorted[sorted.length - 1];
+    if (!this._isAnsweredRow(lastQuestion)) return null;
+    // wr_datetime 은 질문 등록일이므로 답변일로 쓰지 않음 (오답 시 답변 직후 즉시 자동종료됨)
+    const answerAt = lastQuestion.wr_last;
+    if (!answerAt) return null;
+    return answerAt;
+  }
+
+  /** 마지막 질문 답변일 + 3일 경과 시 자동 종료 (앱 목록/상세 조회 시점에만 평가) */
+  async autoCloseThreadIfExpired(rootWrId) {
+    const root = await this.findById(rootWrId);
+    if (!root || this._isClosedRow(root)) return root;
+
+    const answerDateRaw = await this.findLastQuestionAnswerDate(rootWrId);
+    if (!answerDateRaw) return root;
+
+    const answerDay = this._startOfDay(answerDateRaw);
+    const closeDay = new Date(answerDay);
+    closeDay.setDate(closeDay.getDate() + 3);
+
+    const today = this._startOfDay(new Date());
+    if (today >= closeDay) {
+      return this.closeThread(rootWrId);
+    }
+    return root;
+  }
+
+  async closeThread(rootWrId) {
+    return this.update(rootWrId, {
+      is_closed: 1,
+      wr_last: new Date(),
+    });
   }
 
   async deleteByIdAndMbId(wrId, mbId) {
