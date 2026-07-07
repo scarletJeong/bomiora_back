@@ -84,6 +84,24 @@ class ImageProxyController {
     return filePath;
   }
 
+  async tryReadLocalDataEventFile(targetUrl) {
+    try {
+      const prefix = '/data/event/';
+      const pathname = new URL(String(targetUrl)).pathname || '';
+      const lower = pathname.toLowerCase();
+      if (!lower.includes(prefix)) return null;
+
+      const idx = lower.indexOf(prefix);
+      const relative = pathname.substring(idx);
+      const localUrl = `http://localhost/bomiora/www${relative}`;
+      const filePath = this.resolveLocalFilePath(localUrl);
+      if (!filePath) return null;
+      return await fs.readFile(filePath);
+    } catch (_) {
+      return null;
+    }
+  }
+
   async proxyImage(req, res) {
     try {
       const targetUrl = req.query.url;
@@ -119,6 +137,12 @@ class ImageProxyController {
       clearTimeout(timeout);
 
       if (!response.ok) {
+        const localBytes = await this.tryReadLocalDataEventFile(String(targetUrl));
+        if (localBytes) {
+          res.setHeader('Content-Type', this.detectContentType(String(targetUrl), null));
+          res.setHeader('Cache-Control', 'no-store');
+          return res.status(200).send(localBytes);
+        }
         return res.sendStatus(response.status);
       }
 
@@ -147,6 +171,13 @@ class ImageProxyController {
         base.startsWith('text/');
 
       if (urlLooksImage && this.bufferLooksLikeHtml(bytes)) {
+        const localBytes = await this.tryReadLocalDataEventFile(urlStr);
+        if (localBytes) {
+          const sniffedLocal = this.sniffImageMimeFromBuffer(localBytes);
+          res.setHeader('Content-Type', sniffedLocal || this.detectContentType(urlStr, null));
+          res.setHeader('Cache-Control', 'no-store');
+          return res.status(200).send(localBytes);
+        }
         return res.sendStatus(415);
       }
 
