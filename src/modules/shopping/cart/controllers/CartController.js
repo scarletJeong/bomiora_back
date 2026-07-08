@@ -1,5 +1,7 @@
 const cartRepository = require('../repositories/CartRepository');
 const healthProfileCartRepository = require('../repositories/HealthProfileCartRepository');
+const cartRecommendService = require('../services/CartRecommendService');
+const productController = require('../../product/controllers/ProductController');
 
 class CartController {
   toInt(value, fallback = 0) {
@@ -22,6 +24,18 @@ class CartController {
       return Buffer.from(value.data).toString('utf8');
     }
     return value != null ? String(value) : null;
+  }
+
+  /** 장바구니 insert 시 인플루언서 추적·정산 필드 (inf_code, ct_mb_inf, ct_inf_price) */
+  buildInfluencerCartFields(product, body = {}) {
+    const infCode = String(body.inf_code || body.infcode || '').trim();
+    const itMbInf = this.bufferToString(product.it_mb_inf || '').trim();
+    const itInfPrice = itMbInf ? this.toInt(product.it_inf_price, 0) : 0;
+    return {
+      inf_code: infCode,
+      ct_mb_inf: itMbInf,
+      ct_inf_price: itInfPrice
+    };
   }
 
   async generateOrderId(mbId, itId) {
@@ -257,7 +271,9 @@ class CartController {
           ct_qty: newQty,
           ct_price: this.toInt(existing.ct_price, 0) + price,
           ct_time: new Date(),
-          ct_point: this.calculatePoint(product, optionId, optionPrice, newQty)
+          ct_point: this.calculatePoint(product, optionId, optionPrice, newQty),
+          ct_select: 1,
+          ct_select_time: new Date()
         });
         const updatedData = await this.convertCartToMap(updated);
         const ctKindStr = this.bufferToString(updatedData.ct_kind);
@@ -272,6 +288,7 @@ class CartController {
       }
 
       if (!odId) odId = await this.generateOrderId(mbId, itId);
+      const influencerFields = this.buildInfluencerCartFields(product, req.body);
       const payload = {
         od_id: odId,
         mb_id: mbId,
@@ -299,12 +316,12 @@ class CartController {
         ct_ip: '127.0.0.1',
         ct_send_cost: this.calculateSendCost(product),
         ct_direct: 0,
-        ct_select: 0,
-        inf_code: '',
+        ct_select: 1,
+        inf_code: influencerFields.inf_code,
         ct_output: 'Y',
         ct_kind: req.body.ct_kind || (this.bufferToString(product.it_kind) === 'prescription' ? 'prescription' : 'general'),
-        ct_mb_inf: '',
-        ct_inf_price: 0,
+        ct_mb_inf: influencerFields.ct_mb_inf,
+        ct_inf_price: influencerFields.ct_inf_price,
         ct_settlement_status: 'N'
       };
       const cart = await cartRepository.insertCart(payload);
@@ -435,6 +452,100 @@ class CartController {
         reservationEndTime = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
       }
       const reservationDate = req.body.reservationDate ? String(req.body.reservationDate).substring(0, 10) : null;
+      const cartCtIds = (Array.isArray(req.body.cart_ct_ids) ? req.body.cart_ct_ids : [])
+        .map((id) => Number(id))
+        .filter((id) => id > 0);
+
+      if (cartCtIds.length > 0) {
+        const cartIds = [];
+        const failedItems = [];
+        let firstItKind = null;
+        let firstCtKind = null;
+
+        for (const ctId of cartCtIds) {
+          const cart = await cartRepository.findById(ctId);
+          if (!cart) {
+            failedItems.push({ ct_id: ctId, message: '장바구니 항목을 찾을 수 없습니다.' });
+            continue;
+          }
+          if (this.bufferToString(cart.mb_id) !== String(mbId)) {
+            failedItems.push({ ct_id: ctId, message: '권한이 없습니다.' });
+            continue;
+          }
+
+          const itId = this.bufferToString(cart.it_id).trim();
+          const product = await cartRepository.findProductById(itId);
+          if (!product) {
+            failedItems.push({ ct_id: ctId, message: '제품을 찾을 수 없습니다.' });
+            continue;
+          }
+
+          await healthProfileCartRepository.insert({
+            mb_id: mbId,
+            it_id: itId,
+            od_id: odId,
+            answer1: req.body.answer1,
+            answer2: req.body.answer2,
+            answer3: req.body.answer3,
+            answer4: req.body.answer4,
+            answer5: req.body.answer5,
+            answer6: req.body.answer6,
+            answer7: req.body.answer7,
+            answer8: req.body.answer8,
+            answer9: req.body.answer9,
+            answer10: req.body.answer10,
+            answer11: req.body.answer11,
+            answer12: req.body.answer12,
+            answer13: req.body.answer13,
+            answer13Period: req.body.answer13Period,
+            answer13Dosage: req.body.answer13Dosage,
+            answer13Medicine: req.body.answer13Medicine,
+            answer71: req.body.answer71,
+            answer13Sideeffect: req.body.answer13Sideeffect,
+            reservationDate,
+            reservationTime,
+            reservationEndTime,
+            reservationName: req.body.reservationName,
+            reservationTel: req.body.reservationTel,
+            doctorName: req.body.doctorName,
+            hpMemo: req.body.pfMemo || '',
+            hp_ip: '127.0.0.1'
+          });
+
+          await cartRepository.updateCart(ctId, {
+            od_id: odId,
+            ct_time: new Date(),
+            ct_select: 1,
+            ct_select_time: new Date()
+          });
+
+          cartIds.push(ctId);
+          if (firstItKind == null) firstItKind = this.bufferToString(product.it_kind);
+          if (firstCtKind == null) firstCtKind = this.bufferToString(cart.ct_kind);
+        }
+
+        if (!cartIds.length) {
+          return res.status(404).json({
+            success: false,
+            message: '예약 가능한 장바구니 항목을 찾지 못했습니다.',
+            failed_items: failedItems
+          });
+        }
+
+        const partial = failedItems.length > 0;
+        return res.json({
+          success: true,
+          message: partial ? '일부 상품 예약이 완료되었습니다.' : '처방 예약이 완료되었습니다.',
+          cart_id: cartIds[0],
+          cart_ids: cartIds,
+          od_id: odId,
+          it_kind: firstItKind,
+          ct_kind: firstCtKind,
+          ct_status: ctStatus,
+          failed_items: failedItems
+        });
+      }
+
       const incomingItems = Array.isArray(req.body.items) && req.body.items.length
         ? req.body.items
         : [
@@ -540,12 +651,10 @@ class CartController {
           ct_ip: '127.0.0.1',
           ct_send_cost: this.calculateSendCost(product),
           ct_direct: 0,
-          ct_select: 0,
-          inf_code: '',
+          ct_select: 1,
+          ...this.buildInfluencerCartFields(product, req.body),
           ct_output: 'Y',
           ct_kind: finalCtKind,
-          ct_mb_inf: '',
-          ct_inf_price: 0,
           ct_settlement_status: 'N'
         });
 
@@ -655,6 +764,72 @@ class CartController {
         success: false,
         message: '장바구니 선택 저장 중 오류가 발생했습니다.',
         error: error.message
+      });
+    }
+  }
+
+  async getRecommendProducts(req, res) {
+    try {
+      const itId = String(req.query.it_id || '').trim();
+      const mbId = req.query.mb_id;
+      const ctStatus = this.normalizeCartStatus(req.query.ct_status);
+
+      let cartList = [];
+
+      if (itId) {
+        const product = await cartRepository.findProductById(itId);
+        if (!product) {
+          return res.json({ success: true, data: [], count: 0 });
+        }
+
+        let ownedItIds = [itId];
+        if (mbId) {
+          const carts = await cartRepository.findByMbIdAndStatusAsc(mbId, ctStatus);
+          ownedItIds = [
+            ...ownedItIds,
+            ...carts.map((cart) => this.bufferToString(cart.it_id))
+          ];
+        }
+
+        const rows = await cartRecommendService.getProductDetailRecommendProducts(
+          itId,
+          ownedItIds
+        );
+        const data = rows.map((row) => productController.toProductDto(row));
+
+        return res.json({
+          success: true,
+          data,
+          count: data.length
+        });
+      } else {
+        if (!mbId) {
+          return res.status(400).json({ success: false, message: 'mb_id 또는 it_id가 필요합니다.', data: [] });
+        }
+        const carts = await cartRepository.findByMbIdAndStatusAsc(mbId, ctStatus);
+        if (!carts.length) {
+          return res.json({ success: true, data: [], count: 0 });
+        }
+        cartList = carts.map((cart) => ({
+          it_id: this.bufferToString(cart.it_id),
+          it_name: this.bufferToString(cart.it_name)
+        }));
+      }
+
+      const rows = await cartRecommendService.getRecommendProducts(cartList);
+      const data = rows.map((row) => productController.toProductDto(row));
+
+      return res.json({
+        success: true,
+        data,
+        count: data.length
+      });
+    } catch (error) {
+      return res.status(500).json({
+        success: false,
+        message: '장바구니 추천 상품 조회 중 오류가 발생했습니다.',
+        error: error.message,
+        data: []
       });
     }
   }

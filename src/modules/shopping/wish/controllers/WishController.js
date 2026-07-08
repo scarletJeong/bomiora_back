@@ -65,7 +65,13 @@ class WishController {
           wiItKind = 'general';
         }
       }
-      await wishRepository.insertWish({ mbId, itId, wiIp: req.ip, wiItKind });
+      await wishRepository.insertWish({
+        mbId,
+        itId,
+        wiIp: req.ip,
+        wiItKind,
+        infCode: String(req.body.inf_code || req.body.infcode || req.body.in_id || '').trim()
+      });
       return res.json({
         success: true,
         is_wished: true,

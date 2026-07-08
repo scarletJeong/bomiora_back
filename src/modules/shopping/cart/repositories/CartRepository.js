@@ -14,6 +14,14 @@ class CartRepository {
     return rows;
   }
 
+  async findByMbIdAndStatusAsc(mbId, ctStatus) {
+    const [rows] = await pool.query(
+      'SELECT * FROM bomiora_shop_cart WHERE mb_id = ? AND ct_status = ? ORDER BY ct_time ASC',
+      [mbId, ctStatus]
+    );
+    return rows;
+  }
+
   async findById(ctId) {
     const [rows] = await pool.query('SELECT * FROM bomiora_shop_cart WHERE ct_id = ? LIMIT 1', [ctId]);
     return rows.length ? rows[0] : null;
