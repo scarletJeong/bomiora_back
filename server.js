@@ -1,6 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const compression = require('compression');
 const helmet = require('helmet');
 const morgan = require('morgan');
 const path = require('path');
@@ -10,6 +11,7 @@ const PORT = process.env.PORT || 9000;
 
 // 미들웨어 설정
 app.use(helmet()); // 보안 헤더
+app.use(compression()); // gzip — JSON 응답 전송량 감소
 app.use(cors()); // CORS 설정
 app.use(morgan('dev')); // 로깅
 app.use(express.json()); // JSON 파싱
