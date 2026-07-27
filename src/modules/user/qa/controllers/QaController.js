@@ -1,11 +1,11 @@
-const contactRepository = require('../repositories/ContactRepository');
+const qaRepository = require('../repositories/QaRepository');
 
-class ContactController {
+class QaController {
   _asText(value) {
     if (value == null) return value;
-    // mysql2가 Buffer로 주는 케이스
+    // mysql2가 Buffer�?주는 케?�스
     if (Buffer.isBuffer(value)) return value.toString('utf8');
-    // JSON stringify 이후에도 남는 { type: 'Buffer', data: [...] } 형태 방어
+    // JSON stringify ?�후?�도 ?�는 { type: 'Buffer', data: [...] } ?�태 방어
     if (typeof value === 'object' && value.type === 'Buffer' && Array.isArray(value.data)) {
       try {
         return Buffer.from(value.data).toString('utf8');
@@ -49,7 +49,7 @@ class ContactController {
       mb_id: this._asText(contact.mb_id) ?? '',
       wr_name: this._asText(contact.wr_name) ?? '',
       wr_email: this._asText(contact.wr_email) ?? '',
-      // 목록에서는 스레드의 최신 작성일(추가질문 포함)을 표시/정렬 기준으로 사용
+      // 목록?�서???�레?�의 최신 ?�성??추�?질문 ?�함)???�시/?�렬 기�??�로 ?�용
       wr_datetime: contact.thread_last_datetime ?? contact.wr_datetime,
       wr_last: contact.wr_last,
       wr_comment: this._asInt(contact.wr_comment, 0),
@@ -75,15 +75,15 @@ class ContactController {
     return req.socket?.remoteAddress || '0.0.0.0';
   }
 
-  async getMyContacts(req, res) {
+  async getMyList(req, res) {
     try {
-      const contacts = await contactRepository.findThreadsByIdentity({
+      const contacts = await qaRepository.findThreadsByIdentity({
         mbId: req.query.mb_id || req.query.mbId,
         mbEmail: req.query.mb_email || req.query.mbEmail,
       });
       const processed = [];
       for (const c of contacts) {
-        const updated = await contactRepository.autoCloseThreadIfExpired(c.wr_id);
+        const updated = await qaRepository.autoCloseThreadIfExpired(c.wr_id);
         if (updated && this._isClosedRow(updated)) {
           processed.push({ ...c, is_closed: 1, wr_last: updated.wr_last });
         } else {
@@ -92,25 +92,25 @@ class ContactController {
       }
       return res.json({ success: true, data: processed.map((c) => this.toMap(c)) });
     } catch (error) {
-      return res.status(500).json({ success: false, message: `문의내역 조회 실패: ${error.message}` });
+      return res.status(500).json({ success: false, message: `문의?�역 조회 ?�패: ${error.message}` });
     }
   }
 
-  async getContactDetail(req, res) {
+  async getDetail(req, res) {
     try {
       const wrId = Number(req.params.wrId);
-      const contact = await contactRepository.findById(wrId);
+      const contact = await qaRepository.findById(wrId);
       if (!contact) {
-        return res.status(404).json({ success: false, message: '문의를 찾을 수 없습니다.' });
+        return res.status(404).json({ success: false, message: '문의�?찾을 ???�습?�다.' });
       }
 
-      await contactRepository.update(wrId, { wr_hit: (contact.wr_hit || 0) + 1 });
-      const rootId = await contactRepository.findRootIdByWrId(wrId);
+      await qaRepository.update(wrId, { wr_hit: (contact.wr_hit || 0) + 1 });
+      const rootId = await qaRepository.findRootIdByWrId(wrId);
       if (rootId) {
-        await contactRepository.autoCloseThreadIfExpired(rootId);
+        await qaRepository.autoCloseThreadIfExpired(rootId);
       }
-      const updated = await contactRepository.findById(wrId);
-      const thread = rootId ? await contactRepository.findThreadByRoot(rootId) : [];
+      const updated = await qaRepository.findById(wrId);
+      const thread = rootId ? await qaRepository.findThreadByRoot(rootId) : [];
       return res.json({
         success: true,
         data: this.toMap(updated),
@@ -118,28 +118,28 @@ class ContactController {
         root_wr_id: rootId,
       });
     } catch (error) {
-      return res.status(500).json({ success: false, message: `문의 상세 조회 실패: ${error.message}` });
+      return res.status(500).json({ success: false, message: `문의 ?�세 조회 ?�패: ${error.message}` });
     }
   }
 
-  async createContact(req, res) {
+  async create(req, res) {
     try {
-      const nextWrId = (await contactRepository.findMaxWrId()) + 1;
-      const nextWrNum = (await contactRepository.findMaxWrNum()) + 1;
+      const nextWrId = (await qaRepository.findMaxWrId()) + 1;
+      const nextWrNum = (await qaRepository.findMaxWrNum()) + 1;
       const now = new Date();
 
       const parentWrIdRaw = req.body.parent_wr_id ?? req.body.parentWrId ?? null;
       const parentWrId = parentWrIdRaw != null ? Number(parentWrIdRaw) : null;
-      const rootId = parentWrId ? await contactRepository.findRootIdByWrId(parentWrId) : null;
+      const rootId = parentWrId ? await qaRepository.findRootIdByWrId(parentWrId) : null;
 
       if (parentWrId && !rootId) {
-        return res.status(400).json({ success: false, message: '연결할 문의를 찾을 수 없습니다.' });
+        return res.status(400).json({ success: false, message: '?�결??문의�?찾을 ???�습?�다.' });
       }
 
       if (rootId) {
-        const rootRow = await contactRepository.findById(rootId);
+        const rootRow = await qaRepository.findById(rootId);
         if (rootRow && this._isClosedRow(rootRow)) {
-          return res.status(400).json({ success: false, message: '종료된 문의에는 추가질문을 할 수 없습니다.' });
+          return res.status(400).json({ success: false, message: '종료??문의?�는 추�?질문???????�습?�다.' });
         }
       }
 
@@ -176,39 +176,39 @@ class ContactController {
         wr_10: ''
       };
 
-      const saved = await contactRepository.create(contact);
-      return res.status(201).json({ success: true, message: '문의가 등록되었습니다.', data: this.toMap(saved) });
+      const saved = await qaRepository.create(contact);
+      return res.status(201).json({ success: true, message: '문의가 ?�록?�었?�니??', data: this.toMap(saved) });
     } catch (error) {
-      return res.status(500).json({ success: false, message: `문의 등록 실패: ${error.message}` });
+      return res.status(500).json({ success: false, message: `문의 ?�록 ?�패: ${error.message}` });
     }
   }
 
-  async updateContact(req, res) {
+  async update(req, res) {
     try {
       const wrId = Number(req.params.wrId);
-      const current = await contactRepository.findById(wrId);
+      const current = await qaRepository.findById(wrId);
       if (!current) {
-        return res.status(404).json({ success: false, message: '문의를 찾을 수 없습니다.' });
+        return res.status(404).json({ success: false, message: '문의�?찾을 ???�습?�다.' });
       }
 
       const mbId = req.body.mb_id || req.body.mbId;
 
       if (this._isCloseRequest(req.body)) {
-        return this._closeContact(req, res, current, mbId);
+        return this._close(req, res, current, mbId);
       }
 
-      const rootId = await contactRepository.findRootIdByWrId(wrId);
-      const root = rootId ? await contactRepository.findById(rootId) : current;
+      const rootId = await qaRepository.findRootIdByWrId(wrId);
+      const root = rootId ? await qaRepository.findById(rootId) : current;
       if (root && this._isClosedRow(root)) {
-        return res.status(400).json({ success: false, message: '종료된 문의는 수정할 수 없습니다.' });
+        return res.status(400).json({ success: false, message: '종료??문의???�정?????�습?�다.' });
       }
 
       if (mbId && String(current.mb_id).trim() !== String(mbId).trim()) {
-        return res.status(403).json({ success: false, message: '수정할 권한이 없습니다.' });
+        return res.status(403).json({ success: false, message: '?�정??권한???�습?�다.' });
       }
 
       if ((current.wr_is_comment ?? 0) === 1) {
-        return res.status(400).json({ success: false, message: '답변이 완료된 문의는 수정할 수 없습니다.' });
+        return res.status(400).json({ success: false, message: '?��????�료??문의???�정?????�습?�다.' });
       }
 
       const fields = { wr_last: new Date() };
@@ -218,100 +218,100 @@ class ContactController {
         fields.wr_6 = (req.body.wr_6 || req.body.inquiry_detail_type || req.body.detail_type || '').toString().trim();
       }
 
-      await contactRepository.update(wrId, fields);
+      await qaRepository.update(wrId, fields);
 
       if (req.body.ca_name != null && rootId) {
-        await contactRepository.update(rootId, {
+        await qaRepository.update(rootId, {
           ca_name: req.body.ca_name,
           wr_last: new Date(),
         });
       }
       if (req.body.wr_6 != null && rootId) {
-        await contactRepository.update(rootId, {
+        await qaRepository.update(rootId, {
           wr_6: fields.wr_6,
           wr_last: new Date(),
         });
       }
 
-      const updated = await contactRepository.findById(wrId);
-      return res.json({ success: true, message: '문의가 수정되었습니다.', data: this.toMap(updated) });
+      const updated = await qaRepository.findById(wrId);
+      return res.json({ success: true, message: '문의가 ?�정?�었?�니??', data: this.toMap(updated) });
     } catch (error) {
-      return res.status(500).json({ success: false, message: `문의 수정 실패: ${error.message}` });
+      return res.status(500).json({ success: false, message: `문의 ?�정 ?�패: ${error.message}` });
     }
   }
 
-  async _closeContact(req, res, current, mbId) {
-    const rootId = await contactRepository.findRootIdByWrId(current.wr_id);
+  async _close(req, res, current, mbId) {
+    const rootId = await qaRepository.findRootIdByWrId(current.wr_id);
     if (!rootId) {
-      return res.status(404).json({ success: false, message: '문의를 찾을 수 없습니다.' });
+      return res.status(404).json({ success: false, message: '문의�?찾을 ???�습?�다.' });
     }
 
-    const root = await contactRepository.findById(rootId);
+    const root = await qaRepository.findById(rootId);
     if (!root) {
-      return res.status(404).json({ success: false, message: '문의를 찾을 수 없습니다.' });
+      return res.status(404).json({ success: false, message: '문의�?찾을 ???�습?�다.' });
     }
 
     if (mbId && String(root.mb_id).trim() !== String(mbId).trim()) {
-      return res.status(403).json({ success: false, message: '종료할 권한이 없습니다.' });
+      return res.status(403).json({ success: false, message: '종료??권한???�습?�다.' });
     }
 
     if (this._isClosedRow(root)) {
       return res.json({
         success: true,
-        message: '이미 종료된 문의입니다.',
+        message: '?��? 종료??문의?�니??',
         data: this.toMap(root),
       });
     }
 
-    const updated = await contactRepository.closeThread(rootId);
+    const updated = await qaRepository.closeThread(rootId);
     return res.json({
       success: true,
-      message: '문의가 종료되었습니다.',
+      message: '문의가 종료?�었?�니??',
       data: this.toMap(updated),
     });
   }
 
-  async deleteContact(req, res) {
+  async delete(req, res) {
     try {
       const wrId = Number(req.params.wrId);
       const mbId = req.query.mb_id || req.query.mbId;
       if (!mbId || !String(mbId).trim()) {
-        return res.status(400).json({ success: false, message: '회원 정보가 필요합니다.' });
+        return res.status(400).json({ success: false, message: '?�원 ?�보가 ?�요?�니??' });
       }
-      const row = await contactRepository.findById(wrId);
+      const row = await qaRepository.findById(wrId);
       if (!row) {
-        return res.status(404).json({ success: false, message: '문의를 찾을 수 없습니다.' });
+        return res.status(404).json({ success: false, message: '문의�?찾을 ???�습?�다.' });
       }
       if (String(row.mb_id).trim() !== String(mbId).trim()) {
-        return res.status(403).json({ success: false, message: '삭제할 권한이 없습니다.' });
+        return res.status(403).json({ success: false, message: '??��??권한???�습?�다.' });
       }
 
-      const rootId = await contactRepository.findRootIdByWrId(wrId);
-      const root = rootId ? await contactRepository.findById(rootId) : row;
+      const rootId = await qaRepository.findRootIdByWrId(wrId);
+      const root = rootId ? await qaRepository.findById(rootId) : row;
       if (root && this._isClosedRow(root)) {
-        return res.status(400).json({ success: false, message: '종료된 문의는 삭제할 수 없습니다.' });
+        return res.status(400).json({ success: false, message: '종료??문의????��?????�습?�다.' });
       }
 
       if ((row.wr_is_comment ?? 0) === 1) {
-        return res.status(400).json({ success: false, message: '답변이 완료된 문의는 삭제할 수 없습니다.' });
+        return res.status(400).json({ success: false, message: '?��????�료??문의????��?????�습?�다.' });
       }
 
-      const ok = await contactRepository.deleteByIdAndMbId(wrId, mbId);
+      const ok = await qaRepository.deleteByIdAndMbId(wrId, mbId);
       if (!ok) {
-        return res.status(400).json({ success: false, message: '문의 삭제에 실패했습니다.' });
+        return res.status(400).json({ success: false, message: '문의 ??��???�패?�습?�다.' });
       }
-      return res.json({ success: true, message: '문의가 삭제되었습니다.' });
+      return res.json({ success: true, message: '문의가 ??��?�었?�니??' });
     } catch (error) {
-      return res.status(500).json({ success: false, message: `문의 삭제 실패: ${error.message}` });
+      return res.status(500).json({ success: false, message: `문의 ??�� ?�패: ${error.message}` });
     }
   }
 
-  async getContactReplies(req, res) {
+  async getReplies(req, res) {
     try {
       const wrId = Number(req.params.wrId);
-      const contact = await contactRepository.findById(wrId);
+      const contact = await qaRepository.findById(wrId);
       if (!contact) {
-        return res.json({ success: false, message: '문의를 찾을 수 없습니다.' });
+        return res.json({ success: false, message: '문의�?찾을 ???�습?�다.' });
       }
 
       if ((contact.wr_is_comment ?? 0) === 1 && contact.wr_7) {
@@ -329,9 +329,9 @@ class ContactController {
 
       return res.json({ success: true, data: [] });
     } catch (error) {
-      return res.status(500).json({ success: false, message: `답변 조회 실패: ${error.message}` });
+      return res.status(500).json({ success: false, message: `?��? 조회 ?�패: ${error.message}` });
     }
   }
 }
 
-module.exports = new ContactController();
+module.exports = new QaController();

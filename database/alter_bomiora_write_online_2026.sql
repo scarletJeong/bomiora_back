@@ -27,7 +27,7 @@ ALTER TABLE `bomiora_write_online`
   MODIFY COLUMN `wr_8` VARCHAR(500) NOT NULL DEFAULT '' COMMENT '관리자 답변 이미지 경로(data/qa/...)';
 
 -- 1:1 문의 종료 플래그
--- 앱: PUT /api/contact/:wrId { wr_8: '1', is_closed: 1 }
+-- 앱: PUT /api/qa/:wrId { is_closed: 1 }
 -- wr_8 은 그누보드 여분필드(레거시 호환), is_closed 는 명시적 종료 컬럼
 
 ALTER TABLE `bomiora_write_online`

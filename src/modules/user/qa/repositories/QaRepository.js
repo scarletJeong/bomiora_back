@@ -1,6 +1,6 @@
 const pool = require('../../../../config/database');
 
-class ContactRepository {
+class QaRepository {
   async findRootIdByWrId(wrId) {
     const [rows] = await pool.query(
       'SELECT wr_id, wr_parent FROM bomiora_write_online WHERE wr_id = ?',
@@ -65,8 +65,8 @@ class ContactRepository {
     const email = (mbEmail ?? '').toString().trim();
     if (!id && !email) return [];
 
-    // 스레드(=wr_parent)별 최신 작성일 기준으로 "원글만" 반환
-    // 목록 노출 날짜는 최신 작성일을 wr_datetime으로 내려줌 (요구사항: 최근 질문 작성일 기준 정렬)
+    // ?�레??=wr_parent)�?최신 ?�성??기�??�로 "?��?�? 반환
+    // 목록 ?�출 ?�짜??최신 ?�성?�을 wr_datetime?�로 ?�려�?(?�구?�항: 최근 질문 ?�성??기�? ?�렬)
     const where = [];
     const args = [];
     if (id) {
@@ -194,7 +194,7 @@ class ContactRepository {
     return wr7.length > 0 || wrReply.length > 0;
   }
 
-  /** 스레드 최신 질문의 답변일 (없으면 null) */
+  /** ?�레??최신 질문???��???(?�으�?null) */
   async findLastQuestionAnswerDate(rootWrId) {
     const rows = await this.findThreadByRoot(rootWrId);
     if (!rows.length) return null;
@@ -207,13 +207,13 @@ class ContactRepository {
 
     const lastQuestion = sorted[sorted.length - 1];
     if (!this._isAnsweredRow(lastQuestion)) return null;
-    // wr_datetime 은 질문 등록일이므로 답변일로 쓰지 않음 (오답 시 답변 직후 즉시 자동종료됨)
+    // wr_datetime ?� 질문 ?�록?�이므�??��??�로 ?��? ?�음 (?�답 ???��? 직후 즉시 ?�동종료??
     const answerAt = lastQuestion.wr_last;
     if (!answerAt) return null;
     return answerAt;
   }
 
-  /** 마지막 질문 답변일 + 3일 경과 시 자동 종료 (앱 목록/상세 조회 시점에만 평가) */
+  /** 마�?�?질문 ?��???+ 3??경과 ???�동 종료 (??목록/?�세 조회 ?�점?�만 ?��?) */
   async autoCloseThreadIfExpired(rootWrId) {
     const root = await this.findById(rootWrId);
     if (!root || this._isClosedRow(root)) return root;
@@ -248,4 +248,4 @@ class ContactRepository {
   }
 }
 
-module.exports = new ContactRepository();
+module.exports = new QaRepository();

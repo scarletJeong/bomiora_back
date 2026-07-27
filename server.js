@@ -45,7 +45,7 @@ app.use('/api/health/heart-rate', require('./src/modules/health/heart_rate/route
 app.use('/api/health/menstrual-cycle', require('./src/modules/health/menstrual_cycle/routes/menstrualCycleRoutes'));
 app.use('/api/steps', require('./src/modules/health/steps/routes/stepsRoutes'));
 app.use('/api/health/food', require('./src/modules/health/food/routes/foodRoutes'));
-app.use('/api/contact', require('./src/modules/user/contact/routes/contactRoutes'));
+app.use('/api/qa', require('./src/modules/user/qa/routes/qaRoutes'));
 app.use('/api/user/address', require('./src/modules/user/address/routes/addressRoutes'));
 app.use('/api/user/addresses', require('./src/modules/user/address/routes/addressRoutes'));
 app.use('/api/user', require('./src/modules/user/point/routes/pointRoutes'));
