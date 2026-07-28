@@ -19,6 +19,41 @@ class ReviewController {
     return Math.round(n * 10) / 10;
   }
 
+  /** DB total_is_score — null/빈값만 미설정. 0도 유효 값으로 취급 */
+  _parseStoredTotal(rowOrValue) {
+    const totalRaw =
+      rowOrValue != null && typeof rowOrValue === 'object'
+        ? rowOrValue.total_is_score
+        : rowOrValue;
+    if (totalRaw === undefined || totalRaw === null || String(totalRaw).trim() === '') {
+      return null;
+    }
+    const n = Number(totalRaw);
+    return Number.isFinite(n) ? n : null;
+  }
+
+  _avgFourScores(s1, s2, s3, s4) {
+    const a = Number(s1 || 0);
+    const b = Number(s2 || 0);
+    const c = Number(s3 || 0);
+    const d = Number(s4 || 0);
+    return Math.round(((a + b + c + d) / 4) * 10) / 10;
+  }
+
+  _avgFourFromRow(row) {
+    return this._avgFourScores(row.is_score1, row.is_score2, row.is_score3, row.is_score4);
+  }
+
+  /**
+   * total_is_score 가 null 일 때만 4항 평균으로 채움.
+   * is_score1~4 는 절대 수정하지 않음.
+   */
+  async _backfillTotalIfNull(isId, row) {
+    if (!row || this._parseStoredTotal(row) != null) return row;
+    const total = this._avgFourFromRow(row);
+    return reviewRepository.updateById(isId, { total_is_score: total });
+  }
+
   getUploadDir() {
     return REVIEW_UPLOAD_DIR;
   }
@@ -153,24 +188,32 @@ class ReviewController {
       row.is_img6, row.is_img7, row.is_img8, row.is_img9, row.is_img10
     ].filter((x) => x);
 
-    const s1 = Number(row.is_score1 || 0);
-    const s2 = Number(row.is_score2 || 0);
-    const s3 = Number(row.is_score3 || 0);
-    const s4 = Number(row.is_score4 || 0);
-    const totalRaw = row.total_is_score;
-    const totalIsScore =
-      totalRaw !== undefined && totalRaw !== null && String(totalRaw).trim() !== ''
-        ? Number(totalRaw)
-        : null;
-    const totalNum = Number.isFinite(totalIsScore) ? totalIsScore : null;
-    const avgFour = (s1 + s2 + s3 + s4) / 4;
-    /** 목록/배지용: 공통 만족도 컬럼이 있으면 우선, 없으면 세부 4항 평균 */
+    /** total_is_score 가 null 일 때만 효과~편리함 평균 사용 (is_score1~4 는 응답에 그대로) */
+    const totalNum = this._parseStoredTotal(row);
+    const avgFour = this._avgFourFromRow(row);
     const averageScore = totalNum != null ? totalNum : avgFour;
 
     const itKindRaw = this.normalizeSqlUtf8(row.it_kind);
     const itKind =
       itKindRaw != null && String(itKindRaw).trim() !== '' ? String(itKindRaw).trim() : null;
     const productImage = this._firstShopItemImage(row);
+
+    const rvkind = this.trimSqlText(row.is_rvkind) || row.is_rvkind || 'general';
+    const isGeneral = String(rvkind || '').toLowerCase() === 'general';
+
+    let positive = this.normalizeSqlUtf8(row.is_positive_review_text);
+    let negative = this.normalizeSqlUtf8(row.is_negative_review_text);
+    let more = this.normalizeSqlUtf8(row.is_more_review_text);
+    positive = positive != null && String(positive).trim() !== '' ? String(positive).trim() : null;
+    negative = negative != null && String(negative).trim() !== '' ? String(negative).trim() : null;
+    more = more != null && String(more).trim() !== '' ? String(more).trim() : null;
+
+    // 일반 리뷰: 단일 본문만 내려줌 (positive 우선, 예전 more 전용 저장은 positive로 합침)
+    if (isGeneral) {
+      if (!positive && more) positive = more;
+      negative = null;
+      more = null;
+    }
 
     return {
       isId: row.is_id,
@@ -186,15 +229,15 @@ class ReviewController {
       isScore2: row.is_score2,
       isScore3: row.is_score3,
       isScore4: row.is_score4,
-      totalIsScore: totalNum,
+      totalIsScore: totalNum != null ? totalNum : averageScore,
       averageScore,
-      isRvkind: row.is_rvkind,
+      isRvkind: rvkind,
       isRecommend: row.is_recommend,
       isGood: row.is_good,
       czDownload: row.cz_download,
-      isPositiveReviewText: row.is_positive_review_text,
-      isNegativeReviewText: row.is_negative_review_text,
-      isMoreReviewText: row.is_more_review_text,
+      isPositiveReviewText: positive,
+      isNegativeReviewText: negative,
+      isMoreReviewText: more,
       images,
       isBirthday: row.is_birthday,
       isWeight: row.is_weight,
@@ -249,17 +292,26 @@ class ReviewController {
 
       const images = this._normalizeReviewImages(req.body.images);
       const imageOrEmpty = (index) => images[index] || '';
+      const s1 = this._normalizeTenthScore(req.body.isScore1) ?? 0;
+      const s2 = this._normalizeTenthScore(req.body.isScore2) ?? 0;
+      const s3 = this._normalizeTenthScore(req.body.isScore3) ?? 0;
+      const s4 = this._normalizeTenthScore(req.body.isScore4) ?? 0;
+      // 클라이언트가 totalIsScore 를내면 그대로 INSERT. null 이면 4항 평균으로 채움(세부점수는 그대로)
+      let total = this._normalizeTenthScore(req.body.totalIsScore);
+      if (total == null) {
+        total = this._avgFourScores(s1, s2, s3, s4);
+      }
       const saved = await reviewRepository.create({
         mb_id: req.body.mbId,
         od_id: req.body.odId ?? null,
         it_id: req.body.itId,
         is_name: req.body.isName,
         is_confirm: 0,
-        is_score1: Math.round(Number(req.body.isScore1 ?? 0)),
-        is_score2: Math.round(Number(req.body.isScore2 ?? 0)),
-        is_score3: Math.round(Number(req.body.isScore3 ?? 0)),
-        is_score4: Math.round(Number(req.body.isScore4 ?? 0)),
-        total_is_score: this._normalizeTenthScore(req.body.totalIsScore),
+        is_score1: s1,
+        is_score2: s2,
+        is_score3: s3,
+        is_score4: s4,
+        total_is_score: total,
         is_rvkind: req.body.isRvkind || 'general',
         is_recommend: req.body.isRecommend || 'y',
         is_good: 0,
@@ -395,16 +447,22 @@ class ReviewController {
     const itId = t(row.it_id);
     const mbId = t(row.mb_id);
     const infId = t(row.inf_id);
+    const nick = t(row.inf_nick);
+    const name = t(row.inf_name);
+    // 표시명은 inf_id → bomiora_member 닉네임 (mb_id 아님)
+    const displayName = nick || name || infId || '리뷰어';
 
     return {
       mrNo: row.mr_no,
       itId: itId || null,
       mbId: mbId || null,
       infId: infId || null,
-      mrScore1: row.mr_score1,
-      mrScore2: row.mr_score2,
-      mrScore3: row.mr_score3,
-      mrScore4: row.mr_score4,
+      displayName,
+      isInfluencer: Boolean(infId),
+      mrScore1: s1,
+      mrScore2: s2,
+      mrScore3: s3,
+      mrScore4: s4,
       averageScore: (s1 + s2 + s3 + s4) / 4,
       mrTitle: title || null,
       mrContent: content || null,
@@ -414,6 +472,26 @@ class ReviewController {
       mrOrderNum: row.mr_order_num,
       images,
       productImage: productImages[0] || null
+    };
+  }
+
+  toMainReviewStats(row) {
+    const n = (v) => {
+      const x = Number(v);
+      return Number.isFinite(x) ? x : 0;
+    };
+    const avg1 = n(row.avg1);
+    const avg2 = n(row.avg2);
+    const avg3 = n(row.avg3);
+    const avg4 = n(row.avg4);
+    const averageScore = n(row.avgAll);
+    return {
+      totalCount: n(row.cnt),
+      averageScore,
+      score1Percent: Math.round(avg1 * 20),
+      score2Percent: Math.round(avg2 * 20),
+      score3Percent: Math.round(avg3 * 20),
+      score4Percent: Math.round(avg4 * 20)
     };
   }
 
@@ -435,6 +513,55 @@ class ReviewController {
     }
   }
 
+  /**
+   * 베스트 리뷰 목록 페이지 — 페이지네이션 + 전체 통계
+   * ?page=0&size=5&mrNo= (선택: 해당 리뷰가 속한 페이지 번호 반환)
+   */
+  async getMainReviewsBest(req, res) {
+    try {
+      let size = Number(req.query.size);
+      if (!Number.isFinite(size) || size < 1) size = 5;
+      size = Math.min(size, 50);
+
+      let page = Number(req.query.page);
+      if (!Number.isFinite(page) || page < 0) page = 0;
+
+      const mrNoRaw = req.query.mrNo;
+      let focusPage = null;
+      if (mrNoRaw != null && String(mrNoRaw).trim() !== '') {
+        const idx = await mainReviewRepository.findPublishedIndex(mrNoRaw);
+        if (idx >= 0) {
+          focusPage = Math.floor(idx / size);
+          // mrNo가 있으면 해당 리뷰가 있는 페이지로 이동 (홈 카드 진입용)
+          page = focusPage;
+        }
+      }
+
+      const [totalElements, rows, statsRow] = await Promise.all([
+        mainReviewRepository.countPublished(),
+        mainReviewRepository.findPublishedPage({ page, size }),
+        mainReviewRepository.getPublishedStats()
+      ]);
+      const totalPages = totalElements === 0 ? 0 : Math.ceil(totalElements / size);
+
+      return res.json({
+        success: true,
+        reviews: rows.map((r) => this.toMainReviewRow(r)),
+        currentPage: page,
+        totalPages,
+        totalElements,
+        hasNext: page + 1 < totalPages,
+        focusPage,
+        stats: this.toMainReviewStats(statsRow)
+      });
+    } catch (error) {
+      return res.json({
+        success: false,
+        message: `베스트 리뷰 목록 조회 중 오류가 발생했습니다: ${error.message}`
+      });
+    }
+  }
+
   async getProductReviewStats(req, res) {
     try {
       const itIds = await reviewRepository.getReviewSourceItIds(req.params.itId);
@@ -447,8 +574,11 @@ class ReviewController {
 
   async getReviewById(req, res) {
     try {
-      const row = await reviewRepository.findById(Number(req.params.isId));
+      const isId = Number(req.params.isId);
+      let row = await reviewRepository.findById(isId);
       if (!row) return res.json({ success: false, message: '리뷰를 찾을 수 없습니다.' });
+      // total_is_score 가 null 이면 4항 평균으로만 채움 (is_score1~4 미변경)
+      row = await this._backfillTotalIfNull(isId, row);
       return res.json({ success: true, review: this.toReviewResponse(row) });
     } catch (error) {
       return res.json({ success: false, message: `리뷰 조회 중 오류가 발생했습니다: ${error.message}` });
@@ -473,12 +603,35 @@ class ReviewController {
 
       const images = req.body.images != null ? this._normalizeReviewImages(req.body.images) : null;
       const fields = {};
-      if (req.body.isScore1 != null) fields.is_score1 = Math.round(Number(req.body.isScore1));
-      if (req.body.isScore2 != null) fields.is_score2 = Math.round(Number(req.body.isScore2));
-      if (req.body.isScore3 != null) fields.is_score3 = Math.round(Number(req.body.isScore3));
-      if (req.body.isScore4 != null) fields.is_score4 = Math.round(Number(req.body.isScore4));
+      const isGeneral =
+        String(this.trimSqlText(row.is_rvkind) || row.is_rvkind || '')
+          .toLowerCase() === 'general';
+
+      // 일반 리뷰: is_score1~4 는 절대 덮지 않음. 처방 등만 세부 점수 갱신
+      if (!isGeneral) {
+        if (req.body.isScore1 != null) {
+          fields.is_score1 = this._normalizeTenthScore(req.body.isScore1) ?? 0;
+        }
+        if (req.body.isScore2 != null) {
+          fields.is_score2 = this._normalizeTenthScore(req.body.isScore2) ?? 0;
+        }
+        if (req.body.isScore3 != null) {
+          fields.is_score3 = this._normalizeTenthScore(req.body.isScore3) ?? 0;
+        }
+        if (req.body.isScore4 != null) {
+          fields.is_score4 = this._normalizeTenthScore(req.body.isScore4) ?? 0;
+        }
+      }
+
+      // total_is_score: 클라이언트가 주면 INSERT/UPDATE. 없고 DB가 null이면 4항 평균만 채움
       if (req.body.totalIsScore !== undefined && req.body.totalIsScore !== null) {
         fields.total_is_score = this._normalizeTenthScore(req.body.totalIsScore);
+      } else if (this._parseStoredTotal(row) == null) {
+        const s1 = fields.is_score1 != null ? fields.is_score1 : row.is_score1;
+        const s2 = fields.is_score2 != null ? fields.is_score2 : row.is_score2;
+        const s3 = fields.is_score3 != null ? fields.is_score3 : row.is_score3;
+        const s4 = fields.is_score4 != null ? fields.is_score4 : row.is_score4;
+        fields.total_is_score = this._avgFourScores(s1, s2, s3, s4);
       }
       if (req.body.isPositiveReviewText != null) fields.is_positive_review_text = req.body.isPositiveReviewText;
       if (req.body.isNegativeReviewText != null) fields.is_negative_review_text = req.body.isNegativeReviewText;
