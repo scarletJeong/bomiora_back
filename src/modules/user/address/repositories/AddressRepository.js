@@ -10,18 +10,13 @@ class AddressRepository {
   }
 
   async findByMbId(mbId) {
+    // 기본배송지 여부와 무관하게 등록순(최신 ad_id 우선) 유지. 배송지명 중복 허용.
     const [rows] = await pool.query(
-      `SELECT a.*
-       FROM bomiora_shop_order_address a
-       INNER JOIN (
-        SELECT ad_subject, MAX(ad_id) AS max_id
-        FROM bomiora_shop_order_address
-        WHERE mb_id = ?
-        GROUP BY ad_subject
-       ) b ON a.ad_subject = b.ad_subject AND a.ad_id = b.max_id
-       WHERE a.mb_id = ?
-       ORDER BY a.ad_default DESC, a.ad_id DESC`,
-      [mbId, mbId]
+      `SELECT *
+       FROM bomiora_shop_order_address
+       WHERE mb_id = ?
+       ORDER BY ad_id DESC`,
+      [mbId]
     );
     return rows;
   }

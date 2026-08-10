@@ -3,19 +3,33 @@ const addressRepository = require('../repositories/AddressRepository');
 class AddressController {
   mapAddress(row) {
     return {
+      adId: row.ad_id,
       ad_id: row.ad_id,
+      mbId: row.mb_id,
       mb_id: row.mb_id,
+      adSubject: row.ad_subject,
       ad_subject: row.ad_subject,
+      adDefault: row.ad_default,
       ad_default: row.ad_default,
+      adName: row.ad_name,
       ad_name: row.ad_name,
+      adTel: row.ad_tel,
       ad_tel: row.ad_tel,
+      adHp: row.ad_hp,
       ad_hp: row.ad_hp,
+      adZip1: row.ad_zip1,
       ad_zip1: row.ad_zip1,
+      adZip2: row.ad_zip2,
       ad_zip2: row.ad_zip2,
+      adAddr1: row.ad_addr1,
       ad_addr1: row.ad_addr1,
+      adAddr2: row.ad_addr2,
       ad_addr2: row.ad_addr2,
+      adAddr3: row.ad_addr3,
       ad_addr3: row.ad_addr3,
+      adJibeon: row.ad_jibeon,
       ad_jibeon: row.ad_jibeon,
+      adMemo: row.ad_memo ?? '',
       ad_memo: row.ad_memo ?? '',
     };
   }
@@ -57,7 +71,7 @@ class AddressController {
 
       const saved = await addressRepository.create({
         mb_id: mbId,
-        ad_subject: dto.ad_subject || dto.adSubject,
+        ad_subject: dto.ad_subject ?? dto.adSubject ?? '',
         ad_default: adDefault,
         ad_name: dto.ad_name || dto.adName,
         ad_tel: dto.ad_tel || dto.adTel || '',
@@ -87,7 +101,7 @@ class AddressController {
       }
 
       const updated = await addressRepository.update(id, mbId, {
-        ad_subject: dto.ad_subject || dto.adSubject,
+        ad_subject: dto.ad_subject ?? dto.adSubject ?? '',
         ad_default: Number(dto.ad_default ?? dto.adDefault ?? 0),
         ad_name: dto.ad_name || dto.adName,
         ad_tel: dto.ad_tel || dto.adTel || '',
