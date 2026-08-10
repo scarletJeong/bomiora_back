@@ -45,7 +45,17 @@ class CartController {
       `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}` +
       `${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
     const random = pad(Math.floor(Math.random() * 10000), 4);
-    return Number(`${timestamp}${random}`);
+    // 18자리 — Number로 바꾸면 JS 정밀도 손실이 나므로 문자열로 유지
+    return `${timestamp}${random}`;
+  }
+
+  /** 요청/DB od_id를 안전한 숫자 문자열로 정규화 */
+  normalizeOdId(value) {
+    if (value == null || value === '') return null;
+    const digits = String(this.bufferToString(value) ?? '')
+      .replace(/[^0-9]/g, '')
+      .trim();
+    return digits || null;
   }
 
   calculateSendCost(product) {
@@ -149,21 +159,75 @@ class CartController {
       ? `${hpRsvtStime} ~ ${hpRsvtEtime}`
       : (hpRsvtStime || hpRsvtEtime || null);
 
+    const cartSubject =
+      this.bufferToString(cart.resolved_it_subject) ||
+      this.bufferToString(cart.it_subject) ||
+      '';
+    const productSubject = product
+      ? this.bufferToString(product.it_subject) || ''
+      : '';
+    const itSubject = cartSubject || productSubject || '';
+    const itBrand =
+      this.bufferToString(cart.product_it_brand) ||
+      this.bufferToString(cart.product_it_maker) ||
+      (product
+        ? this.bufferToString(product.it_brand) ||
+          this.bufferToString(product.it_maker) ||
+          ''
+        : '');
+    const productType = product
+      ? this.bufferToString(product.it_type) ||
+        this.bufferToString(product.product_type) ||
+        this.bufferToString(product.ca_name) ||
+        ''
+      : '';
+
+    const parentRaw = this.normalizeParent(
+      this.bufferToString(cart.parent) ||
+        this.parseLegacyParentFromCtKind(cart.ct_kind)
+    );
+    const ctKindRaw = this.normalizeProductKind(
+      this.bufferToString(cart.ct_kind) || '',
+      this.bufferToString(cart.product_it_kind) ||
+        (product ? this.bufferToString(product.it_kind) : '') ||
+        ''
+    );
+    const itKindRaw =
+      this.bufferToString(cart.product_it_kind) ||
+      (product ? this.bufferToString(product.it_kind) : '') ||
+      '';
+    const itKind =
+      String(itKindRaw).trim().toLowerCase() === 'prescription'
+        ? 'prescription'
+        : String(itKindRaw).trim()
+          ? String(itKindRaw).trim().toLowerCase()
+          : ctKindRaw;
+    const kind = parentRaw ? 'supply_add' : ctKindRaw;
+
     return {
       ct_id: cart.ct_id,
-      od_id: cart.od_id,
+      od_id: odId,
       mb_id: mbId,
       it_id: itId,
       it_name: this.bufferToString(cart.it_name),
-      it_subject: this.bufferToString(cart.it_subject) || '',
+      it_subject: itSubject,
+      it_brand: itBrand,
+      it_kind: itKind,
+      product_kind: itKind,
+      product_type: productType,
       ct_status: this.bufferToString(cart.ct_status),
       ct_price: cart.ct_price,
       ct_option: this.bufferToString(cart.ct_option) || '',
       ct_qty: cart.ct_qty,
       io_id: this.bufferToString(cart.io_id) || '',
       io_price: cart.io_price,
+      io_type: this.toInt(cart.io_type, 0),
       ct_select: this.toInt(cart.ct_select, 0) ? 1 : 0,
-      ct_kind: this.bufferToString(cart.ct_kind) || 'general',
+      ct_kind: ctKindRaw,
+      kind,
+      parent: parentRaw,
+      parent_it_id: parentRaw || null,
+      it_supply_items: this.bufferToString(cart.product_it_supply_items) || '',
       ct_mb_inf: this.bufferToString(cart.ct_mb_inf) || '',
       point_usage_rate: this.toInt(
         (product && (product.point_usage_rate ?? product.it_point_usage_rate)) ?? 10,
@@ -181,6 +245,118 @@ class CartController {
       reservation_date: hpRsvtDate,
       reservation_time: reservationTimeRange
     };
+  }
+
+  normalizeParent(value) {
+    const s = String(this.bufferToString(value) || '').trim();
+    if (!s) return '';
+    if (s.toLowerCase().startsWith('supply_add|')) {
+      return s.slice('supply_add|'.length).trim();
+    }
+    return s;
+  }
+
+  parseLegacyParentFromCtKind(ctKind) {
+    const s = String(this.bufferToString(ctKind) || '').trim();
+    if (s.toLowerCase().startsWith('supply_add|')) {
+      return s.slice('supply_add|'.length).trim();
+    }
+    return '';
+  }
+
+  /** ct_kind / it_kind → prescription | general */
+  normalizeProductKind(ctKind, itKindFallback = '') {
+    const ck = String(this.bufferToString(ctKind) || '').trim().toLowerCase();
+    if (ck === 'prescription' || ck === 'general') return ck;
+    if (ck.startsWith('supply_add|')) {
+      const ik = String(this.bufferToString(itKindFallback) || '')
+        .trim()
+        .toLowerCase();
+      return ik === 'prescription' ? 'prescription' : 'general';
+    }
+    const ik = String(this.bufferToString(itKindFallback) || '')
+      .trim()
+      .toLowerCase();
+    return ik === 'prescription' ? 'prescription' : 'general';
+  }
+
+  /** FIND_IN_SET 스타일: CSV에 itId 포함 여부 */
+  isInSupplyItems(csv, itId) {
+    const id = String(itId || '').trim();
+    if (!id) return false;
+    return String(csv || '')
+      .split(',')
+      .map((x) => x.replace(/[^0-9]/g, '').trim())
+      .includes(id);
+  }
+
+  /**
+   * 담기 시 부모 it_id 결정 (본품이면 '')
+   * - body.parent / parent_it_id / legacy ct_kind=supply_add|…
+   * - 본품 명시(prescription|general)면 복원 안 함
+   * - kind 미지정 시에만 it_supply_items 복원
+   */
+  async resolveParent({ reqBody, mbId, itId, ctStatus }) {
+    const bodyParent = this.normalizeParent(
+      reqBody.parent ?? reqBody.parent_it_id ?? reqBody.parentItId ?? ''
+    );
+    if (bodyParent) return bodyParent;
+
+    const bodyKind = String(
+      this.bufferToString(reqBody.ct_kind || reqBody.ctKind || '') || ''
+    )
+      .trim()
+      .toLowerCase();
+    if (bodyKind.startsWith('supply_add|')) {
+      return bodyKind.slice('supply_add|'.length).trim();
+    }
+
+    // 본품으로 명시 담기 — supply 복원 금지
+    if (bodyKind === 'prescription' || bodyKind === 'general') {
+      return '';
+    }
+
+    try {
+      const parents = await cartRepository.findParentCandidates(mbId, ctStatus);
+      for (const p of parents) {
+        const parentId = this.bufferToString(p.it_id);
+        if (!parentId || parentId === String(itId)) continue;
+        const supply = this.bufferToString(p.it_supply_items) || '';
+        if (this.isInSupplyItems(supply, itId)) {
+          return parentId;
+        }
+      }
+    } catch (_) {}
+
+    return '';
+  }
+
+  /** 상품 종류 ct_kind (prescription|general) — 관계와 분리 */
+  resolveProductKind({ reqBody, product }) {
+    const bodyKind = String(
+      this.bufferToString(reqBody.ct_kind || reqBody.ctKind || '') || ''
+    )
+      .trim()
+      .toLowerCase();
+    if (bodyKind === 'prescription' || bodyKind === 'general') return bodyKind;
+    // legacy supply_add| 는 상품 종류로 쓰지 않음
+    return this.bufferToString(product.it_kind) === 'prescription'
+      ? 'prescription'
+      : 'general';
+  }
+
+  /** 장바구니 라인 결제금액 (ct_price 총액 규칙 + io_type 1~3의 io_price) */
+  cartLineAmount(cart) {
+    const ioType = this.toInt(cart.io_type);
+    const ioPrice = this.toInt(cart.io_price);
+    const ctPrice = this.toInt(cart.ct_price);
+    const ctQty = this.toInt(cart.ct_qty, 1);
+    // io_type 1/2/3: ct_price(연결상품 본가 총액 또는 0) + io_price*qty
+    if (ioType === 1 || ioType === 2 || ioType === 3) {
+      return ctPrice + ioPrice * ctQty;
+    }
+    // io_type 0: 기존 클라가 본가(+옵션) 총액을 ct_price에 넣는 계약 유지
+    return ctPrice;
   }
 
   calculateItemShippingCost(price, qty, cart) {
@@ -213,13 +389,8 @@ class CartController {
       let productTotalPrice = 0;
       let productTotalQty = 0;
       productCarts.forEach((c) => {
-        const ioType = this.toInt(c.io_type);
-        const ioPrice = this.toInt(c.io_price);
-        const ctPrice = this.toInt(c.ct_price);
-        const ctQty = this.toInt(c.ct_qty, 1);
-        if (ioType === 1) productTotalPrice += ioPrice * ctQty;
-        else productTotalPrice += (ctPrice + ioPrice) * ctQty;
-        productTotalQty += ctQty;
+        productTotalPrice += this.cartLineAmount(c);
+        productTotalQty += this.toInt(c.ct_qty, 1);
       });
 
       const shipping = this.calculateItemShippingCost(productTotalPrice, productTotalQty, productCarts[0]);
@@ -248,42 +419,73 @@ class CartController {
       const optionId = req.body.option_id || '';
       const optionText = req.body.option_text || '';
       const optionPrice = req.body.option_price != null ? this.toInt(req.body.option_price, 0) : 0;
-      let odId = req.body.od_id != null ? Number(req.body.od_id) : null;
+      let ioType = this.toInt(req.body.io_type ?? req.body.ioType, 0);
+      if (ioType < 0 || ioType > 3) ioType = 0;
+      let odId = this.normalizeOdId(req.body.od_id ?? req.body.odId);
 
       if (!mbId || !itId) return res.status(400).json({ success: false, message: 'mb_id와 it_id가 필요합니다.' });
       const product = await cartRepository.findProductById(itId);
       if (!product) return res.status(404).json({ success: false, message: '제품을 찾을 수 없습니다.' });
-      if (!price) price = this.toInt(product.it_price, 0);
 
-      const itIdStr = this.bufferToString(product.it_id);
+      const productBasePrice = this.toInt(product.it_price, 0);
+      const resolvedParent = await this.resolveParent({
+        reqBody: req.body,
+        mbId,
+        itId,
+        ctStatus,
+      });
+      const isSupplyLine = Boolean(resolvedParent);
+      const resolvedKind = this.resolveProductKind({
+        reqBody: req.body,
+        product,
+      });
+
+      // ct_price는 라인 총액(단가*수량). io_type 1~3은 본가 미포함(연결상품만 본가 총액).
+      if (!price) {
+        if (ioType === 1 || ioType === 2 || ioType === 3) {
+          price = isSupplyLine ? productBasePrice * quantity : 0;
+        } else {
+          price = productBasePrice * quantity;
+        }
+      } else if (ioType === 1 || ioType === 2 || ioType === 3) {
+        price = isSupplyLine ? productBasePrice * quantity : 0;
+      }
+
       const itKindStr = this.bufferToString(product.it_kind);
-
       const ioIdForSearch = optionId || '';
       const existing = await cartRepository.findSameItemOption(
         mbId,
         itId,
         ioIdForSearch,
-        ctStatus
+        ctStatus,
+        resolvedParent
       );
       if (existing) {
         const newQty = this.toInt(existing.ct_qty, 0) + quantity;
-        const updated = await cartRepository.updateCart(existing.ct_id, {
+        const prevQty = Math.max(this.toInt(existing.ct_qty, 1), 1);
+        const unitCt = Math.floor(this.toInt(existing.ct_price, 0) / prevQty);
+        const updateFields = {
           ct_qty: newQty,
-          ct_price: this.toInt(existing.ct_price, 0) + price,
+          ct_price: unitCt * newQty,
+          ct_kind: resolvedKind,
+          parent: resolvedParent,
+          io_type: this.toInt(existing.io_type, ioType),
           ct_time: new Date(),
           ct_point: this.calculatePoint(product, optionId, optionPrice, newQty),
           ct_select: 1,
           ct_select_time: new Date()
-        });
+        };
+        if (odId) updateFields.od_id = odId;
+        const updated = await cartRepository.updateCart(existing.ct_id, updateFields);
         const updatedData = await this.convertCartToMap(updated);
-        const ctKindStr = this.bufferToString(updatedData.ct_kind);
 
-        return res.json({ 
-          success: true, 
-          message: '장바구니에 추가되었습니다.', 
+        return res.json({
+          success: true,
+          message: '장바구니에 추가되었습니다.',
           data: updatedData,
           it_kind: itKindStr,
-          ct_kind: ctKindStr
+          ct_kind: this.bufferToString(updatedData.ct_kind),
+          parent: this.bufferToString(updatedData.parent) || '',
         });
       }
 
@@ -294,7 +496,7 @@ class CartController {
         mb_id: mbId,
         it_id: itId,
         it_name: product.it_name || '',
-        it_subject: '',
+        it_subject: this.bufferToString(product.it_subject) || '',
         it_sc_type: this.toInt(product.it_sc_type, 0),
         it_sc_method: this.toInt(product.it_sc_method, 0),
         it_sc_price: this.toInt(product.it_sc_price, 0),
@@ -311,7 +513,7 @@ class CartController {
         ct_qty: quantity,
         ct_notax: 0,
         io_id: optionId,
-        io_type: 0,
+        io_type: ioType,
         io_price: optionPrice,
         ct_ip: '127.0.0.1',
         ct_send_cost: this.calculateSendCost(product),
@@ -319,27 +521,23 @@ class CartController {
         ct_select: 1,
         inf_code: influencerFields.inf_code,
         ct_output: 'Y',
-        ct_kind: req.body.ct_kind || (this.bufferToString(product.it_kind) === 'prescription' ? 'prescription' : 'general'),
+        ct_kind: resolvedKind,
+        parent: resolvedParent,
         ct_mb_inf: influencerFields.ct_mb_inf,
         ct_inf_price: influencerFields.ct_inf_price,
         ct_settlement_status: 'N'
       };
       const cart = await cartRepository.insertCart(payload);
 
-      if (this.bufferToString(product.it_kind) === 'prescription' && ctStatus === '쇼핑') {
-        const carts = await healthProfileCartRepository.findRecentByMbIdAndItIdAndStatus(mbId, itId, '쇼핑');
-        if (carts.length) await healthProfileCartRepository.updateOdId(carts[0].hp_no, odId);
-      }
-
       const cartData = await this.convertCartToMap(cart);
-      const ctKindStr = this.bufferToString(cartData.ct_kind);
 
-      return res.json({ 
-        success: true, 
-        message: '장바구니에 추가되었습니다.', 
+      return res.json({
+        success: true,
+        message: '장바구니에 추가되었습니다.',
         data: cartData,
         it_kind: itKindStr,
-        ct_kind: ctKindStr,
+        ct_kind: this.bufferToString(cartData.ct_kind),
+        parent: this.bufferToString(cartData.parent) || '',
         ct_status: ctStatus
       });
     } catch (error) {
@@ -354,7 +552,7 @@ class CartController {
       const carts = await cartRepository.findByMbIdAndStatus(mbId, ctStatus);
       const data = await Promise.all(carts.map((c) => this.convertCartToMap(c)));
       const shippingCost = this.calculateShippingCost(carts);
-      const totalPrice = carts.reduce((sum, c) => sum + this.toInt(c.ct_price, 0), 0);
+      const totalPrice = carts.reduce((sum, c) => sum + this.cartLineAmount(c), 0);
       return res.json({
         success: true,
         data,
@@ -383,7 +581,8 @@ class CartController {
     try {
       const odIdRaw = req.body.od_id;
       if (odIdRaw == null) throw new Error('od_id는 필수입니다.');
-      const odId = Number(odIdRaw);
+      const odId = this.normalizeOdId(odIdRaw);
+      if (!odId) throw new Error('od_id는 필수입니다.');
       const reservationTime = req.body.reservationTime || '';
       let reservationEndTime = reservationTime;
       if (reservationTime && reservationTime.includes(':')) {
@@ -442,7 +641,8 @@ class CartController {
       const ctStatus = this.normalizeCartStatus(req.body.ct_status);
       const odIdRaw = req.body.od_id;
       if (odIdRaw == null) throw new Error('od_id는 필수입니다.');
-      const odId = Number(odIdRaw);
+      const odId = this.normalizeOdId(odIdRaw);
+      if (!odId) throw new Error('od_id는 필수입니다.');
       const reservationTime = req.body.reservationTime || '';
       let reservationEndTime = reservationTime;
       if (reservationTime && reservationTime.includes(':')) {
@@ -629,7 +829,7 @@ class CartController {
           mb_id: mbId,
           it_id: item.itId,
           it_name: product.it_name || '',
-          it_subject: '',
+          it_subject: this.bufferToString(product.it_subject) || '',
           it_sc_type: this.toInt(product.it_sc_type, 0),
           it_sc_method: this.toInt(product.it_sc_method, 0),
           it_sc_price: this.toInt(product.it_sc_price, 0),
@@ -712,8 +912,23 @@ class CartController {
 
   async removeCartItem(req, res) {
     try {
-      const deleted = await cartRepository.deleteById(Number(req.params.ctId));
+      const ctId = Number(req.params.ctId);
+      const cart = await cartRepository.findById(ctId);
+      if (!cart) return res.status(404).json({ success: false, message: '장바구니 항목을 찾을 수 없습니다.' });
+
+      const mbId = this.bufferToString(cart.mb_id);
+      const itId = this.bufferToString(cart.it_id);
+      const ctStatus = this.normalizeCartStatus(cart.ct_status);
+      const parentOfRow = this.normalizeParent(cart.parent);
+
+      const deleted = await cartRepository.deleteById(ctId);
       if (!deleted) return res.status(404).json({ success: false, message: '장바구니 항목을 찾을 수 없습니다.' });
+
+      // 본품 삭제 시 parent=본품it_id 인 추가상품도 삭제
+      if (!parentOfRow && itId) {
+        await cartRepository.deleteSupplyChildren(mbId, itId, ctStatus);
+      }
+
       return res.json({ success: true, message: '장바구니에서 삭제되었습니다.' });
     } catch (error) {
       return res.status(500).json({ success: false, message: '장바구니 삭제 중 오류가 발생했습니다.', error: error.message });
@@ -723,8 +938,10 @@ class CartController {
   normalizeCartKind(value) {
     const normalized = this.bufferToString(value);
     if (normalized == null) return null;
-    const kind = String(normalized).trim().toLowerCase();
-    if (kind === 'prescription' || kind === 'general') return kind;
+    const kind = String(normalized).trim();
+    const lower = kind.toLowerCase();
+    if (lower === 'prescription' || lower === 'general') return lower;
+    if (lower.startsWith('supply_add|')) return kind;
     return null;
   }
 
@@ -782,20 +999,18 @@ class CartController {
           return res.json({ success: true, data: [], count: 0 });
         }
 
-        let ownedItIds = [itId];
+        let cartItIds = [];
         if (mbId) {
           const carts = await cartRepository.findByMbIdAndStatusAsc(mbId, ctStatus);
-          ownedItIds = [
-            ...ownedItIds,
-            ...carts.map((cart) => this.bufferToString(cart.it_id))
-          ];
+          cartItIds = carts.map((cart) => this.bufferToString(cart.it_id));
         }
 
+        // 2번째 인자 = 장바구니 it_id만 (현재 상세 상품은 서비스 내부에서 제외 ID로만 사용)
         const rows = await cartRecommendService.getProductDetailRecommendProducts(
           itId,
-          ownedItIds
+          cartItIds
         );
-        const data = rows.map((row) => productController.toProductDto(row));
+        const data = await productController.mapProductDtos(rows);
 
         return res.json({
           success: true,
@@ -817,7 +1032,7 @@ class CartController {
       }
 
       const rows = await cartRecommendService.getRecommendProducts(cartList);
-      const data = rows.map((row) => productController.toProductDto(row));
+      const data = await productController.mapProductDtos(rows);
 
       return res.json({
         success: true,

@@ -12,5 +12,8 @@ router.get(
   (req, res) => productController.getCategoriesWithProducts(req, res)
 );
 router.get('/:productId/options', (req, res) => productController.getProductOptions(req, res));
+router.get('/:productId/supply-products', (req, res) =>
+  productController.getSupplyProducts(req, res)
+);
 
 module.exports = router;

@@ -1,8 +1,14 @@
 const productRepository = require('../repositories/ProductRepository');
 const productOptionRepository = require('../option/repositories/ProductOptionRepository');
 const reviewRepository = require('../../../user/review/repositories/ReviewRepository');
+const shopDefaultRepository = require('../../../common/shopdefault/repositories/ShopDefaultRepository');
 
 class ProductController {
+  constructor() {
+    this._shopDefaultCache = null;
+    this._shopDefaultCacheAt = 0;
+  }
+
   categoryName(categoryId) {
     switch (String(categoryId)) {
       case '10':
@@ -35,6 +41,89 @@ class ProductController {
     return path.startsWith('/') ? path : `/${path}`;
   }
 
+  async getShopDefaultCached() {
+    const now = Date.now();
+    if (this._shopDefaultCache && now - this._shopDefaultCacheAt < 60_000) {
+      return this._shopDefaultCache;
+    }
+    this._shopDefaultCache = await shopDefaultRepository.findFirst();
+    this._shopDefaultCacheAt = now;
+    return this._shopDefaultCache;
+  }
+
+  _toInt(value, fallback = 0) {
+    const n = Number(value);
+    return Number.isFinite(n) ? Math.trunc(n) : fallback;
+  }
+
+  _formatWon(amount) {
+    return `${this._toInt(amount).toLocaleString('ko-KR')}원`;
+  }
+
+  /**
+   * 상세 제품정보 섹션용 배송비 문구
+   * it_sc_type: 0=쇼핑몰기본, 1=무료, 2=조건부무료, 3=유료
+   */
+  buildShippingFeeLabel(row, shopDefault) {
+    const type = this._toInt(row.it_sc_type, 0);
+    const price = this._toInt(row.it_sc_price, 0);
+    const minimum = this._toInt(row.it_sc_minimum, 0);
+
+    if (type === 1) return '무료배송';
+    if (type === 3) return '유료배송';
+    if (type === 2) {
+      if (minimum > 0) {
+        return `조건부 무료배송 (${this._formatWon(minimum)} 이상 무료)`;
+      }
+      if (price > 0) return `조건부 무료배송 (${this._formatWon(price)})`;
+      return '조건부 무료배송';
+    }
+
+    // type 0 — bomiora_shop_default
+    return this.buildDefaultShippingFeeLabel(shopDefault);
+  }
+
+  buildDefaultShippingFeeLabel(shopDefault) {
+    if (!shopDefault) return '';
+    const caseRaw = this.bufferToString(shopDefault.de_send_cost_case);
+    const caseStr = caseRaw != null ? String(caseRaw).trim() : '';
+
+    if (caseStr === '무료') return '무료배송';
+    if (caseStr === '착불') return '착불';
+
+    const limits = String(this.bufferToString(shopDefault.de_send_cost_limit) || '')
+      .split(';')
+      .map((s) => String(s).replace(/[^0-9]/g, ''))
+      .filter(Boolean)
+      .map((s) => Number(s));
+    const fees = String(this.bufferToString(shopDefault.de_send_cost_list) || '')
+      .split(';')
+      .map((s) => String(s).replace(/[^0-9]/g, ''))
+      .filter(Boolean)
+      .map((s) => Number(s));
+
+    // 금액별차등: 기본 배송비 + (마지막 상한가 이상 무료)
+    if (caseStr === '차등' || limits.length > 0 || fees.length > 0) {
+      const freeThreshold = limits.length ? limits[limits.length - 1] : 0;
+      const baseFee = fees.length ? fees[0] : 0;
+      if (freeThreshold > 0 && baseFee > 0) {
+        return `${this._formatWon(baseFee)} (${this._formatWon(freeThreshold)} 이상 무료)`;
+      }
+      if (freeThreshold > 0) {
+        return `조건부 무료배송 (${this._formatWon(freeThreshold)} 이상 무료)`;
+      }
+      if (baseFee > 0) return this._formatWon(baseFee);
+      return '금액별 차등 배송비';
+    }
+
+    return caseStr;
+  }
+
+  async mapProductDtos(rows) {
+    const shopDefault = await this.getShopDefaultCached();
+    return (rows || []).map((r) => this.toProductDto(r, shopDefault));
+  }
+
   buildFlutterImageUrl(folderPath, productId) {
     if (!folderPath) return null;
     let base = folderPath.trim();
@@ -62,7 +151,7 @@ class ProductController {
     return null;
   }
 
-  toProductDto(row) {
+  toProductDto(row, shopDefault = null) {
     // Buffer를 문자열로 변환
     const itIdStr = this.bufferToString(row.it_id);
     const itKindStr = this.bufferToString(row.it_kind);
@@ -97,12 +186,23 @@ class ProductController {
       itChangeContentRaw != null && String(itChangeContentRaw).trim() !== ''
         ? String(itChangeContentRaw).trim()
         : null;
+    const textOrNull = (raw) => {
+      const s = this.bufferToString(raw);
+      if (s == null) return null;
+      const t = String(s).trim();
+      return t !== '' ? t : null;
+    };
     const imageFields = {};
     for (let i = 1; i <= 9; i += 1) {
       const key = `it_img${i}`;
       const value = row[key];
       imageFields[key] = value != null && String(value).trim() !== '' ? String(value).trim() : null;
     }
+
+    const scType = this._toInt(row.it_sc_type, 0);
+    const scPrice = this._toInt(row.it_sc_price, 0);
+    const scMinimum = this._toInt(row.it_sc_minimum, 0);
+    const shippingFeeLabel = this.buildShippingFeeLabel(row, shopDefault);
     
     return {
       id: itIdStr,
@@ -115,6 +215,7 @@ class ProductController {
       it_baesong_content: itBaesongContentStr,
       it_shipping_process: itShippingProcessStr,
       it_change_content: itChangeContentStr,
+      shippingFeeLabel,
       price: row.it_price,
       originalPrice: row.it_cust_price,
       imageUrl: this.processImageUrl(row),
@@ -136,23 +237,54 @@ class ProductController {
         it_baesong_content: itBaesongContentStr,
         it_shipping_process: itShippingProcessStr,
         it_change_content: itChangeContentStr,
-        it_prescription: row.it_prescription,
-        it_takeway: row.it_takeway,
-        it_package: row.it_package,
-        it_weight: row.it_weight,
+        it_prescription: textOrNull(row.it_prescription),
+        it_takeway: textOrNull(row.it_takeway),
+        it_package: textOrNull(row.it_package),
+        it_maker: textOrNull(row.it_maker),
+        it_origin: textOrNull(row.it_origin),
+        it_brand: textOrNull(row.it_brand),
+        it_model: textOrNull(row.it_model),
+        it_option_subject: textOrNull(row.it_option_subject),
+        it_supply_subject: textOrNull(row.it_supply_subject),
+        it_supply_items: textOrNull(row.it_supply_items) || '',
+        it_depopt1_subject: textOrNull(row.it_depopt1_subject) || '',
+        it_depopt1_label: textOrNull(row.it_depopt1_label) || '',
+        it_depopt2_subject: textOrNull(row.it_depopt2_subject) || '',
+        it_depopt2_label: textOrNull(row.it_depopt2_label) || '',
+        it_weight: textOrNull(row.it_weight),
+        it_sc_type: scType,
+        it_sc_price: scPrice,
+        it_sc_minimum: scMinimum,
+        shippingFeeLabel,
         it_point: row.it_point,
         it_point_type: row.it_point_type,
-        it_option_subject: row.it_option_subject,
+        it_mb_inf: textOrNull(row.it_mb_inf) || '',
         ...imageFields
-      }
+      },
+      depOption1Subject: textOrNull(row.it_depopt1_subject) || '',
+      depOption1Label: textOrNull(row.it_depopt1_label) || '',
+      depOption2Subject: textOrNull(row.it_depopt2_subject) || '',
+      depOption2Label: textOrNull(row.it_depopt2_label) || '',
+      supplyItemIds: this.parseSupplyItemIds(row.it_supply_items, itIdStr),
+      it_supply_items: textOrNull(row.it_supply_items) || '',
     };
+  }
+
+  /** it_supply_items CSV → id 배열 (자기 자신 제외) */
+  parseSupplyItemIds(raw, selfId = '') {
+    const self = String(selfId || '').trim();
+    const csv = this.bufferToString(raw) || '';
+    return String(csv)
+      .split(',')
+      .map((s) => s.replace(/[^0-9]/g, '').trim())
+      .filter((id) => id && id !== self);
   }
 
   /**
    * 검색 결과용: payload 최소화 (긴 HTML 필드 제거)
    */
-  toProductSearchDto(row) {
-    const base = this.toProductDto(row);
+  toProductSearchDto(row, shopDefault = null) {
+    const base = this.toProductDto(row, shopDefault);
     return {
       id: base.id,
       name: base.name,
@@ -169,12 +301,19 @@ class ProductController {
       stock: base.stock,
       rating: base.rating,
       reviewCount: base.reviewCount,
-      // description 및 추가 HTML 필드는 제거
+      shippingFeeLabel: base.shippingFeeLabel,
+      depOption1Subject: base.depOption1Subject,
+      depOption1Label: base.depOption1Label,
+      depOption2Subject: base.depOption2Subject,
+      depOption2Label: base.depOption2Label,
+      supplyItemIds: base.supplyItemIds,
       additionalInfo: {
         it_id: base.id,
         it_kind: base.productKind,
         it_subject: base.it_subject,
         it_basic: base.it_basic,
+        shippingFeeLabel: base.shippingFeeLabel,
+        it_supply_items: base.it_supply_items,
       },
     };
   }
@@ -183,6 +322,7 @@ class ProductController {
     const id = String(row.io_id || '');
     const optionName = id.replace(/\d+.*/, '');
     const matched = id.match(/\d+/);
+    const ioType = Number(row.io_type);
     return {
       id,
       productId: row.it_id,
@@ -190,7 +330,8 @@ class ProductController {
       days: matched ? Number(matched[0]) : null,
       price: row.io_price,
       stock: row.io_stock_qty,
-      type: row.io_type
+      type: Number.isFinite(ioType) ? ioType : 0,
+      io_type: Number.isFinite(ioType) ? ioType : 0,
     };
   }
 
@@ -201,7 +342,7 @@ class ProductController {
       const page = Number(req.query.page || 1);
       const pageSize = Number(req.query.pageSize || 20);
       const rows = await productRepository.findByCategory(categoryId, itKind, page, pageSize);
-      const products = rows.map((r) => this.toProductDto(r));
+      const products = await this.mapProductDtos(rows);
 
       return res.json({
         success: true,
@@ -239,7 +380,8 @@ class ProductController {
       console.log('  - it_kind (원본):', row.it_kind);
       console.log('  - it_kind (문자열):', itKindStr);
       
-      return res.json({ success: true, data: this.toProductDto(row) });
+      const shopDefault = await this.getShopDefaultCached();
+      return res.json({ success: true, data: this.toProductDto(row, shopDefault) });
     } catch (error) {
       return res.status(500).json({ success: false, message: `상품 상세 조회 실패: ${error.message}` });
     }
@@ -249,7 +391,7 @@ class ProductController {
     try {
       const limit = Number(req.query.limit || 10);
       const rows = await productRepository.findBestProducts(limit);
-      return res.json({ success: true, data: rows.map((r) => this.toProductDto(r)) });
+      return res.json({ success: true, data: await this.mapProductDtos(rows) });
     } catch (error) {
       return res.status(500).json({ success: false, message: `인기 상품 조회 실패: ${error.message}`, data: [] });
     }
@@ -259,7 +401,7 @@ class ProductController {
     try {
       const limit = Number(req.query.limit || 10);
       const rows = await productRepository.findNewProducts(limit);
-      return res.json({ success: true, data: rows.map((r) => this.toProductDto(r)) });
+      return res.json({ success: true, data: await this.mapProductDtos(rows) });
     } catch (error) {
       return res.status(500).json({ success: false, message: `신상품 조회 실패: ${error.message}`, data: [] });
     }
@@ -299,7 +441,7 @@ class ProductController {
       const limit = Number(req.query.limit || 4);
       const itKind = req.query.it_kind || null;
       const rows = await productRepository.findMdPickProducts(limit, itKind);
-      return res.json({ success: true, data: rows.map((r) => this.toProductDto(r)) });
+      return res.json({ success: true, data: await this.mapProductDtos(rows) });
     } catch (error) {
       return res.status(500).json({
         success: false,
@@ -311,14 +453,84 @@ class ProductController {
 
   async getProductOptions(req, res) {
     try {
-      const rows = await productOptionRepository.findByProductId(req.params.productId);
+      const ioType =
+        req.query.io_type != null ? req.query.io_type : req.query.type;
+      const rows = await productOptionRepository.findByProductId(
+        req.params.productId,
+        ioType
+      );
       return res.json({
         success: true,
         data: rows.map((r) => this.toOptionDto(r)),
-        message: '옵션 목록 조회 성공'
+        message: '옵션 목록 조회 성공',
       });
     } catch (error) {
-      return res.status(500).json({ success: false, message: `옵션 목록 조회 실패: ${error.message}` });
+      return res.status(500).json({
+        success: false,
+        message: `옵션 목록 조회 실패: ${error.message}`,
+      });
+    }
+  }
+
+  /** GET /api/products/:productId/supply-products — 연결상품 요약 목록 */
+  async getSupplyProducts(req, res) {
+    try {
+      const productId = String(req.params.productId || '').trim();
+      const parent = await productRepository.findById(productId);
+      if (!parent) {
+        return res.status(404).json({
+          success: false,
+          message: '상품을 찾을 수 없습니다.',
+          data: [],
+        });
+      }
+
+      const ids = this.parseSupplyItemIds(parent.it_supply_items, productId);
+      if (!ids.length) {
+        return res.json({ success: true, data: [], message: '연결상품 없음' });
+      }
+
+      const rows = await productRepository.findByIds(ids);
+      const shopDefault = await this.getShopDefaultCached();
+      const data = rows
+        .filter((r) => {
+          const inf = this.bufferToString(r.it_mb_inf);
+          return !(inf != null && String(inf).trim() !== '');
+        })
+        .map((r) => {
+          const dto = this.toProductDto(r, shopDefault);
+          const optionSubject =
+            (dto.additionalInfo && dto.additionalInfo.it_option_subject) ||
+            this.bufferToString(r.it_option_subject) ||
+            '';
+          return {
+            id: dto.id,
+            name: dto.name,
+            price: dto.price,
+            originalPrice: dto.originalPrice,
+            imageUrl: dto.imageUrl,
+            it_subject: dto.it_subject,
+            productKind: dto.productKind,
+            stock: dto.stock,
+            it_option_subject: optionSubject,
+            additionalInfo: {
+              ...(dto.additionalInfo || {}),
+              it_option_subject: optionSubject,
+            },
+          };
+        });
+
+      return res.json({
+        success: true,
+        data,
+        message: '연결상품 목록 조회 성공',
+      });
+    } catch (error) {
+      return res.status(500).json({
+        success: false,
+        message: `연결상품 조회 실패: ${error.message}`,
+        data: [],
+      });
     }
   }
 }
