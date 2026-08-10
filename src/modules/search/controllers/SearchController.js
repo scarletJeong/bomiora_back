@@ -45,8 +45,13 @@ class SearchController {
       ]);
 
       // 검색 응답은 payload 최소화
-      const rxItemsSlim = rxRows.map((r) => productController.toProductSearchDto(r));
-      const storeItemsSlim = storeRows.map((r) => productController.toProductSearchDto(r));
+      const shopDefault = await productController.getShopDefaultCached();
+      const rxItemsSlim = rxRows.map((r) =>
+        productController.toProductSearchDto(r, shopDefault)
+      );
+      const storeItemsSlim = storeRows.map((r) =>
+        productController.toProductSearchDto(r, shopDefault)
+      );
       const contentItems = contentResult.rows.map((r) => contentController.toMap(r));
 
       return res.json({
