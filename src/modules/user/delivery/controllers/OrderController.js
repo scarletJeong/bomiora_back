@@ -60,12 +60,42 @@ class OrderController {
     return `${y}-${m}-${d}`;
   }
 
-  getDisplayStatus(odStatus, deliveryCompleted, adminCompleted, autoConfirmAt) {
+  /** 라인아이템 상품유형 (`prescription` | `general` | '') — ct_kind 우선 */
+  getItemProductKind(item) {
+    const ck = String(item?.ctKind || item?.ct_kind || '').toLowerCase().trim();
+    if (ck === 'prescription' || ck === 'general') return ck;
+    const ik = String(item?.itKind || item?.it_kind || '').toLowerCase().trim();
+    if (ik === 'prescription' || ik === 'general') return ik;
+    return '';
+  }
+
+  /**
+   * 주문 비대면 여부.
+   * kind가 있으면 우선. 전부 비어 있을 때만 health_profiles_cart 플래그 사용.
+   */
+  resolveIsPrescriptionOrder(items = [], healthProfileFlag = false) {
+    const list = Array.isArray(items) ? items : [];
+    if (list.length === 0) return healthProfileFlag === true;
+    const mains = list.filter((i) => !String(i?.parent || i?.parent_it_id || '').trim());
+    const check = mains.length > 0 ? mains : list;
+    const kinds = check.map((i) => this.getItemProductKind(i));
+    if (kinds.some((k) => k === 'prescription')) return true;
+    if (kinds.some((k) => k === 'general')) return false;
+    return healthProfileFlag === true;
+  }
+
+  getDisplayStatus(odStatus, deliveryCompleted, adminCompleted, autoConfirmAt, isConsultationDone = false) {
+    const status = this.bufferToString(odStatus || '').trim();
     if (Number(deliveryCompleted || 0) === 1) return '배송완료';
     if (Number(adminCompleted || 0) === 1 && autoConfirmAt && new Date(autoConfirmAt) < new Date()) return '배송완료';
-    if (Number(adminCompleted || 0) === 1 && (odStatus === '배송' || odStatus === '완료')) return '배송중';
+    if (Number(adminCompleted || 0) === 1 && (status === '배송' || status === '완료')) return '배송중';
 
-    switch (odStatus) {
+    // 처방 완료 후·배송 전 → 상담완료
+    if (isConsultationDone && (status === '입금' || status === '준비')) {
+      return '상담완료';
+    }
+
+    switch (status) {
       case '주문':
         return '결제대기중';
       case '입금':
@@ -79,7 +109,7 @@ class OrderController {
       case '반품':
         return '취소/반품';
       default:
-        return odStatus;
+        return status;
     }
   }
 
@@ -193,6 +223,18 @@ class OrderController {
     const itKind = this.bufferToString(cart.it_kind);
     const ctOption = this.bufferToString(cart.ct_option);
     const ctStatus = this.bufferToString(cart.ct_status);
+    const ioId = this.bufferToString(cart.io_id) || '';
+    const ctKindRaw = this.bufferToString(cart.ct_kind) || '';
+    let parent = String(this.bufferToString(cart.parent) || '').trim();
+    if (!parent && ctKindRaw.toLowerCase().startsWith('supply_add|')) {
+      parent = ctKindRaw.slice('supply_add|'.length).trim();
+    }
+    const ctKind = ctKindRaw.toLowerCase().startsWith('supply_add|')
+      ? (String(itKind || '').toLowerCase() === 'prescription'
+          ? 'prescription'
+          : 'general')
+      : ctKindRaw;
+    const ioType = this.toInt(cart.io_type);
     return {
       ctId: cart.ct_id,
       itId,
@@ -203,33 +245,118 @@ class OrderController {
       ctQty,
       ctPrice,
       ioPrice,
+      ioId,
+      io_id: ioId,
+      ctKind,
+      ct_kind: ctKind,
+      parent,
+      parent_it_id: parent || null,
+      ioType,
+      io_type: ioType,
       totalPrice: (ctPrice + ioPrice) * ctQty,
       ctStatus,
       imageUrl: imageUrlMap[itId] || ''
     };
   }
 
+  extractCancelDate(...texts) {
+    for (const text of texts) {
+      const src = this.bufferToString(text || '') || '';
+      if (!src) continue;
+      // 취소 관련 줄의 시각 우선
+      const lines = src.split(/\r?\n/);
+      for (const line of lines) {
+        if (
+          line.includes('시스템 자동 취소') ||
+          line.includes('주문자 본인 직접 취소') ||
+          line.includes('고객 직접 취소') ||
+          line.includes('주문취소 처리') ||
+          /주문\s*취소\s*처리/.test(line) ||
+          line.includes('입금기한')
+        ) {
+          const m = line.match(/(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})/);
+          if (m) return m[1];
+        }
+      }
+      const any = src.match(/(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})/);
+      if (any) return any[1];
+    }
+    return null;
+  }
+
   parseCancelInfo(detail, odShopMemo, odModHistory) {
-    if (odShopMemo && odShopMemo.includes('주문자 본인 직접 취소')) {
-      detail.cancelType = '고객직접';
-      if (odShopMemo.includes('취소이유')) {
-        const reason = odShopMemo.split('취소이유')[1].replace(':', '').replace(')', '').trim();
-        detail.cancelReason = reason;
-      }
-      return;
-    }
-    if (odShopMemo && odShopMemo.includes('시스템 자동 취소')) {
+    const memo = this.bufferToString(odShopMemo || '') || '';
+    const modHistory = this.bufferToString(odModHistory || '') || '';
+    const memoTrim = memo.trim();
+    const modTrim = modHistory.trim();
+
+    // 1) 시스템 자동 취소 → 입금기한만료 (od_shop_memo 기준)
+    if (
+      memoTrim.includes('시스템 자동 취소') ||
+      memoTrim.includes('가상계좌 입금기한') ||
+      (memoTrim.includes('입금기한') && memoTrim.includes('초과'))
+    ) {
       detail.cancelType = '시스템자동';
-      if (odShopMemo.includes('취소이유')) {
-        const reason = odShopMemo.split('취소이유')[1].replace(':', '').replace(')', '').trim();
-        detail.cancelReason = reason;
-      }
+      detail.cancelReasonLabel = '입금기한만료';
+      detail.cancelReason = '가상계좌 입금기한 초과';
+      detail.cancelDate = this.extractCancelDate(memo, modHistory);
       return;
     }
-    if (odModHistory && odModHistory.includes('주문취소 처리')) {
-      detail.cancelType = '관리자';
-      detail.cancelReason = '관리자가 주문을 취소했습니다.';
+
+    // 2) 고객 직접 취소 → 고객요청 (od_shop_memo 기준)
+    if (
+      memoTrim.includes('주문자 본인 직접 취소') ||
+      memoTrim.includes('고객 직접 취소') ||
+      memoTrim.includes('고객직접취소') ||
+      memoTrim.includes('USER_ORDER_CANCEL')
+    ) {
+      detail.cancelType = '고객직접';
+      detail.cancelReasonLabel = '고객요청';
+      detail.cancelReason = '고객직접취소';
+      detail.cancelDate = this.extractCancelDate(memo, modHistory);
+      return;
     }
+
+    // 3) od_shop_memo에 취소사유 없고 od_mod_history에 관리자 취소 흔적
+    //    예: "2026-07-30 11:00:03 skcompany 주문취소 처리"
+    const memoHasCancelReason =
+      memoTrim.includes('시스템 자동') ||
+      memoTrim.includes('본인 직접') ||
+      memoTrim.includes('고객직접') ||
+      memoTrim.includes('입금기한') ||
+      memoTrim.includes('USER_ORDER_CANCEL');
+    const modHasAdminCancel =
+      /주문\s*취소\s*처리/.test(modTrim) ||
+      modTrim.includes('주문취소 처리') ||
+      modTrim.includes('주문취소처리') ||
+      (modTrim.includes('취소') &&
+        /\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}/.test(modTrim));
+
+    if (!memoHasCancelReason && modTrim && modHasAdminCancel) {
+      detail.cancelType = '관리자';
+      detail.cancelReasonLabel = '고객요청(관리자)';
+      detail.cancelReason = '관리자 주문취소 처리';
+      detail.cancelDate = this.extractCancelDate(modHistory, memo);
+      return;
+    }
+
+    // 4) 그 외 → 기타
+    detail.cancelType = '기타';
+    detail.cancelReasonLabel = '기타';
+    detail.cancelReason = '기타';
+    detail.cancelDate = this.extractCancelDate(memo, modHistory);
+  }
+
+  /** 주문 취소 메모 한 줄 (parseCancelInfo가 고객 요청으로 인식) */
+  buildCustomerCancelMemo(existingMemo = '') {
+    const now = new Date();
+    const pad = (n) => String(n).padStart(2, '0');
+    const stamp =
+      `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ` +
+      `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+    const line = `(${stamp}) 주문자 본인 직접 취소`;
+    const prev = this.bufferToString(existingMemo || '').trim();
+    return prev ? `${prev}\n${line}` : line;
   }
 
   async getOrderList(req, res) {
@@ -257,20 +384,36 @@ class OrderController {
       imageRows.forEach((row) => {
         if (row.it_img1) imageUrlMap[row.it_id] = row.it_img1;
       });
-      const prescriptionFlags = await orderRepository.getPrescriptionFlagsByOdIds(mbId, odIds);
+      const healthFlags = await orderRepository.getHealthProfileFlagsByOdIds(mbId, odIds);
 
       const orders = rows.map((row) => {
         const odId = this.toOdId(row.od_id);
         const items = (cartsByOrder[odId] || []).map((c) => this.toOrderItem(c, imageUrlMap));
+        const flags = healthFlags[odId] || {};
+        // 상품 kind(ct_kind/it_kind) 우선 — health_profiles_cart 잔존만으로 비대면 분류하지 않음
+        const isPrescriptionOrder = this.resolveIsPrescriptionOrder(
+          items,
+          flags.isPrescriptionOrder === true
+        );
+        const isConsultationDone =
+          isPrescriptionOrder && flags.isConsultationDone === true;
         return {
           odId,
           orderDate: this.formatDate(row.od_time, false),
           orderDateTime: this.formatDate(row.od_time, true),
-          displayStatus: this.getDisplayStatus(row.od_status, row.delivery_completed, row.admin_completed, row.auto_confirm_at),
+          displayStatus: this.getDisplayStatus(
+            row.od_status,
+            row.delivery_completed,
+            row.admin_completed,
+            row.auto_confirm_at,
+            isConsultationDone
+          ),
           odStatus: row.od_status,
           totalPrice: this.computeOrderTotal(row),
           odCartCount: this.toInt(row.od_cart_count),
-          isPrescriptionOrder: prescriptionFlags[odId] === true,
+          isPrescriptionOrder,
+          isConsultationDone,
+          canConfirmReceipt: this.canConfirmReceipt(row.od_status, row.delivery_completed),
           items,
           firstProductName: items[0]?.itName || null,
           firstProductOption: items[0]?.ctOption || null,
@@ -318,16 +461,28 @@ class OrderController {
       const products = carts.map((c) => this.toOrderItem(c, imageUrlMap));
       const settleCase = this.bufferToString(row.od_settle_case) || '';
       const bankAccount = this.bufferToString(row.od_bank_account) || '';
+      const depositName = this.bufferToString(row.od_deposit_name || '').trim() || null;
       const odTno = this.bufferToString(row.od_tno || '').trim() || null;
       const odAppNo = this.bufferToString(row.od_app_no || '').trim() || null;
       const couponDiscount =
         this.toInt(row.od_cart_coupon) + this.toInt(row.od_send_coupon) + this.toInt(row.od_coupon);
       const pointDiscount = this.toInt(row.od_receipt_point);
 
+      const healthProfileOrder = await orderRepository.isPrescriptionOrder(mbId, odId);
+      const isPrescriptionOrder = this.resolveIsPrescriptionOrder(products, healthProfileOrder);
+      const isConsultationDone =
+        isPrescriptionOrder && (await orderRepository.isConsultationDone(mbId, odId));
+
       const detail = {
         odId: String(row.od_id),
         orderDate: this.formatDate(row.od_time, true),
-        displayStatus: this.getDisplayStatus(row.od_status, row.delivery_completed, row.admin_completed, row.auto_confirm_at),
+        displayStatus: this.getDisplayStatus(
+          row.od_status,
+          row.delivery_completed,
+          row.admin_completed,
+          row.auto_confirm_at,
+          isConsultationDone
+        ),
         odStatus: row.od_status,
         recipientName: row.od_name,
         recipientPhone: row.od_hp,
@@ -343,7 +498,10 @@ class OrderController {
         couponDiscount,
         pointDiscount,
         totalPrice: this.computeOrderTotal(row),
-        isPrescriptionOrder: false,
+        cancelPrice: this.toInt(row.od_cancel_price),
+        isPrescriptionOrder,
+        isConsultationDone,
+        canConfirmReceipt: this.canConfirmReceipt(row.od_status, row.delivery_completed),
         paymentMethod: settleCase || ((this.toInt(row.od_misu) > 0 && bankAccount.includes('/')) ? '가상계좌' : ''),
         paymentMethodDetail: null,
         odTno,
@@ -351,11 +509,15 @@ class OrderController {
         odAppNo,
         od_app_no: odAppNo,
         odBankAccount: bankAccount || null,
+        odDepositName: depositName,
+        od_deposit_name: depositName,
         ordererName: row.od_b_name,
         ordererPhone: row.od_b_hp,
         ordererEmail: row.od_email,
         cancelReason: null,
         cancelType: null,
+        cancelDate: null,
+        cancelReasonLabel: null,
         reservationDate: null,
         reservationTime: null,
         reservationEndTime: null
@@ -370,7 +532,8 @@ class OrderController {
         else if (bankAccount !== '0') detail.paymentMethodDetail = ` (${bankAccount})`;
       }
 
-      if (row.od_status === '취소' || row.od_status === '반품') {
+      const odStatusText = (this.bufferToString(row.od_status) || '').trim();
+      if (odStatusText === '취소' || odStatusText === '반품') {
         this.parseCancelInfo(detail, row.od_shop_memo, row.od_mod_history);
       }
 
@@ -390,8 +553,6 @@ class OrderController {
         detail.reservationTime = stime;
         detail.reservationEndTime = etime;
       }
-      detail.isPrescriptionOrder = await orderRepository.isPrescriptionOrder(mbId, odId);
-
       const cardReceiptUrl = this.buildKcpCardReceiptUrl(row);
       if (cardReceiptUrl) {
         detail.cardReceiptUrl = cardReceiptUrl;
@@ -452,9 +613,11 @@ class OrderController {
         }
       }
 
+      const cancelMemo = this.buildCustomerCancelMemo(order.od_shop_memo);
       await orderRepository.updateOrder(odId, {
         od_status: '취소',
-        status_changed_at: new Date()
+        status_changed_at: new Date(),
+        od_shop_memo: cancelMemo,
       });
       return res.json({ success: true, message: '주문이 취소되었습니다.' });
     } catch (error) {
@@ -465,29 +628,91 @@ class OrderController {
   async confirmPurchase(req, res) {
     try {
       const odId = this.toOdId(req.params.odId);
-      if (!odId) return res.status(400).json({ error: '주문번호가 필요합니다.' });
-      const mbId = req.body.mbId;
-      if (!mbId || !String(mbId).trim()) return res.status(400).json({ error: '회원 ID가 필요합니다.' });
+      if (!odId) return res.status(400).json({ error: '주문번호가 필요합니다.', message: '주문번호가 필요합니다.' });
+
+      const mbIdRaw = req.body?.mbId ?? req.body?.mb_id;
+      const mbId = mbIdRaw != null ? String(mbIdRaw).trim() : '';
+      if (!mbId) {
+        return res.status(400).json({ error: '회원 ID가 필요합니다.', message: '회원 ID가 필요합니다.' });
+      }
+
+      // 토큰 회원이 있으면 body mbId와 반드시 일치
+      const tokenMbId = this.bufferToString(
+        req.user?.mb_id || req.user?.mbId || req.auth?.mb_id || req.auth?.mbId || ''
+      )?.trim();
+      if (tokenMbId && tokenMbId !== mbId) {
+        return res.status(403).json({ error: '권한이 없습니다.', message: '권한이 없습니다.' });
+      }
 
       const order = await orderRepository.findById(odId);
-      if (!order) throw new Error('주문을 찾을 수 없습니다.');
-      if (order.mb_id !== mbId) throw new Error('주문 정보가 일치하지 않습니다.');
-      if (!['배송', '완료'].includes(order.od_status)) throw new Error('구매 확정할 수 없는 상태입니다.');
-      if (this.toInt(order.delivery_completed) === 1) throw new Error('이미 구매가 확정된 주문입니다.');
+      if (!order) {
+        return res.status(404).json({ error: '주문을 찾을 수 없습니다.', message: '주문을 찾을 수 없습니다.' });
+      }
 
-      await orderRepository.updateOrder(odId, {
-        delivery_completed: 1,
-        delivery_completed_at: new Date(),
-        od_status: '완료'
+      const orderMbId = this.bufferToString(order.mb_id || '').trim();
+      if (orderMbId !== mbId) {
+        return res.status(403).json({ error: '권한이 없습니다.', message: '권한이 없습니다.' });
+      }
+
+      const clientIp =
+        (req.headers['x-forwarded-for'] && String(req.headers['x-forwarded-for']).split(',')[0].trim()) ||
+        req.ip ||
+        '';
+
+      const result = await orderRepository.confirmOrderReceipt(odId, mbId, {
+        actorId: mbId,
+        clientIp,
       });
-      return res.json({ success: true, message: '구매가 확정되었습니다.' });
+
+      if (result.auto) {
+        // 웹: alert 후 중단 — 앱은 상태 갱신을 위해 200 + 안내 메시지
+        return res.json({
+          success: true,
+          message: '수령 확인 기한이 지나 자동으로 수령 완료 처리되었습니다.',
+          odId: String(odId),
+          odStatus: '완료',
+          deliveryCompleted: 1,
+          displayStatus: '배송완료',
+          autoConfirmed: true,
+        });
+      }
+
+      return res.json({
+        success: true,
+        message: '수령 확인되었습니다.',
+        odId: String(odId),
+        odStatus: '완료',
+        deliveryCompleted: 1,
+        displayStatus: '배송완료',
+        autoConfirmed: false,
+      });
     } catch (error) {
-      return res.status(400).json({ error: error.message });
+      const status = Number(error.statusCode) || 400;
+      const message = error.message || '수령확인에 실패했습니다.';
+      return res.status(status).json({ error: message, message });
     }
   }
 
   async processAutoConfirm(req, res) {
-    return res.json({ success: true, message: '자동 확정 처리가 완료되었습니다.' });
+    try {
+      const limit = Number(req.body?.limit || req.query?.limit || 100);
+      const result = await orderRepository.processDueAutoConfirms(limit);
+      return res.json({
+        success: true,
+        message: '자동 확정 처리가 완료되었습니다.',
+        processed: result.processed,
+        failed: result.failed,
+        odIds: result.odIds,
+      });
+    } catch (error) {
+      return res.status(400).json({ error: error.message, message: error.message });
+    }
+  }
+
+  canConfirmReceipt(odStatus, deliveryCompleted) {
+    if (Number(deliveryCompleted || 0) === 1) return false;
+    const status = String(odStatus || '').trim();
+    return status === '배송' || status === '완료';
   }
 
   async changeReservationTime(req, res) {
@@ -508,7 +733,7 @@ class OrderController {
       if (!['주문', '입금', '준비'].includes(odStatus)) {
         throw new Error('예약 시간은 결제 완료·배송준비 단계에서만 변경할 수 있습니다.');
       }
-      if (await orderRepository.isPrescriptionOrder(mbId, odId)) {
+      if (await orderRepository.isConsultationDone(mbId, odId)) {
         throw new Error('처방 주문은 예약 시간 변경이 불가능합니다.');
       }
 
@@ -560,7 +785,7 @@ class OrderController {
       if (!['주문', '입금', '준비'].includes(odStatus)) {
         throw new Error('배송지는 결제대기/배송준비 상태에서만 변경할 수 있습니다.');
       }
-      if (await orderRepository.isPrescriptionOrder(mbId, odId)) {
+      if (await orderRepository.isConsultationDone(mbId, odId)) {
         throw new Error('처방 주문은 배송지 변경이 불가능합니다.');
       }
 

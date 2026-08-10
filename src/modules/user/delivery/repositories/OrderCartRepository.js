@@ -5,7 +5,15 @@ class OrderCartRepository {
     const [rows] = await pool.query(
       `SELECT c.*,
               i.it_kind AS it_kind,
-              COALESCE(i.it_name, i.it_subject, c.it_name) AS item_name
+              COALESCE(
+                NULLIF(TRIM(CAST(c.it_subject AS CHAR)), ''),
+                i.it_subject
+              ) AS it_subject,
+              COALESCE(
+                NULLIF(TRIM(CAST(i.it_name AS CHAR)), ''),
+                NULLIF(TRIM(CAST(c.it_name AS CHAR)), ''),
+                i.it_subject
+              ) AS item_name
        FROM bomiora_shop_cart c
        LEFT JOIN bomiora_shop_item_new i ON i.it_id = c.it_id
        WHERE c.od_id = ? AND c.mb_id = ?
@@ -21,7 +29,15 @@ class OrderCartRepository {
     const [rows] = await pool.query(
       `SELECT c.*,
               i.it_kind AS it_kind,
-              COALESCE(i.it_name, i.it_subject, c.it_name) AS item_name
+              COALESCE(
+                NULLIF(TRIM(CAST(c.it_subject AS CHAR)), ''),
+                i.it_subject
+              ) AS it_subject,
+              COALESCE(
+                NULLIF(TRIM(CAST(i.it_name AS CHAR)), ''),
+                NULLIF(TRIM(CAST(c.it_name AS CHAR)), ''),
+                i.it_subject
+              ) AS item_name
        FROM bomiora_shop_cart c
        LEFT JOIN bomiora_shop_item_new i ON i.it_id = c.it_id
        WHERE c.od_id IN (${placeholders})
