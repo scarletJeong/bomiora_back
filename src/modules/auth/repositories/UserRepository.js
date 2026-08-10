@@ -302,6 +302,16 @@ class UserRepository {
 
       await conn.commit();
 
+      // 회원가입 축하 포인트 푸시
+      try {
+        const { notifyPointEarned } = require('../../user/notification/services/MemberNotifyService');
+        notifyPointEarned(mbId, initialPoint).catch((e) => {
+          console.error('[UserRepository] 회원가입 포인트 푸시 실패:', e?.message || e);
+        });
+      } catch (e) {
+        console.warn('[UserRepository] 포인트 푸시 모듈 로드 스킵:', e?.message || e);
+      }
+
       // 생성된 사용자 조회
       const [rows] = await conn.query(
         'SELECT * FROM bomiora_member WHERE mb_no = ?',
