@@ -199,7 +199,8 @@ class ReviewController {
     const productImage = this._firstShopItemImage(row);
 
     const rvkind = this.trimSqlText(row.is_rvkind) || row.is_rvkind || 'general';
-    const isGeneral = String(rvkind || '').toLowerCase() === 'general';
+    // is_rvkind=general 은 "비서포터 리뷰"이지 "일반상품 리뷰"가 아님
+    const isGeneralProduct = this._reviewUiHintFromItKind(itKind) === 'general_card';
 
     let positive = this.normalizeSqlUtf8(row.is_positive_review_text);
     let negative = this.normalizeSqlUtf8(row.is_negative_review_text);
@@ -208,8 +209,8 @@ class ReviewController {
     negative = negative != null && String(negative).trim() !== '' ? String(negative).trim() : null;
     more = more != null && String(more).trim() !== '' ? String(more).trim() : null;
 
-    // 일반 리뷰: 단일 본문만 내려줌 (positive 우선, 예전 more 전용 저장은 positive로 합침)
-    if (isGeneral) {
+    // 일반 상품 리뷰만 단일 본문 (아쉬운점/꿀팁 미노출)
+    if (isGeneralProduct) {
       if (!positive && more) positive = more;
       negative = null;
       more = null;
@@ -217,12 +218,12 @@ class ReviewController {
 
     return {
       isId: row.is_id,
-      itId: row.it_id,
-      itName: row.it_name,
+      itId: this.trimSqlText(row.it_id) || String(row.it_id ?? ''),
+      itName: this.normalizeSqlUtf8(row.it_name),
       itKind,
       productImage,
-      mbId: row.mb_id,
-      isName: row.is_name,
+      mbId: this.trimSqlText(row.mb_id) || String(row.mb_id ?? ''),
+      isName: this.normalizeSqlUtf8(row.is_name),
       isTime: row.is_time,
       isConfirm: row.is_confirm,
       isScore1: row.is_score1,
@@ -244,7 +245,7 @@ class ReviewController {
       isHeight: row.is_height,
       isPayMthod: row.is_pay_mthod,
       isOutageNum: row.is_outage_num,
-      odId: row.od_id
+      odId: row.od_id != null ? String(row.od_id) : null
     };
   }
 
@@ -283,10 +284,33 @@ class ReviewController {
 
   async createReview(req, res) {
     try {
-      if (req.body.odId != null) {
-        const exists = await reviewRepository.existsByMbIdAndOdId(req.body.mbId, req.body.odId);
+      const mbId = req.body.mbId != null ? String(req.body.mbId).trim() : '';
+      const itId = req.body.itId != null ? String(req.body.itId).trim() : '';
+      const odIdRaw = req.body.odId ?? req.body.od_id;
+      const odId =
+        odIdRaw != null && String(odIdRaw).trim() !== ''
+          ? String(odIdRaw).trim()
+          : null;
+
+      if (!mbId) {
+        return res.json({ success: false, message: '회원 ID가 필요합니다.' });
+      }
+      if (!itId) {
+        return res.json({ success: false, message: '상품 ID가 필요합니다.' });
+      }
+
+      // 주문당 1개가 아니라 (주문+상품) 단위로 중복 체크 — 복수 상품 리뷰 허용
+      if (odId) {
+        const exists = await reviewRepository.existsByMbIdOdIdItId(
+          mbId,
+          odId,
+          itId
+        );
         if (exists) {
-          return res.json({ success: false, message: '이미 해당 주문에 대한 리뷰를 작성하셨습니다.' });
+          return res.json({
+            success: false,
+            message: '이미 해당 상품에 대한 리뷰를 작성하셨습니다.',
+          });
         }
       }
 
@@ -296,32 +320,57 @@ class ReviewController {
       const s2 = this._normalizeTenthScore(req.body.isScore2) ?? 0;
       const s3 = this._normalizeTenthScore(req.body.isScore3) ?? 0;
       const s4 = this._normalizeTenthScore(req.body.isScore4) ?? 0;
-      // 클라이언트가 totalIsScore 를내면 그대로 INSERT. null 이면 4항 평균으로 채움(세부점수는 그대로)
-      let total = this._normalizeTenthScore(req.body.totalIsScore);
-      if (total == null) {
+      const isPrescription =
+        String(req.body.isRvkind || '').toLowerCase() === 'prescription';
+      // 처방: 효과·가성비·향/맛·편리함 평균 → total_is_score (is_score1~4 는 그대로 저장)
+      // 일반: 클라이언트의 totalIsScore 사용 (없으면 4항 평균)
+      let total;
+      if (isPrescription) {
         total = this._avgFourScores(s1, s2, s3, s4);
+      } else {
+        total = this._normalizeTenthScore(req.body.totalIsScore);
+        if (total == null) {
+          total = this._avgFourScores(s1, s2, s3, s4);
+        }
       }
+
+      // DB is_score1~4 는 INT — 0.1 단위는 반올림해 저장 (기존 데이터와 동일)
+      const scoreInt = (v) => {
+        const n = Number(v);
+        if (!Number.isFinite(n) || n <= 0) return 0;
+        return Math.min(5, Math.max(0, Math.round(n)));
+      };
+
       const saved = await reviewRepository.create({
-        mb_id: req.body.mbId,
-        od_id: req.body.odId ?? null,
-        it_id: req.body.itId,
-        is_name: req.body.isName,
+        mb_id: mbId,
+        od_id: odId,
+        it_id: itId,
+        is_name: req.body.isName || mbId,
         is_confirm: 0,
-        is_score1: s1,
-        is_score2: s2,
-        is_score3: s3,
-        is_score4: s4,
+        is_score1: scoreInt(s1),
+        is_score2: scoreInt(s2),
+        is_score3: scoreInt(s3),
+        is_score4: scoreInt(s4),
         total_is_score: total,
         is_rvkind: req.body.isRvkind || 'general',
         is_recommend: req.body.isRecommend || 'y',
         is_good: 0,
-        is_positive_review_text: req.body.isPositiveReviewText || null,
-        is_negative_review_text: req.body.isNegativeReviewText || null,
+        is_positive_review_text:
+          req.body.isPositiveReviewText != null &&
+          String(req.body.isPositiveReviewText).trim() !== ''
+            ? String(req.body.isPositiveReviewText).trim()
+            : '',
+        // DB NOT NULL — 일반 리뷰는 아쉬운점/꿀팁이 없어도 빈 문자열로 저장
+        is_negative_review_text:
+          req.body.isNegativeReviewText != null &&
+          String(req.body.isNegativeReviewText).trim() !== ''
+            ? String(req.body.isNegativeReviewText).trim()
+            : '',
         is_more_review_text:
           req.body.isMoreReviewText != null &&
           String(req.body.isMoreReviewText).trim() !== ''
             ? String(req.body.isMoreReviewText).trim()
-            : null,
+            : '',
         is_img1: imageOrEmpty(0),
         is_img2: imageOrEmpty(1),
         is_img3: imageOrEmpty(2),
@@ -339,7 +388,15 @@ class ReviewController {
         is_outage_num: req.body.isOutageNum || null
       });
 
-      await reviewRepository.syncAggregatesForReviewItId(req.body.itId);
+      // 집계 갱신 실패해도 리뷰 등록 자체는 성공 처리
+      try {
+        await reviewRepository.syncAggregatesForReviewItId(itId);
+      } catch (aggErr) {
+        console.error('[ReviewController.createReview] aggregate sync failed', {
+          itId,
+          message: aggErr?.message,
+        });
+      }
 
       return res.json({
         success: true,
@@ -347,7 +404,11 @@ class ReviewController {
         review: this.toReviewResponse(saved)
       });
     } catch (error) {
-      return res.json({ success: false, message: `리뷰 작성 중 오류가 발생했습니다: ${error.message}` });
+      console.error('[ReviewController.createReview]', error);
+      return res.json({
+        success: false,
+        message: `리뷰 작성 중 오류가 발생했습니다: ${error.message}`,
+      });
     }
   }
 
@@ -603,12 +664,11 @@ class ReviewController {
 
       const images = req.body.images != null ? this._normalizeReviewImages(req.body.images) : null;
       const fields = {};
-      const isGeneral =
-        String(this.trimSqlText(row.is_rvkind) || row.is_rvkind || '')
-          .toLowerCase() === 'general';
+      // 일반 상품 리뷰만 세부점수(is_score1~4) 미갱신. is_rvkind(서포터/일반)와 무관
+      const productKindHint = this._reviewUiHintFromItKind(row.it_kind);
+      const isGeneralProduct = productKindHint === 'general_card';
 
-      // 일반 리뷰: is_score1~4 는 절대 덮지 않음. 처방 등만 세부 점수 갱신
-      if (!isGeneral) {
+      if (!isGeneralProduct) {
         if (req.body.isScore1 != null) {
           fields.is_score1 = this._normalizeTenthScore(req.body.isScore1) ?? 0;
         }
@@ -621,24 +681,30 @@ class ReviewController {
         if (req.body.isScore4 != null) {
           fields.is_score4 = this._normalizeTenthScore(req.body.isScore4) ?? 0;
         }
-      }
-
-      // total_is_score: 클라이언트가 주면 INSERT/UPDATE. 없고 DB가 null이면 4항 평균만 채움
-      if (req.body.totalIsScore !== undefined && req.body.totalIsScore !== null) {
-        fields.total_is_score = this._normalizeTenthScore(req.body.totalIsScore);
-      } else if (this._parseStoredTotal(row) == null) {
+        // 처방: 효과~편리함 평균 → total_is_score (is_score1~4 값은 유지·갱신만)
         const s1 = fields.is_score1 != null ? fields.is_score1 : row.is_score1;
         const s2 = fields.is_score2 != null ? fields.is_score2 : row.is_score2;
         const s3 = fields.is_score3 != null ? fields.is_score3 : row.is_score3;
         const s4 = fields.is_score4 != null ? fields.is_score4 : row.is_score4;
         fields.total_is_score = this._avgFourScores(s1, s2, s3, s4);
+      } else if (req.body.totalIsScore !== undefined && req.body.totalIsScore !== null) {
+        fields.total_is_score = this._normalizeTenthScore(req.body.totalIsScore);
+      } else if (this._parseStoredTotal(row) == null) {
+        fields.total_is_score = this._avgFourFromRow(row);
       }
-      if (req.body.isPositiveReviewText != null) fields.is_positive_review_text = req.body.isPositiveReviewText;
-      if (req.body.isNegativeReviewText != null) fields.is_negative_review_text = req.body.isNegativeReviewText;
+      if (req.body.isPositiveReviewText != null) {
+        fields.is_positive_review_text = String(req.body.isPositiveReviewText);
+      }
+      if (req.body.isNegativeReviewText != null) {
+        fields.is_negative_review_text = String(req.body.isNegativeReviewText);
+      } else if (isGeneralProduct) {
+        // 일반 리뷰 수정 시 null 로 덮지 않음 — NOT NULL 컬럼
+        fields.is_negative_review_text = row.is_negative_review_text ?? '';
+      }
       if (req.body.isMoreReviewText !== undefined) {
         const memo = req.body.isMoreReviewText;
         fields.is_more_review_text =
-          memo == null ? '' : String(memo).trim();
+          memo != null && String(memo).trim() !== '' ? String(memo).trim() : '';
       }
       if (req.body.isRecommend != null) fields.is_recommend = req.body.isRecommend;
       if (images) {
@@ -711,10 +777,69 @@ class ReviewController {
 
   async checkReviewExists(req, res) {
     try {
-      const exists = await reviewRepository.existsByMbIdAndOdId(req.query.mbId, Number(req.query.odId));
-      return res.json({ success: true, exists });
+      const mbId = String(req.query.mbId || '').trim();
+      const odId = String(req.query.odId || '').trim();
+      if (!mbId || !odId) {
+        return res.json({
+          success: false,
+          message: 'mbId, odId가 필요합니다.',
+          exists: false,
+          reviewedItIds: [],
+        });
+      }
+      const reviewedItIds = await reviewRepository.findReviewedItIdsByOdId(
+        mbId,
+        odId
+      );
+      return res.json({
+        success: true,
+        exists: reviewedItIds.length > 0,
+        reviewedItIds,
+      });
     } catch (error) {
-      return res.json({ success: false, message: `확인 중 오류가 발생했습니다: ${error.message}` });
+      return res.json({
+        success: false,
+        message: `확인 중 오류가 발생했습니다: ${error.message}`,
+        exists: false,
+        reviewedItIds: [],
+      });
+    }
+  }
+
+  /** 여러 주문의 리뷰 작성 완료 it_id 일괄 조회 */
+  async getReviewedItemsByOrders(req, res) {
+    try {
+      const mbId = String(req.query.mbId || req.body?.mbId || '').trim();
+      const raw =
+        req.query.odIds ||
+        req.body?.odIds ||
+        req.query.odId ||
+        req.body?.odId ||
+        '';
+      const odIds = Array.isArray(raw)
+        ? raw.map((x) => String(x).trim()).filter(Boolean)
+        : String(raw)
+            .split(',')
+            .map((x) => x.trim())
+            .filter(Boolean);
+      if (!mbId) {
+        return res.json({
+          success: false,
+          message: 'mbId가 필요합니다.',
+          byOrder: {},
+        });
+      }
+      const byOrder = await reviewRepository.findReviewedItIdsByOdIds(
+        mbId,
+        odIds
+      );
+      return res.json({ success: true, byOrder });
+    } catch (error) {
+      return res.json({
+        success: false,
+        message: `확인 중 오류가 발생했습니다: ${error.message}`,
+        byOrder: {},
+      });
     }
   }
 }

@@ -28,7 +28,63 @@ class ReviewRepository {
     return rows[0].count > 0;
   }
 
+  /** 주문+상품 단위 중복 (한 주문에 여러 상품 리뷰 허용) */
+  async existsByMbIdOdIdItId(mbId, odId, itId) {
+    const [rows] = await pool.query(
+      `SELECT COUNT(*) AS count
+       FROM bomiora_shop_item_use
+       WHERE mb_id = ? AND od_id = ? AND it_id = ?`,
+      [mbId, odId, itId]
+    );
+    return Number(rows[0].count || 0) > 0;
+  }
+
+  /** 해당 주문에서 이미 리뷰 작성한 it_id 목록 */
+  async findReviewedItIdsByOdId(mbId, odId) {
+    const [rows] = await pool.query(
+      `SELECT DISTINCT it_id
+       FROM bomiora_shop_item_use
+       WHERE mb_id = ? AND od_id = ?`,
+      [mbId, odId]
+    );
+    return rows
+      .map((r) => this.normalizeItId(r.it_id))
+      .filter(Boolean);
+  }
+
+  /**
+   * 여러 주문의 작성 완료 it_id 맵
+   * @returns {Record<string, string[]>}
+   */
+  async findReviewedItIdsByOdIds(mbId, odIds) {
+    const ids = (Array.isArray(odIds) ? odIds : [])
+      .map((id) => String(id || '').trim())
+      .filter(Boolean);
+    const map = {};
+    ids.forEach((id) => {
+      map[id] = [];
+    });
+    if (!ids.length) return map;
+
+    const ph = ids.map(() => '?').join(', ');
+    const [rows] = await pool.query(
+      `SELECT od_id, it_id
+       FROM bomiora_shop_item_use
+       WHERE mb_id = ? AND od_id IN (${ph})`,
+      [mbId, ...ids]
+    );
+    rows.forEach((row) => {
+      const odId = row.od_id != null ? String(row.od_id) : '';
+      const itId = this.normalizeItId(row.it_id);
+      if (!odId || !itId) return;
+      if (!map[odId]) map[odId] = [];
+      if (!map[odId].includes(itId)) map[odId].push(itId);
+    });
+    return map;
+  }
+
   async create(fields) {
+    const textOrEmpty = (v) => (v == null ? '' : String(v));
     const [result] = await pool.query(
       `INSERT INTO bomiora_shop_item_use
       (mb_id, od_id, it_id, is_name, is_time, is_confirm, is_score1, is_score2, is_score3, is_score4, total_is_score, is_rvkind, is_recommend, is_good,
@@ -40,7 +96,9 @@ class ReviewRepository {
         fields.mb_id, fields.od_id, fields.it_id, fields.is_name, fields.is_confirm,
         fields.is_score1, fields.is_score2, fields.is_score3, fields.is_score4, fields.total_is_score ?? null,
         fields.is_rvkind, fields.is_recommend, fields.is_good,
-        fields.is_positive_review_text, fields.is_negative_review_text, fields.is_more_review_text,
+        textOrEmpty(fields.is_positive_review_text),
+        textOrEmpty(fields.is_negative_review_text),
+        textOrEmpty(fields.is_more_review_text),
         fields.is_img1, fields.is_img2, fields.is_img3, fields.is_img4, fields.is_img5, fields.is_img6, fields.is_img7, fields.is_img8, fields.is_img9, fields.is_img10,
         fields.is_birthday, fields.is_weight, fields.is_height, fields.is_pay_mthod, fields.is_outage_num
       ]
