@@ -109,6 +109,22 @@ try {
 app.listen(PORT, () => {
   console.log(`🚀 Server is running on port ${PORT}`);
   console.log(`📝 Environment: ${process.env.NODE_ENV || 'development'}`);
+
+  // 쿠폰 만료 하루 전 푸시 (매일 KST 10시대)
+  try {
+    require('./src/modules/internal/jobs/CouponExpiryScheduler').startCouponExpiryScheduler();
+  } catch (e) {
+    console.warn('[CouponExpiryScheduler] 시작 스킵:', e.message);
+  }
+
+  // 종속옵션·연결상품 스키마 보장
+  try {
+    require('./src/utils/ensureSupplyDepoptSchema')
+      .ensureSupplyDepoptSchema()
+      .catch((e) => console.warn('[SchemaEnsure] 스킵:', e.message));
+  } catch (e) {
+    console.warn('[SchemaEnsure] 로드 스킵:', e.message);
+  }
 });
 
 module.exports = app;
