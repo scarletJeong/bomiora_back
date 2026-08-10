@@ -1,4 +1,5 @@
 const pool = require('../../../../config/database');
+const { notifyPointEarned } = require('../../notification/services/MemberNotifyService');
 
 class PointRepository {
   async findLatestMbPointByUserId(userId) {
@@ -100,7 +101,19 @@ class PointRepository {
       );
 
       await conn.commit();
-      return { granted: true, code: 'OK', poMbPoint: nextPoint, today };
+
+      // 적립 즉시 푸시 (실패해도 지급 결과는 유지)
+      notifyPointEarned(safeMbId, loginPoint).catch((e) => {
+        console.error('[Point] 적립 푸시 실패:', e?.message || e);
+      });
+
+      return {
+        granted: true,
+        code: 'OK',
+        poMbPoint: nextPoint,
+        today,
+        poPoint: loginPoint,
+      };
     } catch (error) {
       try {
         await conn.rollback();

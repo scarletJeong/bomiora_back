@@ -370,6 +370,15 @@ class SocialAuthService {
 
       await conn.commit();
 
+      try {
+        const { notifyPointEarned } = require('../../notification/services/MemberNotifyService');
+        notifyPointEarned(mbId, initialPoint).catch((e) => {
+          console.error('[SOCIAL SIGNUP] 회원가입 포인트 푸시 실패:', e?.message || e);
+        });
+      } catch (e) {
+        console.warn('[SOCIAL SIGNUP] 포인트 푸시 모듈 로드 스킵:', e?.message || e);
+      }
+
       await socialProfileRepository.upsertProfile(mbId, provider, {
         identifier,
         displayName: mbNick,

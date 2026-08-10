@@ -1,5 +1,7 @@
 const notificationRepository = require('../../../user/notification/repositories/NotificationRepository');
 const fcmPushService = require('../../../user/notification/services/FcmPushService');
+const memberNotifyService = require('../../../user/notification/services/MemberNotifyService');
+const { runCouponExpiryReminderJob } = require('../../jobs/CouponExpiryScheduler');
 
 function readSecret(req) {
   const header = (req.headers['x-internal-secret'] || '').toString().trim();
@@ -45,10 +47,20 @@ class InternalNotifyController {
         return res.status(404).json({ success: false, message: '회원을 찾을 수 없습니다.' });
       }
 
-      const isContactType = type === 'contact' || type === 'inquiry' || type === 'qna';
+      // 포인트 적립 — 전용 빌더
+      if (type === 'point') {
+        const points = Number(
+          req.body?.point ?? req.body?.points ?? req.body?.po_point ?? 0
+        );
+        const result = await memberNotifyService.notifyPointEarned(mbId, points);
+        return res.json({ success: true, data: result });
+      }
 
-      // 1:1 문의 답변은 서비스 알림 — 앱 푸시 마케팅 설정과 무관하게 발송
-      if (!isContactType) {
+      const isServiceType =
+        type === 'contact' || type === 'inquiry' || type === 'qna' || type === 'coupon';
+
+      // 1:1 문의·쿠폰 만료 등은 서비스 알림 — 앱 푸시 설정과 무관하게 발송
+      if (!isServiceType) {
         const settings = await notificationRepository.findSettingsByMbId(mbId);
         if (settings && !readBool(settings.mb_notif_app_push)) {
           return res.json({
@@ -79,10 +91,13 @@ class InternalNotifyController {
       let payload;
       if (type === 'contact' || type === 'inquiry' || type === 'qna') {
         payload = this._buildContactPayload(req.body);
+      } else if (type === 'coupon') {
+        payload = this._buildCouponPayload(req.body);
       } else {
         const title = (req.body?.title || '보미오라').toString();
         const body = (req.body?.body || '').toString();
-        const data = req.body?.data && typeof req.body.data === 'object' ? req.body.data : {};
+        const data =
+          req.body?.data && typeof req.body.data === 'object' ? req.body.data : {};
         payload = { title, body, data: { type, ...data } };
       }
 
@@ -97,14 +112,43 @@ class InternalNotifyController {
     }
   }
 
+  /** POST /api/internal/jobs/coupon-expiry — 수동/크론용 쿠폰 만료 하루 전 푸시 */
+  async runCouponExpiryJob(req, res) {
+    try {
+      const expected = (process.env.INTERNAL_NOTIFY_SECRET || '').trim();
+      if (!expected) {
+        return res.status(503).json({
+          success: false,
+          message: 'INTERNAL_NOTIFY_SECRET이 설정되지 않았습니다.',
+        });
+      }
+      const secret = readSecret(req);
+      if (!secret || secret !== expected) {
+        return res.status(403).json({ success: false, message: '인증 실패' });
+      }
+
+      const summary = await runCouponExpiryReminderJob();
+      return res.json({ success: true, data: summary });
+    } catch (error) {
+      console.error('[InternalNotify] coupon-expiry job:', error);
+      return res.status(500).json({
+        success: false,
+        message: `잡 실행 실패: ${error.message}`,
+      });
+    }
+  }
+
   _buildContactPayload(body) {
     const wrId = (body?.wr_id || body?.wrId || '').toString().trim();
     const subject = (body?.subject || body?.wr_subject || '').toString().trim();
     const customTitle = (body?.title || '').toString().trim();
     const customBody = (body?.body || '').toString().trim();
 
-    const title = customTitle
-      || (subject ? `[${subject} -] 에 답변이 등록되었습니다.` : '[문의 -] 에 답변이 등록되었습니다.');
+    const title =
+      customTitle ||
+      (subject
+        ? `[${subject} -] 에 답변이 등록되었습니다.`
+        : '[문의 -] 에 답변이 등록되었습니다.');
     const pushBody = customBody || '1:1 문의 답변을 확인해 주세요.';
 
     return {
@@ -114,6 +158,34 @@ class InternalNotifyController {
         type: 'contact',
         wr_id: wrId,
         id: wrId,
+      },
+    };
+  }
+
+  _buildCouponPayload(body) {
+    const cpId = (body?.cp_id || body?.cpId || body?.id || '').toString().trim();
+    const subject =
+      (body?.cp_subject || body?.subject || '쿠폰').toString().trim() || '쿠폰';
+    const cpEnd = (body?.cp_end || body?.cpEnd || body?.date || '')
+      .toString()
+      .trim()
+      .slice(0, 10);
+    const customTitle = (body?.title || '').toString().trim();
+    const customBody = (body?.body || '').toString().trim();
+
+    const title =
+      customTitle ||
+      `[${subject} -]으로 지급된 쿠폰이 ${cpEnd}에 소멸 예정입니다.`;
+    const pushBody = customBody || '쿠폰함을 확인해 주세요.';
+
+    return {
+      title,
+      body: pushBody,
+      data: {
+        type: 'coupon',
+        id: cpId,
+        cp_id: cpId,
+        cp_end: cpEnd,
       },
     };
   }
