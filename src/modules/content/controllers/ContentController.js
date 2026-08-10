@@ -167,22 +167,21 @@ class ContentController {
           .json({ success: false, message: '콘텐츠를 찾을 수 없습니다.' });
       }
 
-      await contentRepository.increaseHit(id);
-      const updated = await contentRepository.findById(id);
-      const adjacent = await contentRepository.findAdjacentById(id);
-
       const mbIdQ = String(req.query.mb_id || '').trim();
       const pfNoQ = this.parsePfNo(req.query.pf_no);
-      let userRecommended;
-      if (mbIdQ) {
-        userRecommended = await contentRepository.hasUserRecommended(
-          id,
-          mbIdQ,
-          pfNoQ
-        );
-      }
+      const category = this.normalizeText(row.category) || '';
 
-      const baseData = this.toMap(updated || row);
+      // hit / 카테고리 내 prev·next / 추천여부 병렬 — findById 재조회 제거
+      const [, adjacent, userRecommended] = await Promise.all([
+        contentRepository.increaseHit(id),
+        contentRepository.findAdjacentById(id, { category }),
+        mbIdQ
+          ? contentRepository.hasUserRecommended(id, mbIdQ, pfNoQ)
+          : Promise.resolve(undefined),
+      ]);
+
+      const baseData = this.toMap(row);
+      baseData.view_count = Number(row.view_count || 0) + 1;
       if (mbIdQ) {
         baseData.user_recommended = userRecommended;
       }
