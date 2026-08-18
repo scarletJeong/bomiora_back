@@ -6,7 +6,6 @@ class EventRepository {
       `SELECT
           id,
           title,
-          content,
           writer_name,
           image_path,
           begin_time,
@@ -20,7 +19,8 @@ class EventRepository {
         FROM bm_event
         WHERE begin_time <= NOW()
           AND end_time >= NOW()
-        ORDER BY created_at DESC, id DESC`
+        ORDER BY created_at DESC, id DESC
+        LIMIT 20`
     );
     return rows;
   }
@@ -30,7 +30,6 @@ class EventRepository {
       `SELECT
           id,
           title,
-          content,
           writer_name,
           image_path,
           begin_time,
@@ -43,7 +42,8 @@ class EventRepository {
           updated_at
         FROM bm_event
         WHERE end_time < NOW()
-        ORDER BY end_time DESC, id DESC`
+        ORDER BY end_time DESC, id DESC
+        LIMIT 50`
     );
     return rows;
   }

@@ -1,4 +1,7 @@
 const eventRepository = require('../repositories/EventRepository');
+const { TtlCache } = require('../../../../utils/ttlCache');
+
+const eventListCache = new TtlCache(30_000);
 
 class EventController {
   normalizeText(value) {
@@ -88,11 +91,15 @@ class EventController {
 
   async getActiveEvents(req, res) {
     try {
-      const rows = await eventRepository.findActiveEvents();
-      return res.json({
-        success: true,
-        data: rows.map((row) => this.toMap(row)),
+      const payload = await eventListCache.getOrSet('active', async () => {
+        const rows = await eventRepository.findActiveEvents();
+        return {
+          success: true,
+          data: rows.map((row) => this.toMap(row)),
+        };
       });
+      res.set('Cache-Control', 'public, max-age=30');
+      return res.json(payload);
     } catch (error) {
       return res.status(500).json({
         success: false,
