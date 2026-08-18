@@ -1,4 +1,7 @@
 const contentRepository = require('../repositories/ContentRepository');
+const { TtlCache } = require('../../../utils/ttlCache');
+
+const contentListCache = new TtlCache(30_000);
 
 class ContentController {
   normalizeText(value) {
@@ -56,26 +59,32 @@ class ContentController {
       const size = Number(req.query.size || 20);
       const query = req.query.query || '';
       const category = req.query.category || '전체';
+      const cacheKey = `list:${page}:${size}:${String(query).trim()}:${category}`;
 
-      const result = await contentRepository.findList({
-        page,
-        size,
-        query,
-        category,
+      const payload = await contentListCache.getOrSet(cacheKey, async () => {
+        const result = await contentRepository.findList({
+          page,
+          size,
+          query,
+          category,
+        });
+
+        return {
+          success: true,
+          data: result.rows.map((row) => this.toMap(row)),
+          categories: ['전체', ...result.categories],
+          pagination: {
+            total: result.total,
+            page: result.page,
+            size: result.size,
+            totalPages:
+              result.size > 0 ? Math.ceil(result.total / result.size) : 0,
+          },
+        };
       });
 
-      return res.json({
-        success: true,
-        data: result.rows.map((row) => this.toMap(row)),
-        categories: ['전체', ...result.categories],
-        pagination: {
-          total: result.total,
-          page: result.page,
-          size: result.size,
-          totalPages:
-            result.size > 0 ? Math.ceil(result.total / result.size) : 0,
-        },
-      });
+      res.set('Cache-Control', 'public, max-age=30');
+      return res.json(payload);
     } catch (error) {
       return res.status(500).json({
         success: false,
