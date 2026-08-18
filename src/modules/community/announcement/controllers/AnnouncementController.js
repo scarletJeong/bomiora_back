@@ -1,4 +1,7 @@
 const announcementRepository = require('../repositories/AnnouncementRepository');
+const { TtlCache } = require('../../../../utils/ttlCache');
+
+const announcementListCache = new TtlCache(30_000);
 
 class AnnouncementController {
   normalizeText(value) {
@@ -31,18 +34,24 @@ class AnnouncementController {
       const page = Number(req.query.page || 1);
       const size = Number(req.query.size || 10);
       const query = req.query.query || '';
+      const cacheKey = `list:${page}:${size}:${String(query).trim()}`;
 
-      const result = await announcementRepository.findList({ page, size, query });
-      return res.json({
-        success: true,
-        data: result.rows.map((row) => this.toMap(row)),
-        pagination: {
-          total: result.total,
-          page: result.page,
-          size: result.size,
-          totalPages: result.size > 0 ? Math.ceil(result.total / result.size) : 0,
-        },
+      const payload = await announcementListCache.getOrSet(cacheKey, async () => {
+        const result = await announcementRepository.findList({ page, size, query });
+        return {
+          success: true,
+          data: result.rows.map((row) => this.toMap(row)),
+          pagination: {
+            total: result.total,
+            page: result.page,
+            size: result.size,
+            totalPages: result.size > 0 ? Math.ceil(result.total / result.size) : 0,
+          },
+        };
       });
+
+      res.set('Cache-Control', 'public, max-age=30');
+      return res.json(payload);
     } catch (error) {
       return res.status(500).json({
         success: false,

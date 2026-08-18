@@ -38,34 +38,35 @@ class AnnouncementRepository {
       ? [keyword, keyword, safeSize, offset]
       : [safeSize, offset];
 
-    const [countRows] = await pool.query(
-      `SELECT COUNT(*) AS total
-         FROM bm_notice n
-         ${whereSql}
-         AND ${topNoticeGuard}`,
-      countParams
-    );
-
-    const [rows] = await pool.query(
-      `SELECT
-          n.id,
-          n.title,
-          n.content,
-          n.view_count,
-          n.is_notice,
-          n.writer_name,
-          n.created_at,
-          n.created_by,
-          n.updated_at,
-          n.updated_by,
-          n.image_path
-        FROM bm_notice n
-        ${whereSql}
-        AND ${topNoticeGuard}
-        ORDER BY n.is_notice DESC, n.created_at DESC, n.id DESC
-        LIMIT ? OFFSET ?`,
-      listParams
-    );
+    const [[countRows], [rows]] = await Promise.all([
+      pool.query(
+        `SELECT COUNT(*) AS total
+           FROM bm_notice n
+           ${whereSql}
+           AND ${topNoticeGuard}`,
+        countParams
+      ),
+      pool.query(
+        `SELECT
+            n.id,
+            n.title,
+            NULL AS content,
+            n.view_count,
+            n.is_notice,
+            n.writer_name,
+            n.created_at,
+            n.created_by,
+            n.updated_at,
+            n.updated_by,
+            n.image_path
+          FROM bm_notice n
+          ${whereSql}
+          AND ${topNoticeGuard}
+          ORDER BY n.is_notice DESC, n.created_at DESC, n.id DESC
+          LIMIT ? OFFSET ?`,
+        listParams
+      ),
+    ]);
 
     return {
       total: Number(countRows?.[0]?.total || 0),
