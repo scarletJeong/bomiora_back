@@ -140,20 +140,15 @@ class InternalNotifyController {
 
   _buildContactPayload(body) {
     const wrId = (body?.wr_id || body?.wrId || '').toString().trim();
-    const subject = (body?.subject || body?.wr_subject || '').toString().trim();
     const customTitle = (body?.title || '').toString().trim();
     const customBody = (body?.body || '').toString().trim();
 
     const title =
-      customTitle ||
-      (subject
-        ? `[${subject} -] 에 답변이 등록되었습니다.`
-        : '[문의 -] 에 답변이 등록되었습니다.');
-    const pushBody = customBody || '1:1 문의 답변을 확인해 주세요.';
+      customTitle || '고객님께서 문의하신 내용에 답변이 등록되었습니다';
 
     return {
       title,
-      body: pushBody,
+      body: customBody,
       data: {
         type: 'contact',
         wr_id: wrId,
@@ -166,26 +161,29 @@ class InternalNotifyController {
     const cpId = (body?.cp_id || body?.cpId || body?.id || '').toString().trim();
     const subject =
       (body?.cp_subject || body?.subject || '쿠폰').toString().trim() || '쿠폰';
-    const cpEnd = (body?.cp_end || body?.cpEnd || body?.date || '')
+    const cpEndRaw = (body?.cp_end || body?.cpEnd || body?.date || '')
       .toString()
       .trim()
       .slice(0, 10);
+    const cpMethod = body?.cp_method ?? body?.cpMethod;
     const customTitle = (body?.title || '').toString().trim();
     const customBody = (body?.body || '').toString().trim();
 
+    const methodLabel = memberNotifyService.couponMethodLabel(cpMethod);
+    const endDate = memberNotifyService.formatDotDate(cpEndRaw);
     const title =
       customTitle ||
-      `[${subject} -]으로 지급된 쿠폰이 ${cpEnd}에 소멸 예정입니다.`;
-    const pushBody = customBody || '쿠폰함을 확인해 주세요.';
+      `[${subject}] ${methodLabel}으로 지급된 쿠폰이 ${endDate} 에 소멸될 예정입니다.`;
 
     return {
       title,
-      body: pushBody,
+      body: customBody,
       data: {
         type: 'coupon',
         id: cpId,
         cp_id: cpId,
-        cp_end: cpEnd,
+        cp_end: cpEndRaw,
+        cp_method: String(cpMethod ?? ''),
       },
     };
   }

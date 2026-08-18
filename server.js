@@ -110,11 +110,25 @@ app.listen(PORT, () => {
   console.log(`🚀 Server is running on port ${PORT}`);
   console.log(`📝 Environment: ${process.env.NODE_ENV || 'development'}`);
 
-  // 쿠폰 만료 하루 전 푸시 (매일 KST 10시대)
+  // 쿠폰 만료 하루 전 푸시 (매일 KST 08:00)
   try {
     require('./src/modules/internal/jobs/CouponExpiryScheduler').startCouponExpiryScheduler();
   } catch (e) {
     console.warn('[CouponExpiryScheduler] 시작 스킵:', e.message);
+  }
+
+  // 배송중 후 리뷰 요청 푸시 (매일 KST 08:00)
+  try {
+    require('./src/modules/internal/jobs/ReviewRequestScheduler').startReviewRequestScheduler();
+  } catch (e) {
+    console.warn('[ReviewRequestScheduler] 시작 스킵:', e.message);
+  }
+
+  // 배송중 +3일(auto_confirm_at) 경과 시 자동 수령확정 + 포인트 (매일 KST 08:00)
+  try {
+    require('./src/modules/internal/jobs/AutoConfirmScheduler').startAutoConfirmScheduler();
+  } catch (e) {
+    console.warn('[AutoConfirmScheduler] 시작 스킵:', e.message);
   }
 
   // 종속옵션·연결상품 스키마 보장
