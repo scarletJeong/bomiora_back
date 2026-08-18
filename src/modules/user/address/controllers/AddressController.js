@@ -1,43 +1,53 @@
 const addressRepository = require('../repositories/AddressRepository');
+const { TtlCache } = require('../../../../utils/ttlCache');
+
+const addressListCache = new TtlCache(30_000);
 
 class AddressController {
+  toText(value) {
+    if (value == null) return '';
+    if (Buffer.isBuffer(value)) return value.toString('utf8');
+    if (typeof value === 'object' && value.type === 'Buffer' && Array.isArray(value.data)) {
+      return Buffer.from(value.data).toString('utf8');
+    }
+    return String(value);
+  }
+
   mapAddress(row) {
     return {
       adId: row.ad_id,
-      ad_id: row.ad_id,
-      mbId: row.mb_id,
-      mb_id: row.mb_id,
-      adSubject: row.ad_subject,
-      ad_subject: row.ad_subject,
-      adDefault: row.ad_default,
-      ad_default: row.ad_default,
-      adName: row.ad_name,
-      ad_name: row.ad_name,
-      adTel: row.ad_tel,
-      ad_tel: row.ad_tel,
-      adHp: row.ad_hp,
-      ad_hp: row.ad_hp,
-      adZip1: row.ad_zip1,
-      ad_zip1: row.ad_zip1,
-      adZip2: row.ad_zip2,
-      ad_zip2: row.ad_zip2,
-      adAddr1: row.ad_addr1,
-      ad_addr1: row.ad_addr1,
-      adAddr2: row.ad_addr2,
-      ad_addr2: row.ad_addr2,
-      adAddr3: row.ad_addr3,
-      ad_addr3: row.ad_addr3,
-      adJibeon: row.ad_jibeon,
-      ad_jibeon: row.ad_jibeon,
-      adMemo: row.ad_memo ?? '',
-      ad_memo: row.ad_memo ?? '',
+      mbId: this.toText(row.mb_id),
+      adSubject: this.toText(row.ad_subject),
+      adDefault: Number(row.ad_default || 0),
+      adName: this.toText(row.ad_name),
+      adTel: this.toText(row.ad_tel),
+      adHp: this.toText(row.ad_hp),
+      adZip1: this.toText(row.ad_zip1),
+      adZip2: this.toText(row.ad_zip2),
+      adAddr1: this.toText(row.ad_addr1),
+      adAddr2: this.toText(row.ad_addr2),
+      adAddr3: this.toText(row.ad_addr3),
+      adJibeon: this.toText(row.ad_jibeon),
+      adMemo: this.toText(row.ad_memo),
     };
+  }
+
+  invalidateList(mbId) {
+    if (mbId) addressListCache.store.delete(`list:${mbId}`);
   }
 
   async getAddressList(req, res) {
     try {
-      const addresses = await addressRepository.findByMbId(req.query.mbId);
-      return res.json({ success: true, data: addresses.map((a) => this.mapAddress(a)) });
+      const mbId = req.query.mbId;
+      const payload = await addressListCache.getOrSet(`list:${mbId}`, async () => {
+        const addresses = await addressRepository.findByMbId(mbId);
+        return {
+          success: true,
+          data: addresses.map((a) => this.mapAddress(a)),
+        };
+      });
+      res.set('Cache-Control', 'private, max-age=15');
+      return res.json(payload);
     } catch (error) {
       return res.status(500).json({ error: error.message });
     }
@@ -85,6 +95,7 @@ class AddressController {
         ad_memo: dto.ad_memo ?? dto.adMemo ?? '',
       });
 
+      this.invalidateList(mbId);
       return res.json({ success: true, data: this.mapAddress(saved), message: '배송지가 추가되었습니다.' });
     } catch (error) {
       return res.status(400).json({ error: error.message });
@@ -118,6 +129,7 @@ class AddressController {
         return res.status(400).json({ error: '배송지를 찾을 수 없습니다.' });
       }
 
+      this.invalidateList(mbId);
       return res.json({ success: true, data: this.mapAddress(updated), message: '배송지가 수정되었습니다.' });
     } catch (error) {
       return res.status(400).json({ error: error.message });
@@ -126,10 +138,12 @@ class AddressController {
 
   async deleteAddress(req, res) {
     try {
-      const deleted = await addressRepository.delete(Number(req.params.id), req.query.mbId);
+      const mbId = req.query.mbId;
+      const deleted = await addressRepository.delete(Number(req.params.id), mbId);
       if (!deleted) {
         return res.status(400).json({ error: '배송지를 찾을 수 없습니다.' });
       }
+      this.invalidateList(mbId);
       return res.json({ success: true, message: '배송지가 삭제되었습니다.' });
     } catch (error) {
       return res.status(400).json({ error: error.message });
@@ -149,6 +163,7 @@ class AddressController {
         return res.status(404).json({ error: '배송지를 찾을 수 없습니다.' });
       }
 
+      this.invalidateList(mbId);
       return res.json({
         success: true,
         data: this.mapAddress(updated),

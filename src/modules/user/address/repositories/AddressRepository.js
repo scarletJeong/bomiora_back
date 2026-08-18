@@ -12,7 +12,8 @@ class AddressRepository {
   async findByMbId(mbId) {
     // 기본배송지 여부와 무관하게 등록순(최신 ad_id 우선) 유지. 배송지명 중복 허용.
     const [rows] = await pool.query(
-      `SELECT *
+      `SELECT ad_id, mb_id, ad_subject, ad_default, ad_name, ad_tel, ad_hp,
+              ad_zip1, ad_zip2, ad_addr1, ad_addr2, ad_addr3, ad_jibeon, ad_memo
        FROM bomiora_shop_order_address
        WHERE mb_id = ?
        ORDER BY ad_id DESC`,
@@ -23,7 +24,10 @@ class AddressRepository {
 
   async findByIdAndMbId(id, mbId) {
     const [rows] = await pool.query(
-      'SELECT * FROM bomiora_shop_order_address WHERE ad_id = ? AND mb_id = ?',
+      `SELECT ad_id, mb_id, ad_subject, ad_default, ad_name, ad_tel, ad_hp,
+              ad_zip1, ad_zip2, ad_addr1, ad_addr2, ad_addr3, ad_jibeon, ad_memo
+       FROM bomiora_shop_order_address
+       WHERE ad_id = ? AND mb_id = ?`,
       [id, mbId]
     );
     return rows.length ? rows[0] : null;
