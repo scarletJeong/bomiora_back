@@ -1,6 +1,12 @@
 const pool = require('../../../../config/database');
 
 class HealthProfileCartRepository {
+  normalizeOdId(value) {
+    return String(value ?? '')
+      .replace(/[^0-9]/g, '')
+      .trim();
+  }
+
   async insert(payload) {
     const [result] = await pool.query(
       `INSERT INTO bomiora_shop_health_profiles_cart (
@@ -27,6 +33,139 @@ class HealthProfileCartRepository {
     return result.insertId;
   }
 
+  /**
+   * od_id + it_id 당 1행 — 있으면 갱신, 없으면 insert
+   */
+  async findByMbOdIt(mbId, odId, itId) {
+    const od = this.normalizeOdId(odId);
+    const itemId = String(itId || '').trim();
+    if (!mbId || !od || !itemId) return null;
+
+    const [rows] = await pool.query(
+      `SELECT hp_no
+         FROM bomiora_shop_health_profiles_cart
+        WHERE mb_id = ?
+          AND it_id = ?
+          AND REPLACE(REPLACE(CAST(od_id AS CHAR), ',', ''), ' ', '') = ?
+        ORDER BY hp_no DESC
+        LIMIT 1`,
+      [mbId, itemId, od]
+    );
+    return rows.length ? rows[0] : null;
+  }
+
+  async updateByHpNo(hpNo, payload) {
+    const [result] = await pool.query(
+      `UPDATE bomiora_shop_health_profiles_cart
+          SET answer_1 = ?, answer_2 = ?, answer_3 = ?, answer_4 = ?, answer_5 = ?,
+              answer_6 = ?, answer_7 = ?, answer_8 = ?, answer_9 = ?, answer_10 = ?,
+              answer_11 = ?, answer_12 = ?, answer_13 = ?,
+              answer_13_period = ?, answer_13_dosage = ?, answer_13_medicine = ?,
+              answer_7_1 = ?, answer_13_sideeffect = ?,
+              hp_doc_name = ?, hp_rsvt_date = ?, hp_rsvt_stime = ?, hp_rsvt_etime = ?,
+              hp_rsvt_name = ?, hp_rsvt_tel = ?,
+              hp_memo = ?, hp_ip = ?, hp_mdatetime = NOW()
+        WHERE hp_no = ?`,
+      [
+        payload.answer1 || null,
+        payload.answer2 || null,
+        payload.answer3 || null,
+        payload.answer4 || null,
+        payload.answer5 || null,
+        payload.answer6 || null,
+        payload.answer7 || null,
+        payload.answer8 || null,
+        payload.answer9 || null,
+        payload.answer10 || null,
+        payload.answer11 || null,
+        payload.answer12 || null,
+        payload.answer13 || null,
+        payload.answer13Period || null,
+        payload.answer13Dosage || null,
+        payload.answer13Medicine || null,
+        payload.answer71 || null,
+        payload.answer13Sideeffect || null,
+        payload.doctorName || '',
+        payload.reservationDate || null,
+        payload.reservationTime || '',
+        payload.reservationEndTime || '',
+        payload.reservationName || '',
+        payload.reservationTel || '',
+        payload.hpMemo || '',
+        payload.hp_ip || '127.0.0.1',
+        hpNo,
+      ]
+    );
+    return result.affectedRows > 0;
+  }
+
+  /** (mb_id, od_id, it_id) 유일 — 중복이면 최신 1건만 남기고 갱신 */
+  async upsertByOdIdAndItId(payload) {
+    const existing = await this.findByMbOdIt(
+      payload.mb_id,
+      payload.od_id,
+      payload.it_id
+    );
+    if (existing?.hp_no) {
+      await this.updateByHpNo(existing.hp_no, payload);
+      await this.dedupeKeepHpNo(
+        payload.mb_id,
+        payload.od_id,
+        payload.it_id,
+        existing.hp_no
+      );
+      return existing.hp_no;
+    }
+    const hpNo = await this.insert(payload);
+    await this.dedupeKeepHpNo(
+      payload.mb_id,
+      payload.od_id,
+      payload.it_id,
+      hpNo
+    );
+    return hpNo;
+  }
+
+  async dedupeKeepHpNo(mbId, odId, itId, keepHpNo) {
+    const od = this.normalizeOdId(odId);
+    const itemId = String(itId || '').trim();
+    const keep = Number(keepHpNo);
+    if (!mbId || !od || !itemId || !keep) return;
+
+    await pool.query(
+      `DELETE FROM bomiora_shop_health_profiles_cart
+        WHERE mb_id = ?
+          AND it_id = ?
+          AND REPLACE(REPLACE(CAST(od_id AS CHAR), ',', ''), ' ', '') = ?
+          AND hp_no <> ?`,
+      [mbId, itemId, od, keep]
+    );
+  }
+
+  /**
+   * 주문 단위로 (it_id 당) 최신 hp_no 만 남김
+   */
+  async dedupeByOrder(mbId, odId) {
+    const od = this.normalizeOdId(odId);
+    if (!mbId || !od) return;
+
+    await pool.query(
+      `DELETE h FROM bomiora_shop_health_profiles_cart h
+        INNER JOIN (
+          SELECT it_id, MAX(hp_no) AS keep_no
+            FROM bomiora_shop_health_profiles_cart
+           WHERE mb_id = ?
+             AND REPLACE(REPLACE(CAST(od_id AS CHAR), ',', ''), ' ', '') = ?
+           GROUP BY it_id
+          HAVING COUNT(*) > 1
+        ) d ON d.it_id = h.it_id
+       WHERE h.mb_id = ?
+         AND REPLACE(REPLACE(CAST(h.od_id AS CHAR), ',', ''), ' ', '') = ?
+         AND h.hp_no <> d.keep_no`,
+      [mbId, od, mbId, od]
+    );
+  }
+
   async findRecentByMbIdAndItIdAndStatus(mbId, itId, status) {
     const [rows] = await pool.query(
       `SELECT * FROM bomiora_shop_health_profiles_cart
@@ -46,29 +185,17 @@ class HealthProfileCartRepository {
   }
 
   async findLatestByOrderAndItem({ mbId, odId, itId }) {
-    if (!mbId || !itId) return null;
-    if (odId) {
-      const [rows] = await pool.query(
-        `SELECT hp_doc_name, hp_rsvt_date, hp_rsvt_stime, hp_rsvt_etime
-         FROM bomiora_shop_health_profiles_cart
-         WHERE mb_id = ? AND REPLACE(od_id, ',', '') = ? AND it_id = ?
-         ORDER BY hp_no DESC
-         LIMIT 1`,
-        [mbId, odId, itId]
-      );
-      if (rows.length) return rows[0];
-    }
+    if (!mbId || !itId || odId == null || odId === '') return null;
 
-    // od_id 매칭이 실패하는 환경(형변환/저장 포맷 차이) 대비 fallback
-    const [fallbackRows] = await pool.query(
+    const [rows] = await pool.query(
       `SELECT hp_doc_name, hp_rsvt_date, hp_rsvt_stime, hp_rsvt_etime
        FROM bomiora_shop_health_profiles_cart
-       WHERE mb_id = ? AND it_id = ? AND hp_status = '쇼핑'
+       WHERE mb_id = ? AND REPLACE(od_id, ',', '') = ? AND it_id = ?
        ORDER BY hp_no DESC
        LIMIT 1`,
-      [mbId, itId]
+      [mbId, this.normalizeOdId(odId), itId]
     );
-    return fallbackRows.length ? fallbackRows[0] : null;
+    return rows.length ? rows[0] : null;
   }
 }
 
