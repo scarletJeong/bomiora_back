@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const reviewRepository = require('../repositories/ReviewRepository');
 const mainReviewRepository = require('../repositories/MainReviewRepository');
+const { TtlCache } = require('../../../../utils/ttlCache');
 
 const REVIEW_UPLOAD_DIR =
   process.env.REVIEW_IMAGE_UPLOAD_DIR || path.join(process.cwd(), 'uploads', 'review_images');
@@ -9,6 +10,7 @@ const MAX_REVIEW_IMAGES = 3;
 
 /** 리뷰 목록 한 번에 가져올 수 있는 최대 건수 (무제한에 가깝게; 과도한 부하 방지용 상한) */
 const MAX_REVIEW_PAGE_SIZE = 100000;
+const mainReviewHomeCache = new TtlCache(30_000);
 
 class ReviewController {
   /** 0.1 단위 만족도 (DB DECIMAL(3,1) 권장; TINYINT면 소수 잘림) */
@@ -561,11 +563,15 @@ class ReviewController {
       let size = Number(req.query.size);
       if (!Number.isFinite(size) || size < 1) size = 8;
       size = Math.min(size, 50);
-      const rows = await mainReviewRepository.findPublished(size);
-      return res.json({
-        success: true,
-        reviews: rows.map((r) => this.toMainReviewRow(r))
+      const payload = await mainReviewHomeCache.getOrSet(`main:${size}`, async () => {
+        const rows = await mainReviewRepository.findPublished(size);
+        return {
+          success: true,
+          reviews: rows.map((r) => this.toMainReviewRow(r)),
+        };
       });
+      res.set('Cache-Control', 'public, max-age=30');
+      return res.json(payload);
     } catch (error) {
       return res.json({
         success: false,

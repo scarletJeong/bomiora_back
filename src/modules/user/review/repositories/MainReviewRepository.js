@@ -1,5 +1,20 @@
 const pool = require('../../../../config/database');
 
+/** 홈 카드용 — 본문/여분 이미지 제외 */
+const SELECT_MAIN_REVIEW_HOME = `
+  SELECT r.mr_no, r.it_id, r.mb_id, r.inf_id,
+         r.mr_score1, r.mr_score2, r.mr_score3, r.mr_score4,
+         r.mr_title, r.mr_summary, r.mr_link, r.mr_datetime,
+         r.mr_confirm, r.mr_order_num,
+         r.mr_img1, r.mr_img2, r.mr_img3,
+         si.it_img1,
+         inf.mb_nick AS inf_nick, inf.mb_name AS inf_name
+  FROM bomiora_main_review r
+  LEFT JOIN bomiora_shop_item_new si ON si.it_id = r.it_id
+  LEFT JOIN bomiora_member inf ON inf.mb_id = r.inf_id
+  WHERE r.mr_confirm = 1
+`;
+
 const SELECT_MAIN_REVIEW = `
   SELECT r.mr_no, r.it_id, r.mb_id, r.inf_id,
          r.mr_score1, r.mr_score2, r.mr_score3, r.mr_score4,
@@ -21,7 +36,7 @@ class MainReviewRepository {
   async findPublished(limit) {
     const safeLimit = Math.min(Math.max(Number(limit) || 8, 1), 50);
     const [rows] = await pool.query(
-      `${SELECT_MAIN_REVIEW}
+      `${SELECT_MAIN_REVIEW_HOME}
        ${ORDER_CLAUSE}
        LIMIT ?`,
       [safeLimit]
