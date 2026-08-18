@@ -41,12 +41,17 @@ async function sendMulticast(tokens, payload) {
     });
   }
 
+  const title = payload.title || '보미오라';
+  const body = String(payload.body || '').trim();
+  // body가 제목과 같거나 비면 알림 본문 생략 (회색 중복 문구 방지)
+  const notification =
+    body && body !== title
+      ? { title, body }
+      : { title, body: '' };
+
   const message = {
     tokens: uniqueTokens,
-    notification: {
-      title: payload.title || '보미오라',
-      body: payload.body || '',
-    },
+    notification,
     data,
     android: {
       priority: 'high',
@@ -59,6 +64,32 @@ async function sendMulticast(tokens, payload) {
   };
 
   const result = await fcm.sendEachForMulticast(message);
+  const notificationRepository = require('../repositories/NotificationRepository');
+
+  // 토큰별 실패 사유 로그 + 만료 토큰 삭제
+  const staleDeletes = [];
+  result.responses.forEach((resp, idx) => {
+    if (resp.success) return;
+    const code = resp.error?.code || 'unknown';
+    const errMsg = resp.error?.message || '';
+    const token = String(uniqueTokens[idx] || '');
+    console.warn(
+      `[FCM] token fail idx=${idx} code=${code} msg=${errMsg} token=${token.slice(0, 24)}...`
+    );
+    if (
+      code === 'messaging/registration-token-not-registered' ||
+      code === 'messaging/invalid-registration-token' ||
+      /NotRegistered|InvalidRegistration/i.test(errMsg)
+    ) {
+      staleDeletes.push(
+        notificationRepository.deleteFcmToken(token).catch(() => {})
+      );
+    }
+  });
+  if (staleDeletes.length) {
+    await Promise.all(staleDeletes);
+  }
+
   return {
     success: result.failureCount === 0,
     successCount: result.successCount,

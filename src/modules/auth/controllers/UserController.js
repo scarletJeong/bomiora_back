@@ -157,11 +157,18 @@ class UserController {
       if (passwordMatch) {
         // 오늘 첫 로그인 포인트는 mb_today_login 갱신 "전"에 판별해야 함 (그누보드 common.php와 동일)
         const clientIp = getClientIp(req);
+        let firstLoginPoint = null;
         try {
-          await pointRepository.grantDailyFirstLoginPoint({
+          firstLoginPoint = await pointRepository.grantDailyFirstLoginPoint({
             mbId: user.mbId,
             ip: clientIp,
           });
+          if (firstLoginPoint?.granted) {
+            console.log(
+              '[LOGIN] 첫로그인 100P 지급 — 푸시는 FCM 토큰 등록 시 발송',
+              user.mbId
+            );
+          }
         } catch (e) {
           console.error('[LOGIN] 첫로그인 포인트 지급 실패(로그인은 계속):', e?.message || e);
         }
@@ -173,7 +180,10 @@ class UserController {
           success: true,
           user: updatedUser.toResponse(),
           token: 'token_' + Date.now(), // JWT 토큰으로 대체 가능
-          message: '로그인 성공'
+          message: '로그인 성공',
+          firstLoginPoint: firstLoginPoint?.granted
+            ? { granted: true, point: firstLoginPoint.poPoint || 100 }
+            : { granted: false, code: firstLoginPoint?.code || null },
         };
 
         console.log('[LOGIN] 로그인 성공!');
@@ -986,11 +996,36 @@ class UserController {
         });
       }
 
+      // 자동로그인(앱 재실행)도 "오늘 첫 접속"이면 100P 지급.
+      // 푸시는 이후 FCM 토큰 등록(/api/user/fcm-token)에서 발송.
+      let firstLoginPoint = null;
+      try {
+        const clientIp = getClientIp(req);
+        firstLoginPoint = await pointRepository.grantDailyFirstLoginPoint({
+          mbId: user.mbId,
+          ip: clientIp,
+        });
+        if (firstLoginPoint?.granted) {
+          console.log(
+            '[SESSION] 첫로그인 100P 지급 — 푸시는 FCM 토큰 등록 시 발송',
+            user.mbId
+          );
+        }
+      } catch (e) {
+        console.error(
+          '[SESSION] 첫로그인 포인트 지급 실패(세션은 유지):',
+          e?.message || e
+        );
+      }
+
       return res.json({
         success: true,
         active: true,
         user: user.toResponse(),
         message: '정상 회원입니다.',
+        firstLoginPoint: firstLoginPoint?.granted
+          ? { granted: true, point: firstLoginPoint.poPoint || 100 }
+          : { granted: false, code: firstLoginPoint?.code || null },
       });
     } catch (error) {
       console.error('❌ [SESSION] 오류:', error);

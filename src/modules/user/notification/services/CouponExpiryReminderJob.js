@@ -23,6 +23,7 @@ async function findExpiringTomorrowCoupons(conn) {
        CAST(c.cp_id AS CHAR) AS cp_id,
        c.mb_id,
        c.cp_subject,
+       c.cp_method,
        DATE_FORMAT(c.cp_end, '%Y-%m-%d') AS cp_end
      FROM bomiora_shop_coupon c
      WHERE c.cp_end = DATE_ADD(CURDATE(), INTERVAL 1 DAY)
@@ -74,6 +75,7 @@ async function runCouponExpiryReminderJob() {
       const cpId = String(row.cp_id || '').trim();
       const cpEnd = String(row.cp_end || '').trim().slice(0, 10);
       const cpSubject = row.cp_subject;
+      const cpMethod = row.cp_method;
 
       if (!mbId || !cpId || !cpEnd) {
         summary.skipped += 1;
@@ -85,6 +87,7 @@ async function runCouponExpiryReminderJob() {
           cpId,
           cpSubject,
           cpEnd,
+          cpMethod,
         });
 
         if (result?.skipped) {
@@ -95,7 +98,6 @@ async function runCouponExpiryReminderJob() {
           summary.failed += 1;
         }
 
-        // 스킵(토큰 없음 등)이어도 같은 날 재시도 폭주를 막기 위해 기록
         await markSent(conn, { cpId, mbId, cpEnd });
       } catch (error) {
         summary.failed += 1;

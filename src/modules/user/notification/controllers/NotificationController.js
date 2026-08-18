@@ -42,20 +42,26 @@ class NotificationController {
 
       await notificationRepository.upsertFcmToken({ mbId, fcmToken, platform });
 
-      // 개발용: 토큰 등록 직후 환영 푸시 (로그인 시 자동 테스트)
-      if (process.env.FCM_TEST_ON_REGISTER === 'true') {
-        fcmPushService
-          .sendMulticast([fcmToken], {
-            title: '보미오라',
-            body: '로그인 알림 테스트 — 푸시가 정상 동작합니다.',
-            data: { type: 'order', od_id: '' },
-          })
-          .catch((err) => console.warn('[FCM] 등록 후 테스트 푸시 실패:', err.message));
+      // 로그인 직후: 오늘 첫로그인 포인트가 있으면 이 기기 토큰으로 푸시
+      // (지급은 login API, 푸시는 여기서 — 답변 푸시와 같이 토큰 확보 후 발송)
+      let loginPointPush = null;
+      try {
+        const pointRepo = require('../../point/repositories/PointRepository');
+        const pushFn = pointRepo.pushTodayLoginPointIfPending;
+        if (typeof pushFn === 'function') {
+          loginPointPush = await pushFn(mbId, fcmToken);
+          console.log('[FCM] 첫로그인 포인트 푸시', mbId, loginPointPush);
+        } else {
+          console.warn('[FCM] pushTodayLoginPointIfPending 미로드 — 서버 재시작 필요');
+        }
+      } catch (e) {
+        console.warn('[FCM] 첫로그인 포인트 푸시 실패:', e?.message || e);
       }
 
       return res.json({
         success: true,
         message: 'FCM 토큰이 등록되었습니다.',
+        loginPointPush,
       });
     } catch (error) {
       console.error('[NotificationController] registerFcmToken:', error);
