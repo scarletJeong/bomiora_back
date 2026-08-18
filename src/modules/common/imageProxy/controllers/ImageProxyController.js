@@ -102,6 +102,10 @@ class ImageProxyController {
     }
   }
 
+  setImageCacheHeaders(res) {
+    res.setHeader('Cache-Control', 'public, max-age=86400, immutable');
+  }
+
   async proxyImage(req, res) {
     try {
       const targetUrl = req.query.url;
@@ -119,6 +123,7 @@ class ImageProxyController {
           const bytes = await fs.readFile(filePath);
           const contentType = this.detectContentType(String(targetUrl), null);
           res.setHeader('Content-Type', contentType);
+          this.setImageCacheHeaders(res);
           return res.status(200).send(bytes);
         } catch (error) {
           if (error && error.code === 'ENOENT') {
@@ -140,7 +145,7 @@ class ImageProxyController {
         const localBytes = await this.tryReadLocalDataEventFile(String(targetUrl));
         if (localBytes) {
           res.setHeader('Content-Type', this.detectContentType(String(targetUrl), null));
-          res.setHeader('Cache-Control', 'no-store');
+          this.setImageCacheHeaders(res);
           return res.status(200).send(localBytes);
         }
         return res.sendStatus(response.status);
@@ -153,7 +158,7 @@ class ImageProxyController {
       const sniffed = this.sniffImageMimeFromBuffer(bytes);
       if (sniffed) {
         res.setHeader('Content-Type', sniffed);
-        res.setHeader('Cache-Control', 'no-store');
+        this.setImageCacheHeaders(res);
         return res.status(200).send(bytes);
       }
 
@@ -175,7 +180,7 @@ class ImageProxyController {
         if (localBytes) {
           const sniffedLocal = this.sniffImageMimeFromBuffer(localBytes);
           res.setHeader('Content-Type', sniffedLocal || this.detectContentType(urlStr, null));
-          res.setHeader('Cache-Control', 'no-store');
+          this.setImageCacheHeaders(res);
           return res.status(200).send(localBytes);
         }
         return res.sendStatus(415);
@@ -189,7 +194,7 @@ class ImageProxyController {
 
       const contentType = this.detectContentType(urlStr, response.headers.get('content-type'));
       res.setHeader('Content-Type', contentType);
-      res.setHeader('Cache-Control', 'no-store');
+      this.setImageCacheHeaders(res);
       return res.status(200).send(bytes);
     } catch (error) {
       return res.sendStatus(500);

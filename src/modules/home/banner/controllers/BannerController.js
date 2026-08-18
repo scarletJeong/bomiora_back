@@ -1,4 +1,7 @@
 const bannerRepository = require('../repositories/BannerRepository');
+const { TtlCache } = require('../../../../utils/ttlCache');
+
+const bannerCache = new TtlCache(60_000);
 
 class BannerController {
   toMap(row, platform) {
@@ -43,15 +46,20 @@ class BannerController {
         placement
       );
 
-      const rows = await bannerRepository.findActiveList({
-        placement,
-        targetKind,
+      const cacheKey = `banner:${platform}:${placement}:${targetKind || ''}`;
+      const payload = await bannerCache.getOrSet(cacheKey, async () => {
+        const rows = await bannerRepository.findActiveList({
+          placement,
+          targetKind,
+        });
+        const data = rows
+          .map((row) => this.toMap(row, platform))
+          .filter((row) => row.imageUrl.length > 0);
+        return { success: true, data };
       });
-      const data = rows
-        .map((row) => this.toMap(row, platform))
-        .filter((row) => row.imageUrl.length > 0);
 
-      return res.json({ success: true, data });
+      res.set('Cache-Control', 'public, max-age=30');
+      return res.json(payload);
     } catch (error) {
       return res.status(500).json({
         success: false,
