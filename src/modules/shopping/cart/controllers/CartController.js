@@ -80,9 +80,17 @@ class CartController {
   }
 
   buildImageUrl(product, itId) {
-    // flutter 전용 경로가 있으면 우선 사용
+    // flutter 전용 경로가 있으면 리스트 썸네일(_list.jpg) 사용
     if (product.it_flutter_image_url && String(product.it_flutter_image_url).trim()) {
-      return String(product.it_flutter_image_url).trim();
+      let base = String(product.it_flutter_image_url).trim();
+      if (!base.endsWith('/')) base += '/';
+      const id = String(itId || product.it_id || '').trim();
+      if (base.startsWith('http://') || base.startsWith('https://')) {
+        const normalized = base.endsWith('/') ? base.slice(0, -1) : base;
+        return `${normalized}/${id}_list.jpg`;
+      }
+      if (!base.startsWith('/')) base = `/${base}`;
+      return `${base}${id}_list.jpg`;
     }
 
     // 썸네일은 it_img1~it_img9 중 첫 번째 유효값 사용
@@ -92,8 +100,6 @@ class CartController {
       if (value == null) continue;
       const trimmed = String(value).trim();
       if (!trimmed) continue;
-      // DB에 저장된 경로를 그대로 사용한다.
-      // 예: 1682401752/file.jpg 또는 /1682401752/file.jpg 또는 /data/item/...
       return trimmed;
     }
 
@@ -593,7 +599,7 @@ class CartController {
       }
       const reservationDate = req.body.reservationDate ? String(req.body.reservationDate).substring(0, 10) : null;
 
-      await healthProfileCartRepository.insert({
+      await healthProfileCartRepository.upsertByOdIdAndItId({
         mb_id: req.body.mb_id,
         it_id: req.body.it_id,
         od_id: odId,
@@ -659,6 +665,7 @@ class CartController {
       if (cartCtIds.length > 0) {
         const cartIds = [];
         const failedItems = [];
+        const profileItIdsDone = new Set();
         let firstItKind = null;
         let firstCtKind = null;
 
@@ -680,37 +687,41 @@ class CartController {
             continue;
           }
 
-          await healthProfileCartRepository.insert({
-            mb_id: mbId,
-            it_id: itId,
-            od_id: odId,
-            answer1: req.body.answer1,
-            answer2: req.body.answer2,
-            answer3: req.body.answer3,
-            answer4: req.body.answer4,
-            answer5: req.body.answer5,
-            answer6: req.body.answer6,
-            answer7: req.body.answer7,
-            answer8: req.body.answer8,
-            answer9: req.body.answer9,
-            answer10: req.body.answer10,
-            answer11: req.body.answer11,
-            answer12: req.body.answer12,
-            answer13: req.body.answer13,
-            answer13Period: req.body.answer13Period,
-            answer13Dosage: req.body.answer13Dosage,
-            answer13Medicine: req.body.answer13Medicine,
-            answer71: req.body.answer71,
-            answer13Sideeffect: req.body.answer13Sideeffect,
-            reservationDate,
-            reservationTime,
-            reservationEndTime,
-            reservationName: req.body.reservationName,
-            reservationTel: req.body.reservationTel,
-            doctorName: req.body.doctorName,
-            hpMemo: req.body.pfMemo || '',
-            hp_ip: '127.0.0.1'
-          });
+          // od_id + it_id 당 health_profiles_cart 1행만
+          if (!profileItIdsDone.has(itId)) {
+            await healthProfileCartRepository.upsertByOdIdAndItId({
+              mb_id: mbId,
+              it_id: itId,
+              od_id: odId,
+              answer1: req.body.answer1,
+              answer2: req.body.answer2,
+              answer3: req.body.answer3,
+              answer4: req.body.answer4,
+              answer5: req.body.answer5,
+              answer6: req.body.answer6,
+              answer7: req.body.answer7,
+              answer8: req.body.answer8,
+              answer9: req.body.answer9,
+              answer10: req.body.answer10,
+              answer11: req.body.answer11,
+              answer12: req.body.answer12,
+              answer13: req.body.answer13,
+              answer13Period: req.body.answer13Period,
+              answer13Dosage: req.body.answer13Dosage,
+              answer13Medicine: req.body.answer13Medicine,
+              answer71: req.body.answer71,
+              answer13Sideeffect: req.body.answer13Sideeffect,
+              reservationDate,
+              reservationTime,
+              reservationEndTime,
+              reservationName: req.body.reservationName,
+              reservationTel: req.body.reservationTel,
+              doctorName: req.body.doctorName,
+              hpMemo: req.body.pfMemo || '',
+              hp_ip: '127.0.0.1'
+            });
+            profileItIdsDone.add(itId);
+          }
 
           await cartRepository.updateCart(ctId, {
             od_id: odId,
@@ -778,6 +789,7 @@ class CartController {
 
       const cartIds = [];
       const failedItems = [];
+      const profileItIdsDone = new Set();
       let firstItKind = null;
       let firstCtKind = null;
 
@@ -792,37 +804,40 @@ class CartController {
         const finalCtKind =
           item.ctKind || (this.bufferToString(product.it_kind) === 'prescription' ? 'prescription' : 'general');
 
-        await healthProfileCartRepository.insert({
-          mb_id: mbId,
-          it_id: item.itId,
-          od_id: odId,
-          answer1: req.body.answer1,
-          answer2: req.body.answer2,
-          answer3: req.body.answer3,
-          answer4: req.body.answer4,
-          answer5: req.body.answer5,
-          answer6: req.body.answer6,
-          answer7: req.body.answer7,
-          answer8: req.body.answer8,
-          answer9: req.body.answer9,
-          answer10: req.body.answer10,
-          answer11: req.body.answer11,
-          answer12: req.body.answer12,
-          answer13: req.body.answer13,
-          answer13Period: req.body.answer13Period,
-          answer13Dosage: req.body.answer13Dosage,
-          answer13Medicine: req.body.answer13Medicine,
-          answer71: req.body.answer71,
-          answer13Sideeffect: req.body.answer13Sideeffect,
-          reservationDate,
-          reservationTime,
-          reservationEndTime,
-          reservationName: req.body.reservationName,
-          reservationTel: req.body.reservationTel,
-          doctorName: req.body.doctorName,
-          hpMemo: req.body.pfMemo || '',
-          hp_ip: '127.0.0.1'
-        });
+        if (!profileItIdsDone.has(item.itId)) {
+          await healthProfileCartRepository.upsertByOdIdAndItId({
+            mb_id: mbId,
+            it_id: item.itId,
+            od_id: odId,
+            answer1: req.body.answer1,
+            answer2: req.body.answer2,
+            answer3: req.body.answer3,
+            answer4: req.body.answer4,
+            answer5: req.body.answer5,
+            answer6: req.body.answer6,
+            answer7: req.body.answer7,
+            answer8: req.body.answer8,
+            answer9: req.body.answer9,
+            answer10: req.body.answer10,
+            answer11: req.body.answer11,
+            answer12: req.body.answer12,
+            answer13: req.body.answer13,
+            answer13Period: req.body.answer13Period,
+            answer13Dosage: req.body.answer13Dosage,
+            answer13Medicine: req.body.answer13Medicine,
+            answer71: req.body.answer71,
+            answer13Sideeffect: req.body.answer13Sideeffect,
+            reservationDate,
+            reservationTime,
+            reservationEndTime,
+            reservationName: req.body.reservationName,
+            reservationTel: req.body.reservationTel,
+            doctorName: req.body.doctorName,
+            hpMemo: req.body.pfMemo || '',
+            hp_ip: '127.0.0.1'
+          });
+          profileItIdsDone.add(item.itId);
+        }
 
         const cart = await cartRepository.insertCart({
           od_id: odId,
