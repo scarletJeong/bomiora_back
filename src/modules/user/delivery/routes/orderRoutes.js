@@ -10,5 +10,7 @@ router.post('/batch/auto-confirm', (req, res) => orderController.processAutoConf
 router.put('/:odId/reservation', (req, res) => orderController.changeReservationTime(req, res));
 router.put('/:odId/address', (req, res) => orderController.changeDeliveryAddress(req, res));
 router.put('/:odId/delivery-address', (req, res) => orderController.changeDeliveryAddress(req, res));
+router.put('/:odId/memo', (req, res) => orderController.updateDeliveryMemo(req, res));
+router.put('/:odId/delivery-memo', (req, res) => orderController.updateDeliveryMemo(req, res));
 
 module.exports = router;

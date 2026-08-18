@@ -2,6 +2,10 @@ const productRepository = require('../repositories/ProductRepository');
 const productOptionRepository = require('../option/repositories/ProductOptionRepository');
 const reviewRepository = require('../../../user/review/repositories/ReviewRepository');
 const shopDefaultRepository = require('../../../common/shopdefault/repositories/ShopDefaultRepository');
+const { TtlCache } = require('../../../../utils/ttlCache');
+
+const homeProductCache = new TtlCache(60_000);
+const optionCache = new TtlCache(60_000);
 
 class ProductController {
   constructor() {
@@ -124,6 +128,11 @@ class ProductController {
     return (rows || []).map((r) => this.toProductDto(r, shopDefault));
   }
 
+  async mapProductSearchDtos(rows) {
+    const shopDefault = await this.getShopDefaultCached();
+    return (rows || []).map((r) => this.toProductSearchDto(r, shopDefault));
+  }
+
   buildFlutterImageUrl(folderPath, productId) {
     if (!folderPath) return null;
     let base = folderPath.trim();
@@ -137,11 +146,12 @@ class ProductController {
     return `${base}${productId}_list.jpg`;
   }
 
-  processImageUrl(row) {
+  processImageUrl(row, maxImages = 9) {
     if (row.it_flutter_image_url && String(row.it_flutter_image_url).trim()) {
       return this.buildFlutterImageUrl(String(row.it_flutter_image_url).trim(), row.it_id);
     }
-    for (let i = 1; i <= 9; i += 1) {
+    const limit = Math.min(Math.max(Number(maxImages) || 9, 1), 9);
+    for (let i = 1; i <= limit; i += 1) {
       const key = `it_img${i}`;
       const value = row[key];
       if (value != null && String(value).trim() !== '') {
@@ -281,39 +291,51 @@ class ProductController {
   }
 
   /**
-   * 검색 결과용: payload 최소화 (긴 HTML 필드 제거)
+   * 검색/목록용: 상세 DTO를 거치지 않고 카드에 필요한 필드만 직렬화
    */
   toProductSearchDto(row, shopDefault = null) {
-    const base = this.toProductDto(row, shopDefault);
+    const id = this.bufferToString(row.it_id);
+    const kind = this.bufferToString(row.it_kind);
+    const textOrNull = (raw) => {
+      const s = this.bufferToString(raw);
+      if (s == null) return null;
+      const t = String(s).trim();
+      return t !== '' ? t : null;
+    };
+    const itBasic = textOrNull(row.it_basic);
+    const itSubject = textOrNull(row.it_subject);
+    const shippingFeeLabel = this.buildShippingFeeLabel(row, shopDefault);
+    const supplyCsv = textOrNull(row.it_supply_items) || '';
+
     return {
-      id: base.id,
-      name: base.name,
-      it_basic: base.it_basic,
-      it_subject: base.it_subject,
-      price: base.price,
-      originalPrice: base.originalPrice,
-      imageUrl: base.imageUrl,
-      categoryId: base.categoryId,
-      categoryName: base.categoryName,
-      productKind: base.productKind,
-      isNew: base.isNew,
-      isBest: base.isBest,
-      stock: base.stock,
-      rating: base.rating,
-      reviewCount: base.reviewCount,
-      shippingFeeLabel: base.shippingFeeLabel,
-      depOption1Subject: base.depOption1Subject,
-      depOption1Label: base.depOption1Label,
-      depOption2Subject: base.depOption2Subject,
-      depOption2Label: base.depOption2Label,
-      supplyItemIds: base.supplyItemIds,
+      id,
+      name: this.bufferToString(row.it_name),
+      it_basic: itBasic,
+      it_subject: itSubject,
+      price: row.it_price,
+      originalPrice: row.it_cust_price,
+      imageUrl: this.processImageUrl(row, 3),
+      categoryId: this.bufferToString(row.ca_id),
+      categoryName: this.categoryName(row.ca_id),
+      productKind: kind,
+      isNew: Number(row.it_type3 || 0) === 1,
+      isBest: Number(row.it_type4 || 0) === 1,
+      stock: row.it_stock_qty ?? 0,
+      rating: row.it_use_avg != null ? Number(row.it_use_avg) : null,
+      reviewCount: row.it_use_cnt ?? 0,
+      shippingFeeLabel,
+      depOption1Subject: textOrNull(row.it_depopt1_subject) || '',
+      depOption1Label: textOrNull(row.it_depopt1_label) || '',
+      depOption2Subject: textOrNull(row.it_depopt2_subject) || '',
+      depOption2Label: textOrNull(row.it_depopt2_label) || '',
+      supplyItemIds: this.parseSupplyItemIds(row.it_supply_items, id),
       additionalInfo: {
-        it_id: base.id,
-        it_kind: base.productKind,
-        it_subject: base.it_subject,
-        it_basic: base.it_basic,
-        shippingFeeLabel: base.shippingFeeLabel,
-        it_supply_items: base.it_supply_items,
+        it_id: id,
+        it_kind: kind,
+        it_subject: itSubject,
+        it_basic: itBasic,
+        shippingFeeLabel,
+        it_supply_items: supplyCsv,
       },
     };
   }
@@ -341,16 +363,25 @@ class ProductController {
       const itKind = req.query.it_kind || null;
       const page = Number(req.query.page || 1);
       const pageSize = Number(req.query.pageSize || 20);
-      const rows = await productRepository.findByCategory(categoryId, itKind, page, pageSize);
-      const products = await this.mapProductDtos(rows);
-
-      return res.json({
-        success: true,
-        data: products,
-        total: products.length,
-        page,
-        pageSize
+      const cacheKey = `list:${categoryId}:${itKind || ''}:${page}:${pageSize}`;
+      const payload = await homeProductCache.getOrSet(cacheKey, async () => {
+        const rows = await productRepository.findByCategory(
+          categoryId,
+          itKind,
+          page,
+          pageSize
+        );
+        const products = await this.mapProductSearchDtos(rows);
+        return {
+          success: true,
+          data: products,
+          total: products.length,
+          page,
+          pageSize,
+        };
       });
+      res.set('Cache-Control', 'public, max-age=30');
+      return res.json(payload);
     } catch (error) {
       return res.status(500).json({
         success: false,
@@ -390,8 +421,14 @@ class ProductController {
   async getPopularProducts(req, res) {
     try {
       const limit = Number(req.query.limit || 10);
-      const rows = await productRepository.findBestProducts(limit);
-      return res.json({ success: true, data: await this.mapProductDtos(rows) });
+      const payload = await homeProductCache.getOrSet(`best:${limit}`, async () => ({
+        success: true,
+        data: await this.mapProductSearchDtos(
+          await productRepository.findBestProducts(limit)
+        ),
+      }));
+      res.set('Cache-Control', 'public, max-age=30');
+      return res.json(payload);
     } catch (error) {
       return res.status(500).json({ success: false, message: `인기 상품 조회 실패: ${error.message}`, data: [] });
     }
@@ -400,8 +437,14 @@ class ProductController {
   async getNewProducts(req, res) {
     try {
       const limit = Number(req.query.limit || 10);
-      const rows = await productRepository.findNewProducts(limit);
-      return res.json({ success: true, data: await this.mapProductDtos(rows) });
+      const payload = await homeProductCache.getOrSet(`new:${limit}`, async () => ({
+        success: true,
+        data: await this.mapProductSearchDtos(
+          await productRepository.findNewProducts(limit)
+        ),
+      }));
+      res.set('Cache-Control', 'public, max-age=30');
+      return res.json(payload);
     } catch (error) {
       return res.status(500).json({ success: false, message: `신상품 조회 실패: ${error.message}`, data: [] });
     }
@@ -418,15 +461,22 @@ class ProductController {
         });
       }
 
-      const rows = await productRepository.findCategoriesWithProducts(itKind);
-      const categories = rows.map((row) => ({
-        categoryId: this.bufferToString(row.ca_id),
-        categoryName: this.bufferToString(row.ca_name),
-        productKind: itKind,
-        sortOrder: row.ca_order != null ? Number(row.ca_order) : 0
-      }));
+      const payload = await homeProductCache.getOrSet(
+        `categories-with-products:${itKind}`,
+        async () => {
+          const rows = await productRepository.findCategoriesWithProducts(itKind);
+          const categories = rows.map((row) => ({
+            categoryId: this.bufferToString(row.ca_id),
+            categoryName: this.bufferToString(row.ca_name),
+            productKind: itKind,
+            sortOrder: row.ca_order != null ? Number(row.ca_order) : 0
+          }));
+          return { success: true, data: categories };
+        }
+      );
 
-      return res.json({ success: true, data: categories });
+      res.set('Cache-Control', 'public, max-age=30');
+      return res.json(payload);
     } catch (error) {
       return res.status(500).json({
         success: false,
@@ -440,8 +490,17 @@ class ProductController {
     try {
       const limit = Number(req.query.limit || 4);
       const itKind = req.query.it_kind || null;
-      const rows = await productRepository.findMdPickProducts(limit, itKind);
-      return res.json({ success: true, data: await this.mapProductDtos(rows) });
+      const payload = await homeProductCache.getOrSet(
+        `md:${limit}:${itKind || ''}`,
+        async () => ({
+          success: true,
+          data: await this.mapProductSearchDtos(
+            await productRepository.findMdPickProducts(limit, itKind)
+          ),
+        })
+      );
+      res.set('Cache-Control', 'public, max-age=30');
+      return res.json(payload);
     } catch (error) {
       return res.status(500).json({
         success: false,
@@ -453,17 +512,23 @@ class ProductController {
 
   async getProductOptions(req, res) {
     try {
+      const productId = String(req.params.productId || '').trim();
       const ioType =
         req.query.io_type != null ? req.query.io_type : req.query.type;
-      const rows = await productOptionRepository.findByProductId(
-        req.params.productId,
-        ioType
-      );
-      return res.json({
-        success: true,
-        data: rows.map((r) => this.toOptionDto(r)),
-        message: '옵션 목록 조회 성공',
+      const cacheKey = `opt:${productId}:${ioType == null ? '' : String(ioType)}`;
+      const payload = await optionCache.getOrSet(cacheKey, async () => {
+        const rows = await productOptionRepository.findByProductId(
+          productId,
+          ioType
+        );
+        return {
+          success: true,
+          data: rows.map((r) => this.toOptionDto(r)),
+          message: '옵션 목록 조회 성공',
+        };
       });
+      res.set('Cache-Control', 'public, max-age=60');
+      return res.json(payload);
     } catch (error) {
       return res.status(500).json({
         success: false,
@@ -476,55 +541,75 @@ class ProductController {
   async getSupplyProducts(req, res) {
     try {
       const productId = String(req.params.productId || '').trim();
-      const parent = await productRepository.findById(productId);
-      if (!parent) {
+      const cacheKey = `supply:${productId}`;
+      const payload = await optionCache.getOrSet(cacheKey, async () => {
+        const parent = await productRepository.findSupplyItemIds(productId);
+        if (!parent) {
+          return {
+            success: false,
+            status: 404,
+            message: '상품을 찾을 수 없습니다.',
+            data: [],
+          };
+        }
+
+        const ids = this.parseSupplyItemIds(parent.it_supply_items, productId);
+        if (!ids.length) {
+          return { success: true, data: [], message: '연결상품 없음' };
+        }
+
+        const rows = await productRepository.findSupplySummariesByIds(ids);
+        const data = rows
+          .filter((r) => {
+            const inf = this.bufferToString(r.it_mb_inf);
+            return !(inf != null && String(inf).trim() !== '');
+          })
+          .map((r) => {
+            const id = this.bufferToString(r.it_id);
+            const optionSubject = this.bufferToString(r.it_option_subject) || '';
+            const itSubjectRaw = this.bufferToString(r.it_subject);
+            const itSubject =
+              itSubjectRaw != null && String(itSubjectRaw).trim() !== ''
+                ? String(itSubjectRaw).trim()
+                : null;
+            return {
+              id,
+              name: this.bufferToString(r.it_name),
+              price: r.it_price,
+              originalPrice: r.it_cust_price,
+              imageUrl: this.processImageUrl(r),
+              it_subject: itSubject,
+              productKind: this.bufferToString(r.it_kind),
+              stock: r.it_stock_qty ?? 0,
+              it_option_subject: optionSubject,
+              additionalInfo: {
+                it_id: id,
+                it_kind: this.bufferToString(r.it_kind),
+                it_subject: itSubject,
+                it_basic: this.bufferToString(r.it_basic),
+                it_option_subject: optionSubject,
+                it_supply_items: this.bufferToString(r.it_supply_items) || '',
+              },
+            };
+          });
+
+        return {
+          success: true,
+          data,
+          message: '연결상품 목록 조회 성공',
+        };
+      });
+
+      if (payload.status === 404) {
         return res.status(404).json({
           success: false,
-          message: '상품을 찾을 수 없습니다.',
+          message: payload.message,
           data: [],
         });
       }
 
-      const ids = this.parseSupplyItemIds(parent.it_supply_items, productId);
-      if (!ids.length) {
-        return res.json({ success: true, data: [], message: '연결상품 없음' });
-      }
-
-      const rows = await productRepository.findByIds(ids);
-      const shopDefault = await this.getShopDefaultCached();
-      const data = rows
-        .filter((r) => {
-          const inf = this.bufferToString(r.it_mb_inf);
-          return !(inf != null && String(inf).trim() !== '');
-        })
-        .map((r) => {
-          const dto = this.toProductDto(r, shopDefault);
-          const optionSubject =
-            (dto.additionalInfo && dto.additionalInfo.it_option_subject) ||
-            this.bufferToString(r.it_option_subject) ||
-            '';
-          return {
-            id: dto.id,
-            name: dto.name,
-            price: dto.price,
-            originalPrice: dto.originalPrice,
-            imageUrl: dto.imageUrl,
-            it_subject: dto.it_subject,
-            productKind: dto.productKind,
-            stock: dto.stock,
-            it_option_subject: optionSubject,
-            additionalInfo: {
-              ...(dto.additionalInfo || {}),
-              it_option_subject: optionSubject,
-            },
-          };
-        });
-
-      return res.json({
-        success: true,
-        data,
-        message: '연결상품 목록 조회 성공',
-      });
+      res.set('Cache-Control', 'public, max-age=60');
+      return res.json(payload);
     } catch (error) {
       return res.status(500).json({
         success: false,

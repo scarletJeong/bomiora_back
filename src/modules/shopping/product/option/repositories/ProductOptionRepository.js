@@ -12,7 +12,10 @@ class ProductOptionRepository {
       }
     }
     const [rows] = await pool.query(
-      `SELECT * FROM bomiora_shop_item_option WHERE ${where} ORDER BY io_no ASC, io_id ASC`,
+      `SELECT io_id, it_id, io_type, io_price, io_stock_qty, io_no, io_use
+         FROM bomiora_shop_item_option
+        WHERE ${where}
+        ORDER BY io_no ASC, io_id ASC`,
       params
     );
     return rows;

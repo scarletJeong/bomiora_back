@@ -123,12 +123,82 @@ class KcpPayRepository {
       );
 
       const placeholders = payload.cartIds.map(() => '?').join(', ');
+
+      // 문진/예약 시점에 넣은 임시 od_id → 결제 확정 od_id 로 재연결
+      const [cartRows] = await connection.query(
+        `SELECT ct_id, it_id, od_id
+         FROM bomiora_shop_cart
+         WHERE mb_id = ?
+           AND ct_id IN (${placeholders})`,
+        [payload.mbId, ...payload.cartIds]
+      );
+      const oldOdIds = [
+        ...new Set(
+          (Array.isArray(cartRows) ? cartRows : [])
+            .map((row) => String(row.od_id ?? '').replace(/[^0-9]/g, '').trim())
+            .filter(Boolean)
+        ),
+      ];
+      const itIds = [
+        ...new Set(
+          (Array.isArray(cartRows) ? cartRows : [])
+            .map((row) => String(row.it_id ?? '').trim())
+            .filter(Boolean)
+        ),
+      ];
+
       await connection.query(
         `UPDATE bomiora_shop_cart
          SET od_id = ?, ct_status = ?, ct_select = 1, ct_settlement_status = 'Y'
          WHERE mb_id = ?
            AND ct_id IN (${placeholders})`,
         [payload.orderId, cartStatus, payload.mbId, ...payload.cartIds]
+      );
+
+      // prescription_time_screen → /api/cart/healthprofile 로 저장된 예약 행 연결
+      if (oldOdIds.length) {
+        const odPlaceholders = oldOdIds.map(() => '?').join(', ');
+        await connection.query(
+          `UPDATE bomiora_shop_health_profiles_cart
+           SET od_id = ?, hp_mdatetime = NOW()
+           WHERE mb_id = ?
+             AND REPLACE(REPLACE(CAST(od_id AS CHAR), ',', ''), ' ', '') IN (${odPlaceholders})`,
+          [payload.orderId, payload.mbId, ...oldOdIds]
+        );
+      }
+      if (itIds.length) {
+        const itPlaceholders = itIds.map(() => '?').join(', ');
+        await connection.query(
+          `UPDATE bomiora_shop_health_profiles_cart
+           SET od_id = ?, hp_mdatetime = NOW()
+           WHERE mb_id = ?
+             AND it_id IN (${itPlaceholders})
+             AND hp_status = '쇼핑'
+             AND (
+               od_id IS NULL OR od_id = '' OR od_id = '0'
+               OR REPLACE(REPLACE(CAST(od_id AS CHAR), ',', ''), ' ', '') NOT IN (
+                 SELECT o.od_id FROM bomiora_shop_order o WHERE o.mb_id = ?
+               )
+             )`,
+          [payload.orderId, payload.mbId, ...itIds, payload.mbId]
+        );
+      }
+
+      // 확정 od_id 기준 — it_id 당 최신 1행만 유지
+      await connection.query(
+        `DELETE h FROM bomiora_shop_health_profiles_cart h
+          INNER JOIN (
+            SELECT it_id, MAX(hp_no) AS keep_no
+              FROM bomiora_shop_health_profiles_cart
+             WHERE mb_id = ?
+               AND REPLACE(REPLACE(CAST(od_id AS CHAR), ',', ''), ' ', '') = ?
+             GROUP BY it_id
+            HAVING COUNT(*) > 1
+          ) d ON d.it_id = h.it_id
+         WHERE h.mb_id = ?
+           AND REPLACE(REPLACE(CAST(h.od_id AS CHAR), ',', ''), ' ', '') = ?
+           AND h.hp_no <> d.keep_no`,
+        [payload.mbId, String(payload.orderId), payload.mbId, String(payload.orderId)]
       );
 
       await connection.commit();

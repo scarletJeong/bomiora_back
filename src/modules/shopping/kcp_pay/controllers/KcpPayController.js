@@ -30,8 +30,8 @@ class KcpPayController {
         "style-src 'self' 'unsafe-inline'",
         "img-src 'self' data: blob: https:",
         "connect-src 'self' https:",
-        "frame-src 'self' https://pay.kcp.co.kr https://*.kcp.co.kr",
-        "form-action 'self' https://pay.kcp.co.kr https://*.kcp.co.kr",
+        "frame-src 'self' https://pay.kcp.co.kr https://smpay.kcp.co.kr https://rsmpay.kcp.co.kr https://testsmpay.kcp.co.kr https://*.kcp.co.kr",
+        "form-action 'self' https://pay.kcp.co.kr https://smpay.kcp.co.kr https://rsmpay.kcp.co.kr https://testsmpay.kcp.co.kr https://*.kcp.co.kr",
         "base-uri 'self'",
       ].join('; ')
     );
@@ -52,6 +52,8 @@ class KcpPayController {
         goods_name: goodsName,
         orderer,
         receiver,
+        od_memo: odMemo,
+        memo: topLevelMemo,
       } = req.body || {};
 
       if (!mbId) {
@@ -103,6 +105,10 @@ class KcpPayController {
       const goodInfo = kcpPayService.buildGoodInfo(orderId, cartRowsForKcp);
       const basketLineCount = Math.max(1, cartRowsForKcp.length);
 
+      // 배송요청사항: receiver.memo 우선, 없으면 body.od_memo / memo
+      const deliveryMemo = String(
+        receiver?.memo ?? odMemo ?? topLevelMemo ?? ''
+      ).trim();
       const pending = kcpPayStore.createPending({
         mbId,
         orderId,
@@ -112,34 +118,105 @@ class KcpPayController {
         amount: computedFinalAmount,
         goodsName: String(goodsName || '').trim() || this.buildGoodsName(carts),
         orderer: this.normalizeOrderer(orderer),
-        receiver: this.normalizeReceiver(receiver),
+        receiver: this.normalizeReceiver({
+          ...(receiver || {}),
+          memo: deliveryMemo,
+        }),
         shippingCost: safeShippingCost,
         couponDiscount: safeCouponDiscount,
         usedPoint: safeUsedPoint,
       });
 
       const callbackUrl = this.resolveCallbackUrl(req, config.callbackUrl);
+      const uaRaw = String(
+        req.body?.user_agent ||
+          req.body?.userAgent ||
+          req.get('user-agent') ||
+          ''
+      );
+      const userAgent = /iphone|ipad|ios/i.test(uaRaw)
+        ? 'iPhone'
+        : 'Android';
 
-      const html = kcpPayService.buildRequestHtml({
-        jsUrl: config.jsUrl,
-        callbackUrl,
-        token: pending.token,
-        siteCd: config.siteCd,
-        siteName: config.siteName,
-        orderId,
-        goodsName: pending.request.goodsName,
-        amount: computedFinalAmount,
-        buyer: pending.request.orderer,
-        receiver: pending.request.receiver,
-        payMethod: mapped.payMethod,
-        escrowUse: escrowUse === true,
-        basketLineCount,
-        goodInfo,
-        shopUserId: mbId,
-      });
+      // 앱(모바일): trade/register.do → PayUrl (SmartPay). PC payplus_web 사용 금지.
+      // 웹 데스크톱: 기존 payplus_web.jsp + KCP_Pay_Execute
+      // 클라이언트가 is_mobile 을 명시하면 UA 헤더보다 우선 (웹에서 모바일 UA 헤더를 쓰는 경우 대비)
+      const hasMobileFlag = Object.prototype.hasOwnProperty.call(req.body || {}, 'is_mobile');
+      const isMobileFlag = req.body?.is_mobile === true
+        || req.body?.is_mobile === 1
+        || String(req.body?.is_mobile || '').toLowerCase() === 'true';
+      const wantsMobile = hasMobileFlag
+        ? isMobileFlag
+        : /android|iphone|ipad|ipod|mobile/i.test(uaRaw);
+
+      let html;
+      let paymentChannel = 'pc_payplus';
+
+      if (wantsMobile) {
+        const mobileCodes = kcpPayService.toMobilePayCodes(mapped.payMethod);
+        const retUrl = (() => {
+          const base = String(callbackUrl || '').trim();
+          const sep = base.includes('?') ? '&' : '?';
+          return `${base}${sep}token=${encodeURIComponent(pending.token)}`;
+        })();
+
+        const trade = await kcpPayService.registerMobileTrade({
+          siteCd: config.siteCd,
+          orderId,
+          amount: computedFinalAmount,
+          goodsName: pending.request.goodsName,
+          payMethodCode: mobileCodes.payMethod,
+          retUrl,
+          escrowUse: escrowUse === true,
+        });
+
+        html = kcpPayService.buildMobileRequestHtml({
+          callbackUrl,
+          token: pending.token,
+          siteCd: config.siteCd,
+          siteName: config.siteName,
+          orderId,
+          goodsName: pending.request.goodsName,
+          amount: computedFinalAmount,
+          buyer: pending.request.orderer,
+          receiver: pending.request.receiver,
+          payMethodBits: mapped.payMethod,
+          escrowUse: escrowUse === true,
+          shopUserId: mbId,
+          approvalKey: trade.approvalKey,
+          payUrl: trade.payUrl,
+        });
+        paymentChannel = 'mobile_smartpay';
+        console.log('📱 [KcpPay] mobile trade registered', {
+          orderId,
+          payMethod: mobileCodes.payMethod,
+          payUrl: trade.payUrl,
+          retUrl,
+        });
+      } else {
+        html = kcpPayService.buildRequestHtml({
+          jsUrl: config.jsUrl,
+          callbackUrl,
+          token: pending.token,
+          siteCd: config.siteCd,
+          siteName: config.siteName,
+          orderId,
+          goodsName: pending.request.goodsName,
+          amount: computedFinalAmount,
+          buyer: pending.request.orderer,
+          receiver: pending.request.receiver,
+          payMethod: mapped.payMethod,
+          escrowUse: escrowUse === true,
+          basketLineCount,
+          goodInfo,
+          shopUserId: mbId,
+          userAgent,
+        });
+      }
 
       kcpPayStore.saveResult(pending.token, {
         request_html: html,
+        payment_channel: paymentChannel,
       });
 
       return res.json({
@@ -148,6 +225,7 @@ class KcpPayController {
         order_id: orderId,
         amount: computedFinalAmount,
         settle_case: mapped.settleCase,
+        payment_channel: paymentChannel,
         html,
       });
     } catch (error) {
@@ -176,7 +254,13 @@ class KcpPayController {
 
   async callback(req, res) {
     this.applyKcpHtmlCsp(res);
-    const token = String(req.body.kcp_token || req.query.token || '').trim();
+    const token = String(
+      req.body.kcp_token ||
+        req.body.param_opt_1 ||
+        req.query.token ||
+        req.query.kcp_token ||
+        ''
+    ).trim();
     const pending = kcpPayStore.get(token);
 
     console.log('🧾 [KCP callback] inbound', {
@@ -273,7 +357,10 @@ class KcpPayController {
       const tno = String(approval.tno || '').trim();
       const appNo = settleInfo.appNo;
       const bankAccount = settleInfo.bankAccount;
-      const depositName = settleInfo.depositName || pending.request.orderer.name;
+      // 가상계좌 예금주는 항상 (주)보미오라 (비대면/일반 공통)
+      const depositName = isVirtualAccount
+        ? '(주)보미오라'
+        : (settleInfo.depositName || pending.request.orderer.name);
 
       if (!tno) {
         throw this.buildHandledError({
@@ -437,6 +524,7 @@ class KcpPayController {
       status: row.status,
       message: row.message || '',
       error_code: row.error_code || null,
+      res_cd: row.raw?.callback?.res_cd || row.raw?.approval?.res_cd || null,
       order_id: row.order_id ? String(row.order_id) : null,
       tno: row.tno || null,
       app_no: row.app_no || null,
@@ -563,7 +651,7 @@ class KcpPayController {
       const account = String(body.account || body.vacct_no || body.vact_num || '').trim();
       const vaDate = String(body.va_date || body.vact_expire_dt || body.vact_expire || '').trim();
       bankAccount = [bankName, account, vaDate].filter((v) => v && v.length > 0).join('/');
-      depositName = String(body.depositor || '').trim() || depositName;
+      depositName = '(주)보미오라';
     } else if (settleCase === '계좌이체') {
       bankAccount = String(body.bank_name || body.bankname || '').trim();
     } else {
@@ -683,7 +771,9 @@ class KcpPayController {
 
   resolveCallbackUrl(req, configuredUrl) {
     const requestHost = String(req.get('host') || '').trim();
-    const requestOrigin = `${req.protocol}://${requestHost}`;
+    // 프록시 없이 갤럭시→PC IP 로 붙는 경우 실제 스킴은 http
+    const proto = String(req.protocol || 'http').replace(/:$/, '');
+    const requestOrigin = `${proto}://${requestHost}`;
     const fallback = `${requestOrigin}/api/kcp-pay/callback`;
     const configured = String(configuredUrl || '').trim();
 
@@ -691,8 +781,16 @@ class KcpPayController {
       return fallback;
     }
 
-    const isLocalHost = /^(localhost|127\.0\.0\.1|0\.0\.0\.0)(:\d+)?$/i.test(requestHost);
-    if (isLocalHost) {
+    // pending 토큰은 요청을 받은 서버 메모리에만 있음.
+    // 로컬/사설망(172.x, 192.168.x 등)으로 앱이 붙으면 bomiora.net 콜백으로 보내면 안 됨.
+    const hostOnly = requestHost.split(':')[0];
+    const isPrivateOrLocal =
+      /^(localhost|127\.0\.0\.1|0\.0\.0\.0)$/i.test(hostOnly)
+      || /^10\.\d+\.\d+\.\d+$/.test(hostOnly)
+      || /^192\.168\.\d+\.\d+$/.test(hostOnly)
+      || /^172\.(1[6-9]|2\d|3[01])\.\d+\.\d+$/.test(hostOnly);
+
+    if (isPrivateOrLocal) {
       return fallback;
     }
 

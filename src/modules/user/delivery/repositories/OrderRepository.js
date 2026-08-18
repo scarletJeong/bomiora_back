@@ -1,6 +1,16 @@
 const pool = require('../../../../config/database');
+const pointRepository = require('../../point/repositories/PointRepository');
+const { notifyPointEarned } = require('../../notification/services/MemberNotifyService');
 
 class OrderRepository {
+  _notifyReceiptPoint(mbId, pointResult) {
+    if (!pointResult?.granted || !pointResult?.needsNotify) return;
+    const amount = Number(pointResult.poPoint || 0);
+    if (amount <= 0) return;
+    notifyPointEarned(mbId, amount).catch((e) => {
+      console.error('[Order] 수령확인 적립 푸시 실패:', e?.message || e);
+    });
+  }
   bufferToString(value) {
     if (value == null) return '';
     if (typeof value === 'string') return value;
@@ -95,7 +105,14 @@ class OrderRepository {
               od_send_cost, od_send_cost2, od_send_coupon, od_receipt_price, od_cancel_price, od_receipt_point, od_coupon, od_misu,
               od_settle_case, od_bank_account, od_deposit_name, od_delivery_company, od_invoice,
               od_pg, od_tno, od_app_no, od_test, od_other_pay_type,
-              od_shop_memo, od_mod_history,
+              CASE
+                WHEN od_status IN ('취소', '반품') THEN od_shop_memo
+                ELSE NULL
+              END AS od_shop_memo,
+              CASE
+                WHEN od_status IN ('취소', '반품') THEN od_mod_history
+                ELSE NULL
+              END AS od_mod_history,
               NULLIF(od_time, '0000-00-00 00:00:00') AS od_time,
               NULLIF(od_invoice_time, '0000-00-00 00:00:00') AS od_invoice_time,
               NULLIF(od_receipt_time, '0000-00-00 00:00:00') AS od_receipt_time,
@@ -146,6 +163,100 @@ class OrderRepository {
       [mbId, odId]
     );
     return rows.length ? rows[0] : null;
+  }
+
+  /**
+   * 주문 상세용: 비대면/상담완료 + 예약정보를 한 번에 조회
+   * KCP 결제 전 임시 od_id 로 저장된 행이 있으면 주문 상품(it_id)으로 찾아 재연결
+   */
+  async getHealthAndReservation(mbId, odId) {
+    const odIdStr = String(odId ?? '').replace(/[^0-9]/g, '').trim();
+    let [rows] = await pool.query(
+      `SELECT hp_no, hp_9, hp_10, hp_mdatetime, hp_rsvt_date, hp_rsvt_stime, hp_rsvt_etime
+         FROM bomiora_shop_health_profiles_cart
+        WHERE mb_id = ?
+          AND REPLACE(REPLACE(CAST(od_id AS CHAR), ',', ''), ' ', '') = ?
+        ORDER BY hp_no DESC`,
+      [mbId, odIdStr]
+    );
+
+    // 결제 확정 od_id 미연결(임시 od_id 잔존) 보정
+    if (!rows.length && odIdStr) {
+      const [cartItems] = await pool.query(
+        `SELECT DISTINCT it_id
+           FROM bomiora_shop_cart
+          WHERE mb_id = ?
+            AND REPLACE(REPLACE(CAST(od_id AS CHAR), ',', ''), ' ', '') = ?`,
+        [mbId, odIdStr]
+      );
+      const itIds = (Array.isArray(cartItems) ? cartItems : [])
+        .map((row) => String(row.it_id ?? '').trim())
+        .filter(Boolean);
+
+      if (itIds.length) {
+        const placeholders = itIds.map(() => '?').join(', ');
+        const [orphans] = await pool.query(
+          `SELECT hp_no, hp_9, hp_10, hp_mdatetime, hp_rsvt_date, hp_rsvt_stime, hp_rsvt_etime
+             FROM bomiora_shop_health_profiles_cart
+            WHERE mb_id = ?
+              AND it_id IN (${placeholders})
+              AND hp_rsvt_date IS NOT NULL
+              AND CAST(hp_rsvt_date AS CHAR) NOT IN ('', '0000-00-00')
+              AND (
+                od_id IS NULL OR od_id = '' OR od_id = '0'
+                OR REPLACE(REPLACE(CAST(od_id AS CHAR), ',', ''), ' ', '') NOT IN (
+                  SELECT o.od_id FROM bomiora_shop_order o WHERE o.mb_id = ?
+                )
+              )
+            ORDER BY hp_no DESC`,
+          [mbId, ...itIds, mbId]
+        );
+
+        if (Array.isArray(orphans) && orphans.length) {
+          const healNos = orphans.map((row) => Number(row.hp_no)).filter((n) => n > 0);
+          if (healNos.length) {
+            const healPlaceholders = healNos.map(() => '?').join(', ');
+            await pool.query(
+              `UPDATE bomiora_shop_health_profiles_cart
+                  SET od_id = ?, hp_mdatetime = NOW()
+                WHERE mb_id = ?
+                  AND hp_no IN (${healPlaceholders})`,
+              [odIdStr, mbId, ...healNos]
+            );
+          }
+          rows = orphans;
+        }
+      }
+    }
+
+    const isPrescriptionOrder = rows.length > 0;
+    let isConsultationDone = false;
+    for (const row of rows) {
+      const hp9 = String(row.hp_9 || '').trim();
+      const hp10 = String(row.hp_10 || '').trim();
+      const md = row.hp_mdatetime;
+      const hasMd =
+        md != null &&
+        String(md) !== '' &&
+        String(md) !== '0000-00-00 00:00:00';
+      if (hp9 === 'prescription' && hp10 === 'completion' && hasMd) {
+        isConsultationDone = true;
+        break;
+      }
+    }
+
+    const top = rows[0] || null;
+    return {
+      isPrescriptionOrder,
+      isConsultationDone,
+      reservation: top
+        ? {
+            hp_rsvt_date: top.hp_rsvt_date,
+            hp_rsvt_stime: top.hp_rsvt_stime,
+            hp_rsvt_etime: top.hp_rsvt_etime,
+          }
+        : null,
+    };
   }
 
   /**
@@ -254,6 +365,17 @@ class OrderRepository {
     return result.affectedRows > 0;
   }
 
+  /** 배송요청사항(od_memo) 변경 */
+  async updateOrderMemo(odId, mbId, memo) {
+    const [result] = await pool.query(
+      `UPDATE bomiora_shop_order
+       SET od_memo = ?
+       WHERE od_id = ? AND mb_id = ?`,
+      [String(memo ?? ''), odId, mbId]
+    );
+    return result.affectedRows > 0;
+  }
+
   async updateReservation(mbId, odId, date, time) {
     const [result] = await pool.query(
       `UPDATE bomiora_shop_health_profiles_cart
@@ -332,10 +454,27 @@ class OrderRepository {
            WHERE od_id = ? AND mb_id = ?`,
           [odId, mbId]
         );
+
+        let pointResult = null;
+        try {
+          pointResult = await pointRepository.grantOrderReceiptPoint({
+            mbId,
+            odId,
+            conn,
+          });
+        } catch (e) {
+          console.error(
+            '[Order] 자동수령확정 포인트 적립 실패:',
+            e?.message || e
+          );
+        }
+
         await conn.commit();
+        this._notifyReceiptPoint(mbId, pointResult);
         return {
           auto: true,
           already: false,
+          point: pointResult,
           order: {
             od_id: odId,
             od_status: '완료',
@@ -436,10 +575,23 @@ class OrderRepository {
         [odId, mbId]
       );
 
+      let pointResult = null;
+      try {
+        pointResult = await pointRepository.grantOrderReceiptPoint({
+          mbId,
+          odId,
+          conn,
+        });
+      } catch (e) {
+        console.error('[Order] 수령확인 포인트 적립 실패:', e?.message || e);
+      }
+
       await conn.commit();
+      this._notifyReceiptPoint(mbId, pointResult);
       return {
         auto: false,
         already: false,
+        point: pointResult,
         order: {
           od_id: odId,
           od_status: '완료',
@@ -497,7 +649,22 @@ class OrderRepository {
              WHERE od_id = ? AND mb_id = ?`,
             [odId, mbId]
           );
+          let pointResult = null;
+          try {
+            pointResult = await pointRepository.grantOrderReceiptPoint({
+              mbId,
+              odId,
+              conn,
+            });
+          } catch (e) {
+            console.error(
+              '[Order] 배치 자동수령 포인트 적립 실패:',
+              odId,
+              e?.message || e
+            );
+          }
           await conn.commit();
+          this._notifyReceiptPoint(mbId, pointResult);
           results.processed += 1;
           results.odIds.push(odId);
         } catch (e) {

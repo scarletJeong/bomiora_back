@@ -3,8 +3,12 @@ const pool = require('../../../../config/database');
 class OrderCartRepository {
   async findByOdIdAndMbId(odId, mbId) {
     const [rows] = await pool.query(
-      `SELECT c.*,
+      `SELECT c.ct_id, c.od_id, c.mb_id, c.it_id, c.it_name,
+              c.ct_status, c.ct_qty, c.ct_price, c.io_price, c.io_id, c.io_type,
+              c.ct_option, c.ct_kind, c.parent,
               i.it_kind AS it_kind,
+              i.it_img1 AS it_img1,
+              i.it_flutter_image_url AS it_flutter_image_url,
               COALESCE(
                 NULLIF(TRIM(CAST(c.it_subject AS CHAR)), ''),
                 i.it_subject
@@ -27,8 +31,12 @@ class OrderCartRepository {
     if (!odIds.length) return [];
     const placeholders = odIds.map(() => '?').join(', ');
     const [rows] = await pool.query(
-      `SELECT c.*,
+      `SELECT c.ct_id, c.od_id, c.mb_id, c.it_id, c.it_name,
+              c.ct_status, c.ct_qty, c.ct_price, c.io_price, c.io_id, c.io_type,
+              c.ct_option, c.ct_kind, c.parent,
               i.it_kind AS it_kind,
+              i.it_img1 AS it_img1,
+              i.it_flutter_image_url AS it_flutter_image_url,
               COALESCE(
                 NULLIF(TRIM(CAST(c.it_subject AS CHAR)), ''),
                 i.it_subject

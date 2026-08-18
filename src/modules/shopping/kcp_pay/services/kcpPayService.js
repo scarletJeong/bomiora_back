@@ -111,6 +111,222 @@ class KcpPayService {
     }
   }
 
+  /**
+   * 모바일 SmartPay 결제수단 코드 (trade/register.do + PayUrl 폼)
+   * @param {string} payMethodBits - 12자리 PC pay_method
+   */
+  toMobilePayCodes(payMethodBits) {
+    switch (String(payMethodBits || '')) {
+      case '010000000000':
+        return { payMethod: 'BANK', actionResult: 'acnt' };
+      case '001000000000':
+        return { payMethod: 'VCNT', actionResult: 'vcnt' };
+      case '000010000000':
+        return { payMethod: 'MOBX', actionResult: 'mobx' };
+      case '100000000000':
+      default:
+        return { payMethod: 'CARD', actionResult: 'card' };
+    }
+  }
+
+  getMobileTradeRegisterUrl(testMode) {
+    return testMode
+      ? 'https://testsmpay.kcp.co.kr/trade/register.do'
+      : 'https://smpay.kcp.co.kr/trade/register.do';
+  }
+
+  /**
+   * KCP 모바일 필수: 거래등록 후 PayUrl / approvalKey 수령
+   * @returns {Promise<{ approvalKey: string, payUrl: string, raw: object }>}
+   */
+  async registerMobileTrade({
+    siteCd,
+    orderId,
+    amount,
+    goodsName,
+    payMethodCode,
+    retUrl,
+    escrowUse = false,
+  }) {
+    const { testMode } = this.getConfig();
+    const url = this.getMobileTradeRegisterUrl(testMode);
+    const body = {
+      site_cd: siteCd,
+      ordr_idxx: String(orderId),
+      good_mny: String(amount),
+      good_name: String(goodsName || '').slice(0, 100),
+      pay_method: String(payMethodCode || 'CARD'),
+      Ret_URL: String(retUrl),
+      escw_used: escrowUse ? 'Y' : 'N',
+    };
+
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json; charset=UTF-8',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify(body),
+    });
+
+    const text = await res.text();
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch (_) {
+      throw new Error(
+        `KCP 모바일 거래등록 응답 파싱 실패 (HTTP ${res.status}): ${text.slice(0, 200)}`
+      );
+    }
+
+    const code = String(
+      data.Code ?? data.code ?? data.res_cd ?? data.ResCd ?? ''
+    ).trim();
+    const message = String(
+      data.Message ?? data.message ?? data.res_msg ?? data.ResMsg ?? ''
+    ).trim();
+    const approvalKey = String(
+      data.approvalKey ?? data.approval_key ?? data.ApprovalKey ?? ''
+    ).trim();
+    const payUrl = String(
+      data.PayUrl ?? data.payUrl ?? data.pay_url ?? ''
+    ).trim();
+
+    if (code !== '0000' || !approvalKey || !payUrl) {
+      throw new Error(
+        `KCP 모바일 거래등록 실패 [${code || '????'}] ${message || '응답 오류'}`.trim()
+      );
+    }
+
+    return { approvalKey, payUrl, raw: data };
+  }
+
+  /**
+   * 모바일: PayUrl 로 order_info 자동 POST (payplus_web PC 레이어 미사용)
+   */
+  buildMobileRequestHtml({
+    callbackUrl,
+    token,
+    siteCd,
+    siteName,
+    orderId,
+    goodsName,
+    amount,
+    buyer,
+    receiver,
+    payMethodBits,
+    escrowUse,
+    shopUserId,
+    approvalKey,
+    payUrl,
+  }) {
+    const mobile = this.toMobilePayCodes(payMethodBits);
+    const retUrl = (() => {
+      const base = String(callbackUrl || '').trim();
+      if (!base) return '';
+      const sep = base.includes('?') ? '&' : '?';
+      return `${base}${sep}token=${encodeURIComponent(token)}`;
+    })();
+
+    const fields = {
+      site_cd: siteCd,
+      pay_method: mobile.payMethod,
+      ActionResult: mobile.actionResult,
+      currency: '410',
+      shop_name: siteName,
+      Ret_URL: retUrl,
+      approval_key: approvalKey,
+      PayUrl: payUrl,
+      ordr_idxx: orderId,
+      good_name: goodsName,
+      good_cd: '00',
+      good_mny: String(amount),
+      buyr_name: buyer?.name || '',
+      buyr_mail: buyer?.email || '',
+      buyr_tel1: buyer?.tel || '',
+      buyr_tel2: buyer?.hp || '',
+      rcvr_name: receiver?.name || '',
+      rcvr_tel1: receiver?.tel || '',
+      rcvr_tel2: receiver?.hp || '',
+      rcvr_mail: buyer?.email || '',
+      rcvr_zipx: this.rcvrZipx(receiver),
+      rcvr_add1: receiver?.addr1 || '',
+      rcvr_add2: receiver?.addr2 || '',
+      shop_user_id: String(shopUserId || '').trim(),
+      tablet_size: '1.0',
+      escw_used: escrowUse ? 'Y' : 'N',
+      pay_mod: escrowUse ? 'O' : 'N',
+      deli_term: '03',
+      param_opt_1: token,
+      param_opt_2: '',
+      param_opt_3: '',
+      kcp_token: token,
+      enc_info: '',
+      enc_data: '',
+      res_cd: '',
+      res_msg: '',
+      tran_cd: '',
+      use_pay_method: '',
+    };
+
+    const inputs = Object.entries(fields)
+      .map(
+        ([key, value]) =>
+          `<input type="hidden" name="${this.escape(key)}" value="${this.escape(value)}" />`
+      )
+      .join('\n');
+
+    return `<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>KCP 모바일 결제</title>
+  <style>
+    body { margin: 0; padding: 24px; font-family: -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', sans-serif; background: #f7f7f7; color: #222; }
+    .box { background: #fff; border-radius: 12px; padding: 20px; }
+    h3 { margin: 0 0 8px; font-size: 18px; }
+    p { margin: 0; color: #666; font-size: 14px; line-height: 1.5; }
+  </style>
+</head>
+<body>
+  <div class="box">
+    <h3>모바일 결제창을 여는 중입니다…</h3>
+    <p>잠시만 기다려 주세요.</p>
+  </div>
+  <form id="order_info" name="order_info" method="post">
+    ${inputs}
+  </form>
+  <script>
+    (function () {
+      function callPayForm() {
+        var v_frm = document.order_info || document.getElementById('order_info');
+        if (!v_frm) return;
+        var payUrl = (v_frm.PayUrl && v_frm.PayUrl.value) || '';
+        try {
+          if (payUrl) {
+            var base = payUrl.substring(0, payUrl.lastIndexOf('/'));
+            v_frm.action = base + '/jsp/encodingFilter/encodingFilter.jsp';
+          }
+        } catch (e) {
+          v_frm.action = payUrl;
+        }
+        if (!v_frm.action && payUrl) v_frm.action = payUrl;
+        v_frm.method = 'post';
+        v_frm.acceptCharset = 'UTF-8';
+        v_frm.submit();
+      }
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', callPayForm);
+      } else {
+        callPayForm();
+      }
+    })();
+  </script>
+</body>
+</html>`;
+  }
+
   buildRequestHtml({
     jsUrl,
     callbackUrl,
@@ -127,9 +343,14 @@ class KcpPayService {
     basketLineCount,
     goodInfo,
     shopUserId,
+    userAgent = 'Android',
   }) {
     const rcvrZipx = this.rcvrZipx(receiver);
     const lineCount = Math.max(1, Number(basketLineCount) || 1);
+    const uaHint = String(userAgent || 'Android').trim() || 'Android';
+    const mobileUa = /iphone|ipad|ios/i.test(uaHint)
+      ? 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1'
+      : 'Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Mobile Safari/537.36';
 
     const fields = {
       req_tx: 'pay',
@@ -192,6 +413,10 @@ class KcpPayService {
       site_logo: '',
       eng_flag: 'N',
       skin_indx: '1',
+      // 가맹점 커스텀 값 — 모바일 Ret_URL 분기 시에도 토큰 복구용
+      param_opt_1: token,
+      param_opt_2: '',
+      param_opt_3: '',
       kcp_token: token,
     };
 
@@ -199,12 +424,60 @@ class KcpPayService {
       .map(([key, value]) => `<input type="hidden" name="${this.escape(key)}" value="${this.escape(value)}" />`)
       .join('\n');
 
+    // payplus_web.jsp / Chromium 이 PC로 분기하지 않도록 UA·userAgentData 강제
+    const forceMobileScript = `
+(function () {
+  var MOBILE_UA = ${JSON.stringify(mobileUa)};
+  var IS_IOS = /iPhone|iPad|iPod/i.test(MOBILE_UA);
+  function spoof(obj, prop, value) {
+    try {
+      Object.defineProperty(obj, prop, {
+        configurable: true,
+        get: function () { return value; }
+      });
+    } catch (e) {}
+  }
+  try {
+    spoof(Navigator.prototype, 'userAgent', MOBILE_UA);
+    spoof(Navigator.prototype, 'appVersion', MOBILE_UA);
+    spoof(Navigator.prototype, 'platform', IS_IOS ? 'iPhone' : 'Linux armv8l');
+    spoof(Navigator.prototype, 'vendor', 'Google Inc.');
+    spoof(Navigator.prototype, 'maxTouchPoints', 5);
+    spoof(Navigator.prototype, 'userAgentData', {
+      mobile: true,
+      platform: IS_IOS ? 'iOS' : 'Android',
+      brands: [
+        { brand: 'Chromium', version: '123' },
+        { brand: 'Google Chrome', version: '123' }
+      ],
+      getHighEntropyValues: function () {
+        return Promise.resolve({
+          mobile: true,
+          platform: IS_IOS ? 'iOS' : 'Android',
+          model: IS_IOS ? 'iPhone' : 'Pixel 7',
+          uaFullVersion: '123.0.0.0'
+        });
+      }
+    });
+    try { spoof(navigator, 'userAgent', MOBILE_UA); } catch (e2) {}
+    try {
+      if (window.screen) {
+        spoof(window.screen, 'width', 390);
+        spoof(window.screen, 'height', 844);
+        spoof(window.screen, 'availWidth', 390);
+        spoof(window.screen, 'availHeight', 844);
+      }
+    } catch (e3) {}
+  } catch (e) {}
+})();`;
+
     return `<!doctype html>
 <html lang="ko">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <title>KCP 결제</title>
+  <script>${forceMobileScript}</script>
   <script>
     function m_Completepayment(FormOrJson, closeEvent) {
       var form = document.kcp_form || document.getElementById('kcp_form');

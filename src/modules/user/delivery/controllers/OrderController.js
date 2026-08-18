@@ -1,8 +1,16 @@
 const orderRepository = require('../repositories/OrderRepository');
 const orderCartRepository = require('../repositories/OrderCartRepository');
 const kcpApprovalService = require('../../../shopping/kcp_pay/services/kcpApprovalService');
+const { TtlCache } = require('../../../../utils/ttlCache');
+
+const orderDetailCache = new TtlCache(10_000);
 
 class OrderController {
+  invalidateOrderDetailCache(mbId, odId) {
+    if (mbId && odId) {
+      orderDetailCache.store.delete(`detail:${mbId}:${odId}`);
+    }
+  }
   bufferToString(value) {
     if (value == null) return null;
     if (typeof value === 'string') return value;
@@ -235,6 +243,7 @@ class OrderController {
           : 'general')
       : ctKindRaw;
     const ioType = this.toInt(cart.io_type);
+    const listImage = this.buildOrderItemListImageUrl(cart, itId);
     return {
       ctId: cart.ct_id,
       itId,
@@ -255,8 +264,26 @@ class OrderController {
       io_type: ioType,
       totalPrice: (ctPrice + ioPrice) * ctQty,
       ctStatus,
-      imageUrl: imageUrlMap[itId] || ''
+      imageUrl: listImage || imageUrlMap[itId] || cart.it_img1 || ''
     };
+  }
+
+  /** 주문 목록/상세 카드용 — flutter 경로면 `{id}_list.jpg` */
+  buildOrderItemListImageUrl(cart, itId) {
+    const id = String(itId || '').trim();
+    const folderRaw = this.bufferToString(cart.it_flutter_image_url);
+    if (folderRaw && id) {
+      let base = String(folderRaw).trim();
+      if (base.startsWith('http://') || base.startsWith('https://')) {
+        const normalized = base.endsWith('/') ? base.slice(0, -1) : base;
+        return `${normalized}/${id}_list.jpg`;
+      }
+      if (!base.endsWith('/')) base += '/';
+      if (!base.startsWith('/')) base = `/${base}`;
+      return `${base}${id}_list.jpg`;
+    }
+    const img1 = this.bufferToString(cart.it_img1);
+    return img1 && String(img1).trim() ? String(img1).trim() : '';
   }
 
   extractCancelDate(...texts) {
@@ -378,11 +405,9 @@ class OrderController {
         cartsByOrder[key].push(c);
       });
 
-      const itIds = [...new Set(allCarts.map((c) => c.it_id).filter(Boolean))];
-      const imageRows = await orderRepository.getItemImagesByItIds(itIds);
       const imageUrlMap = {};
-      imageRows.forEach((row) => {
-        if (row.it_img1) imageUrlMap[row.it_id] = row.it_img1;
+      allCarts.forEach((row) => {
+        if (row.it_id && row.it_img1) imageUrlMap[row.it_id] = row.it_img1;
       });
       const healthFlags = await orderRepository.getHealthProfileFlagsByOdIds(mbId, odIds);
 
@@ -410,6 +435,11 @@ class OrderController {
           ),
           odStatus: row.od_status,
           totalPrice: this.computeOrderTotal(row),
+          deliveryFee: this.toInt(row.od_send_cost) + this.toInt(row.od_send_cost2),
+          recipientName: this.bufferToString(row.od_name) || '',
+          recipientPhone: this.bufferToString(row.od_hp) || '',
+          recipientAddress: this.bufferToString(row.od_addr1) || '',
+          recipientAddressDetail: `${this.bufferToString(row.od_addr2) || ''} ${this.bufferToString(row.od_addr3) || ''}`.trim(),
           odCartCount: this.toInt(row.od_cart_count),
           isPrescriptionOrder,
           isConsultationDone,
@@ -448,15 +478,24 @@ class OrderController {
       const odId = this.toOdId(req.params.odId);
       if (!odId) return res.status(400).json({ error: '주문번호가 필요합니다.' });
       const mbId = req.query.mbId;
+      const cacheKey = `detail:${mbId}:${odId}`;
+      const cached = orderDetailCache.get(cacheKey);
+      if (cached) {
+        res.set('Cache-Control', 'private, max-age=5');
+        return res.json(cached);
+      }
+
       const row = await orderRepository.getOrderDetail(odId, mbId);
       if (!row) return res.status(404).json({ error: '주문을 찾을 수 없습니다.' });
 
-      const carts = await orderCartRepository.findByOdIdAndMbId(odId, mbId);
-      const itIds = [...new Set(carts.map((c) => c.it_id).filter(Boolean))];
-      const imageRows = await orderRepository.getItemImagesByItIds(itIds);
+      const [carts, healthBundle] = await Promise.all([
+        orderCartRepository.findByOdIdAndMbId(odId, mbId),
+        orderRepository.getHealthAndReservation(mbId, odId),
+      ]);
+
       const imageUrlMap = {};
-      imageRows.forEach((img) => {
-        if (img.it_img1) imageUrlMap[img.it_id] = img.it_img1;
+      carts.forEach((c) => {
+        if (c.it_id && c.it_img1) imageUrlMap[c.it_id] = c.it_img1;
       });
       const products = carts.map((c) => this.toOrderItem(c, imageUrlMap));
       const settleCase = this.bufferToString(row.od_settle_case) || '';
@@ -468,11 +507,14 @@ class OrderController {
         this.toInt(row.od_cart_coupon) + this.toInt(row.od_send_coupon) + this.toInt(row.od_coupon);
       const pointDiscount = this.toInt(row.od_receipt_point);
 
-      const healthProfileOrder = await orderRepository.isPrescriptionOrder(mbId, odId);
-      const isPrescriptionOrder = this.resolveIsPrescriptionOrder(products, healthProfileOrder);
+      const isPrescriptionOrder = this.resolveIsPrescriptionOrder(
+        products,
+        healthBundle.isPrescriptionOrder === true
+      );
       const isConsultationDone =
-        isPrescriptionOrder && (await orderRepository.isConsultationDone(mbId, odId));
+        isPrescriptionOrder && healthBundle.isConsultationDone === true;
 
+      const t = (v) => this.bufferToString(v) || '';
       const detail = {
         odId: String(row.od_id),
         orderDate: this.formatDate(row.od_time, true),
@@ -483,14 +525,14 @@ class OrderController {
           row.auto_confirm_at,
           isConsultationDone
         ),
-        odStatus: row.od_status,
-        recipientName: row.od_name,
-        recipientPhone: row.od_hp,
-        recipientAddress: row.od_addr1,
-        recipientAddressDetail: `${row.od_addr2 || ''} ${row.od_addr3 || ''}`.trim(),
-        deliveryMessage: row.od_memo,
-        deliveryCompany: row.od_delivery_company,
-        trackingNumber: row.od_invoice,
+        odStatus: t(row.od_status),
+        recipientName: t(row.od_name),
+        recipientPhone: t(row.od_hp),
+        recipientAddress: t(row.od_addr1),
+        recipientAddressDetail: `${t(row.od_addr2)} ${t(row.od_addr3)}`.trim(),
+        deliveryMessage: t(row.od_memo) || null,
+        deliveryCompany: t(row.od_delivery_company) || null,
+        trackingNumber: t(row.od_invoice) || null,
         products,
         productPrice: this.toInt(row.od_cart_price),
         deliveryFee: this.toInt(row.od_send_cost) + this.toInt(row.od_send_cost2),
@@ -511,9 +553,9 @@ class OrderController {
         odBankAccount: bankAccount || null,
         odDepositName: depositName,
         od_deposit_name: depositName,
-        ordererName: row.od_b_name,
-        ordererPhone: row.od_b_hp,
-        ordererEmail: row.od_email,
+        ordererName: t(row.od_b_name),
+        ordererPhone: t(row.od_b_hp),
+        ordererEmail: t(row.od_email),
         cancelReason: null,
         cancelType: null,
         cancelDate: null,
@@ -532,12 +574,12 @@ class OrderController {
         else if (bankAccount !== '0') detail.paymentMethodDetail = ` (${bankAccount})`;
       }
 
-      const odStatusText = (this.bufferToString(row.od_status) || '').trim();
+      const odStatusText = t(row.od_status).trim();
       if (odStatusText === '취소' || odStatusText === '반품') {
         this.parseCancelInfo(detail, row.od_shop_memo, row.od_mod_history);
       }
 
-      const reservation = await orderRepository.getReservation(mbId, odId);
+      const reservation = healthBundle.reservation;
       if (reservation) {
         let rawDate = reservation.hp_rsvt_date;
         if (rawDate != null && !(rawDate instanceof Date)) {
@@ -558,6 +600,8 @@ class OrderController {
         detail.cardReceiptUrl = cardReceiptUrl;
       }
 
+      orderDetailCache.set(cacheKey, detail);
+      res.set('Cache-Control', 'private, max-age=5');
       return res.json(detail);
     } catch (error) {
       return res.status(404).json({ error: '주문 정보를 불러올 수 없습니다.' });
@@ -619,6 +663,7 @@ class OrderController {
         status_changed_at: new Date(),
         od_shop_memo: cancelMemo,
       });
+      this.invalidateOrderDetailCache(mbId, odId);
       return res.json({ success: true, message: '주문이 취소되었습니다.' });
     } catch (error) {
       return res.status(400).json({ error: error.message });
@@ -664,8 +709,14 @@ class OrderController {
         clientIp,
       });
 
+      const earnedPoint =
+        result.point?.granted && Number(result.point.poPoint) > 0
+          ? Number(result.point.poPoint)
+          : 0;
+
       if (result.auto) {
         // 웹: alert 후 중단 — 앱은 상태 갱신을 위해 200 + 안내 메시지
+        this.invalidateOrderDetailCache(mbId, odId);
         return res.json({
           success: true,
           message: '수령 확인 기한이 지나 자동으로 수령 완료 처리되었습니다.',
@@ -674,9 +725,11 @@ class OrderController {
           deliveryCompleted: 1,
           displayStatus: '배송완료',
           autoConfirmed: true,
+          earnedPoint,
         });
       }
 
+      this.invalidateOrderDetailCache(mbId, odId);
       return res.json({
         success: true,
         message: '수령 확인되었습니다.',
@@ -685,6 +738,7 @@ class OrderController {
         deliveryCompleted: 1,
         displayStatus: '배송완료',
         autoConfirmed: false,
+        earnedPoint,
       });
     } catch (error) {
       const status = Number(error.statusCode) || 400;
@@ -743,6 +797,7 @@ class OrderController {
       const changed = await orderRepository.updateReservation(mbId, odId, date, reservationTime);
       if (!changed) throw new Error('예약 정보를 찾을 수 없습니다.');
 
+      this.invalidateOrderDetailCache(mbId, odId);
       return res.json({ success: true, message: '예약 시간이 변경되었습니다.' });
     } catch (error) {
       return res.status(400).json({ error: error.message });
@@ -796,7 +851,50 @@ class OrderController {
       const changed = await orderRepository.updateOrderAddress(odId, mbId, address);
       if (!changed) throw new Error('배송지 변경에 실패했습니다.');
 
+      this.invalidateOrderDetailCache(mbId, odId);
       return res.json({ success: true, message: '배송지가 변경되었습니다.' });
+    } catch (error) {
+      return res.status(400).json({ error: error.message });
+    }
+  }
+
+  /** 배송요청사항(od_memo) 변경 */
+  async updateDeliveryMemo(req, res) {
+    try {
+      const odId = this.toOdId(req.params.odId);
+      if (!odId) return res.status(400).json({ error: '주문번호가 필요합니다.' });
+
+      const mbIdRaw = req.body.mbId ?? req.body.mb_id;
+      const mbId = mbIdRaw != null ? String(mbIdRaw).trim() : '';
+      if (!mbId) return res.status(400).json({ error: '회원 ID가 필요합니다.' });
+
+      const memo = String(
+        req.body.od_memo ?? req.body.memo ?? req.body.deliveryMessage ?? ''
+      ).trim();
+
+      const order = await orderRepository.findById(odId);
+      if (!order) throw new Error('주문을 찾을 수 없습니다.');
+      if (this.bufferToString(order.mb_id || '').trim() !== mbId) {
+        throw new Error('주문 정보가 일치하지 않습니다.');
+      }
+
+      const odStatus = this.bufferToString(order.od_status || '').trim();
+      if (!['주문', '입금', '준비'].includes(odStatus)) {
+        throw new Error('배송요청사항은 결제대기/배송준비 상태에서만 변경할 수 있습니다.');
+      }
+      if (await orderRepository.isConsultationDone(mbId, odId)) {
+        throw new Error('처방 주문은 배송요청사항 변경이 불가능합니다.');
+      }
+
+      const changed = await orderRepository.updateOrderMemo(odId, mbId, memo);
+      if (!changed) throw new Error('배송요청사항 변경에 실패했습니다.');
+
+      this.invalidateOrderDetailCache(mbId, odId);
+      return res.json({
+        success: true,
+        message: '배송요청사항이 변경되었습니다.',
+        od_memo: memo,
+      });
     } catch (error) {
       return res.status(400).json({ error: error.message });
     }

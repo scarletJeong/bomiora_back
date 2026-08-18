@@ -1,5 +1,16 @@
 const pool = require('../../../../config/database');
 
+/** 목록/카드용 — LONGTEXT(상세 HTML 등) 제외 */
+const LIST_COLUMNS = `
+  it_id, it_name, it_basic, it_subject, it_price, it_cust_price,
+  ca_id, it_kind, it_type3, it_type4, it_type5, it_stock_qty,
+  it_use_avg, it_use_cnt, it_flutter_image_url,
+  it_img1, it_img2, it_img3,
+  it_sc_type, it_sc_price, it_sc_minimum,
+  it_depopt1_subject, it_depopt1_label, it_depopt2_subject, it_depopt2_label,
+  it_supply_items, it_order
+`;
+
 class ProductRepository {
   async findByCategory(categoryId, productKind, page, pageSize) {
     const offset = (page - 1) * pageSize;
@@ -13,7 +24,7 @@ class ProductRepository {
     }
 
     const [rows] = await pool.query(
-      `SELECT * FROM bomiora_shop_item_new
+      `SELECT ${LIST_COLUMNS} FROM bomiora_shop_item_new
        WHERE ${where}
        ORDER BY it_order ASC, it_id DESC
        LIMIT ? OFFSET ?`,
@@ -49,9 +60,44 @@ class ProductRepository {
     return ids.map((id) => byId.get(id)).filter(Boolean);
   }
 
+  /** 연결상품 목록용 — 카드에 필요한 컬럼만 */
+  async findSupplySummariesByIds(productIds) {
+    const ids = (productIds || [])
+      .map((id) => String(id || '').trim())
+      .filter(Boolean);
+    if (!ids.length) return [];
+    const placeholders = ids.map(() => '?').join(', ');
+    const [rows] = await pool.query(
+      `SELECT
+          it_id, it_name, it_basic, it_subject, it_price, it_cust_price,
+          ca_id, it_kind, it_stock_qty, it_flutter_image_url,
+          it_img1, it_img2, it_img3, it_option_subject, it_mb_inf,
+          it_supply_items
+         FROM bomiora_shop_item_new
+        WHERE it_id IN (${placeholders}) AND it_use = 1`,
+      ids
+    );
+    const byId = new Map(
+      rows.map((r) => [String(r.it_id != null ? r.it_id : '').trim(), r])
+    );
+    return ids.map((id) => byId.get(id)).filter(Boolean);
+  }
+
+  /** 연결상품 id CSV만 조회 */
+  async findSupplyItemIds(productId) {
+    const [rows] = await pool.query(
+      `SELECT it_id, it_supply_items
+         FROM bomiora_shop_item_new
+        WHERE it_id = ? AND it_use = 1
+        LIMIT 1`,
+      [productId]
+    );
+    return rows.length ? rows[0] : null;
+  }
+
   async findBestProducts(limit) {
     const [rows] = await pool.query(
-      `SELECT * FROM bomiora_shop_item_new
+      `SELECT ${LIST_COLUMNS} FROM bomiora_shop_item_new
        WHERE it_type4 = 1 AND it_use = 1
        ORDER BY it_order ASC, it_id DESC
        LIMIT ?`,
@@ -62,7 +108,7 @@ class ProductRepository {
 
   async findNewProducts(limit) {
     const [rows] = await pool.query(
-      `SELECT * FROM bomiora_shop_item_new
+      `SELECT ${LIST_COLUMNS} FROM bomiora_shop_item_new
        WHERE it_type3 = 1 AND it_use = 1
        ORDER BY it_order ASC, it_id DESC
        LIMIT ?`,
@@ -113,7 +159,7 @@ class ProductRepository {
     }
 
     const [rows] = await pool.query(
-      `SELECT * FROM bomiora_shop_item_new
+      `SELECT ${LIST_COLUMNS} FROM bomiora_shop_item_new
        WHERE ${where}
        ORDER BY it_order ASC, it_id DESC
        LIMIT ?`,
@@ -152,7 +198,7 @@ class ProductRepository {
     }
 
     const [rows] = await pool.query(
-      `SELECT *
+      `SELECT ${LIST_COLUMNS}
          FROM bomiora_shop_item_new
         WHERE ${where}
         ORDER BY it_order ASC, it_id DESC

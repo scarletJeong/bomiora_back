@@ -67,16 +67,45 @@ function resolvePhpBinary() {
   return 'php';
 }
 
+/**
+ * pp_ax_hub_lib.php 가 있는 디렉터리.
+ * .env 경로가 없거나(운영 Linux 경로를 로컬에서 쓰는 경우) 프로젝트 내 kcp_pay 로 폴백.
+ */
+function resolveKcpHomeDir() {
+  const candidates = [
+    String(process.env.KCP_PAY_HOME_DIR || '').trim(),
+    path.resolve(__dirname, '../../../../../kcp_pay'),
+    path.resolve(process.cwd(), 'kcp_pay'),
+  ].filter(Boolean);
+
+  for (const dir of candidates) {
+    const normalized = path.resolve(dir);
+    if (fs.existsSync(path.join(normalized, 'pp_ax_hub_lib.php'))) {
+      return normalized;
+    }
+  }
+  return candidates[0] || '';
+}
+
 function runPhpBridge(payload) {
   return new Promise((resolve, reject) => {
     const phpBin = resolvePhpBinary();
     const scriptPath = path.join(__dirname, 'kcp_approval_bridge.php');
+    const kcpHome = resolveKcpHomeDir();
+    const childEnv = {
+      ...process.env,
+      ...(kcpHome ? { KCP_PAY_HOME_DIR: kcpHome } : {}),
+    };
+    if (kcpHome) {
+      console.log('[kcpApprovalService] KCP_PAY_HOME_DIR=', kcpHome);
+    }
     const child = execFile(
       phpBin,
       [scriptPath],
       {
         windowsHide: true,
         maxBuffer: 10 * 1024 * 1024,
+        env: childEnv,
       },
       (error, stdout, stderr) => {
         const stderrText = String(stderr || '').trim();
