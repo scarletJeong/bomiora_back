@@ -80,6 +80,7 @@ class AddressSearchController {
   <style>
     html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #fff; }
     #postcode-root { width: 100%; height: 100%; }
+    #postcode-root iframe { width: 100% !important; height: 100% !important; border: 0; }
   </style>
   <script src="https://t1.daumcdn.net/mapjsapi/bundle/postcode/prod/postcode.v2.js"></script>
 </head>
@@ -87,9 +88,29 @@ class AddressSearchController {
   <div id="postcode-root"></div>
   <script>
     (function() {
-      function moveResult(params) {
-        var qs = new URLSearchParams(params);
-        location.replace('${resultPath}?' + qs.toString());
+      // 결과 대기 HTML로 이동하지 않음 — Flutter 팝업이 바로 닫히도록 브릿지만 통지
+      function notifyResult(params) {
+        var payload = {
+          token: params.token || '',
+          postalCode: params.postalCode || '',
+          roadAddress: params.roadAddress || '',
+          jibunAddress: params.jibunAddress || '',
+          extraAddress: params.extraAddress || '',
+          closed: params.closed || ''
+        };
+        try {
+          console.log('POSTCODE_RESULT:' + JSON.stringify(payload));
+        } catch (e) {}
+        try {
+          if (window.flutter_inappwebview && window.flutter_inappwebview.callHandler) {
+            window.flutter_inappwebview.callHandler('postcodeResult', payload);
+          }
+        } catch (e2) {}
+        // 폴링 백업용으로만 서버에 저장 (페이지 이동 없음)
+        try {
+          var qs = new URLSearchParams(payload);
+          fetch('${resultPath}?' + qs.toString(), { method: 'GET', credentials: 'omit' }).catch(function(){});
+        } catch (e3) {}
       }
 
       function buildExtraAddress(data) {
@@ -105,9 +126,14 @@ class AddressSearchController {
         return extra;
       }
 
+      var qs = new URLSearchParams(location.search);
+      var embedW = parseInt(qs.get('width') || '0', 10);
+      var embedH = parseInt(qs.get('height') || '0', 10);
       new daum.Postcode({
+        width: embedW > 0 ? embedW : '100%',
+        height: embedH > 0 ? embedH : '100%',
         oncomplete: function(data) {
-          moveResult({
+          notifyResult({
             token: '${token}',
             postalCode: data.zonecode || '',
             roadAddress: data.roadAddress || '',
@@ -117,7 +143,7 @@ class AddressSearchController {
         },
         onclose: function(state) {
           if (state === 'FORCE_CLOSE') {
-            moveResult({ token: '${token}', closed: '1' });
+            notifyResult({ token: '${token}', closed: '1' });
           }
         }
       }).embed(document.getElementById('postcode-root'));
