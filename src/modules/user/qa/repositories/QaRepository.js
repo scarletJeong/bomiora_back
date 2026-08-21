@@ -14,104 +14,47 @@ class QaRepository {
     return parent === id ? id : parent;
   }
 
+  /** ??? ??? ??(????). ? ??? ?????? ?? 1?? ?? */
   async findThreadByRoot(rootWrId) {
     const [rows] = await pool.query(
-      'SELECT * FROM bomiora_write_online WHERE wr_parent = ? ORDER BY wr_datetime DESC, wr_id DESC',
+      'SELECT * FROM bomiora_write_online WHERE wr_parent = ? ORDER BY wr_datetime ASC, wr_id ASC',
       [rootWrId]
     );
     return rows;
   }
 
-  async countFollowUpsByRoot({ rootWrId, mbId, mbEmail }) {
-    const id = (mbId ?? '').toString().trim();
-    const email = (mbEmail ?? '').toString().trim();
-    if (!rootWrId) return 0;
-
-    if (id && email) {
-      const [rows] = await pool.query(
-        `SELECT COUNT(*) AS cnt
-         FROM bomiora_write_online
-         WHERE wr_parent = ?
-           AND wr_id <> ?
-           AND (mb_id = ? OR wr_email = ?)`,
-        [rootWrId, rootWrId, id, email]
-      );
-      return Number(rows[0]?.cnt || 0);
-    }
-    if (email) {
-      const [rows] = await pool.query(
-        `SELECT COUNT(*) AS cnt
-         FROM bomiora_write_online
-         WHERE wr_parent = ?
-           AND wr_id <> ?
-           AND wr_email = ?`,
-        [rootWrId, rootWrId, email]
-      );
-      return Number(rows[0]?.cnt || 0);
-    }
-    const [rows] = await pool.query(
-      `SELECT COUNT(*) AS cnt
-       FROM bomiora_write_online
-       WHERE wr_parent = ?
-         AND wr_id <> ?
-         AND mb_id = ?`,
-      [rootWrId, rootWrId, id]
-    );
-    return Number(rows[0]?.cnt || 0);
-  }
-
+  /**
+   * ? ?? ?? ? ??(??)?.
+   * ?? Q&A ??: wr_parent = wr_id
+   */
   async findThreadsByIdentity({ mbId, mbEmail }) {
     const id = (mbId ?? '').toString().trim();
     const email = (mbEmail ?? '').toString().trim();
     if (!id && !email) return [];
 
-    // ?§Î†à??=wr_parent)Î≥?ÏµúÏã† ?ëÏÑ±??Í∏∞Ï??ºÎ°ú "?êÍ?Îß? Î∞òÌôò
-    // Î™©Î°ù ?∏Ï∂ú ?†Ïßú??ÏµúÏã† ?ëÏÑ±?ºÏùÑ wr_datetime?ºÎ°ú ?¥Î†§Ï§?(?îÍµ¨?¨Ìï≠: ÏµúÍ∑º ÏßàÎ¨∏ ?ëÏÑ±??Í∏∞Ï? ?ïÎ†¨)
-    const where = [];
+    const where = ['wr_parent = wr_id'];
     const args = [];
-    if (id) {
+    if (id && email) {
+      where.push('(mb_id = ? OR wr_email = ?)');
+      args.push(id, email);
+    } else if (email) {
+      where.push('wr_email = ?');
+      args.push(email);
+    } else {
       where.push('mb_id = ?');
       args.push(id);
     }
-    if (email) {
-      where.push('wr_email = ?');
-      args.push(email);
-    }
-    const whereSql = where.length ? `(${where.join(' OR ')})` : '1=0';
 
     const [rows] = await pool.query(
       `
       SELECT root.*,
-             latest.latest_dt AS thread_last_datetime,
-             latest.followup_cnt AS followup_count,
-             latest.latest_wr_id AS latest_wr_id,
-             latest.latest_wr_is_comment AS latest_wr_is_comment
+             root.wr_datetime AS thread_last_datetime,
+             0 AS followup_count,
+             root.wr_id AS latest_wr_id,
+             root.wr_is_comment AS latest_wr_is_comment
       FROM bomiora_write_online root
-      JOIN (
-        SELECT t.wr_parent,
-               t.latest_dt,
-               t.followup_cnt,
-               p.wr_id AS latest_wr_id,
-               p.wr_is_comment AS latest_wr_is_comment
-        FROM (
-          SELECT wr_parent,
-                 MAX(wr_datetime) AS latest_dt,
-                 SUM(CASE WHEN wr_id <> wr_parent THEN 1 ELSE 0 END) AS followup_cnt
-          FROM bomiora_write_online
-          WHERE ${whereSql}
-          GROUP BY wr_parent
-        ) t
-        JOIN (
-          SELECT wr_parent, wr_datetime, MAX(wr_id) AS wr_id
-          FROM bomiora_write_online
-          GROUP BY wr_parent, wr_datetime
-        ) x
-          ON x.wr_parent = t.wr_parent AND x.wr_datetime = t.latest_dt
-        JOIN bomiora_write_online p
-          ON p.wr_parent = x.wr_parent AND p.wr_datetime = x.wr_datetime AND p.wr_id = x.wr_id
-      ) latest
-        ON root.wr_id = latest.wr_parent
-      ORDER BY latest.latest_dt DESC, root.wr_id DESC
+      WHERE ${where.join(' AND ')}
+      ORDER BY root.wr_datetime DESC, root.wr_id DESC
       `,
       args
     );
@@ -144,11 +87,14 @@ class QaRepository {
        wr_1, wr_2, wr_3, wr_4, wr_5, wr_6, wr_7, wr_8, wr_9, wr_10)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
-        contact.wr_id, contact.wr_num, contact.wr_reply, contact.wr_parent, contact.wr_comment, contact.wr_comment_reply, contact.wr_is_comment,
-        contact.ca_name, contact.wr_option, contact.wr_subject, contact.wr_content, contact.wr_hit, contact.mb_id, contact.wr_password,
-        contact.wr_name, contact.wr_email, contact.wr_datetime, contact.wr_file, contact.wr_last, contact.wr_ip,
+        contact.wr_id, contact.wr_num, contact.wr_reply, contact.wr_parent, contact.wr_comment,
+        contact.wr_comment_reply, contact.wr_is_comment,
+        contact.ca_name, contact.wr_option, contact.wr_subject, contact.wr_content, contact.wr_hit,
+        contact.mb_id, contact.wr_password,
+        contact.wr_name, contact.wr_email, contact.wr_datetime, contact.wr_file, contact.wr_last,
+        contact.wr_ip,
         contact.wr_1, contact.wr_2, contact.wr_3, contact.wr_4, contact.wr_5, contact.wr_6,
-        contact.wr_7, contact.wr_8, contact.wr_9, contact.wr_10
+        contact.wr_7, contact.wr_8, contact.wr_9, contact.wr_10,
       ]
     );
 
@@ -194,26 +140,28 @@ class QaRepository {
     return wr7.length > 0 || wrReply.length > 0;
   }
 
-  /** ?§Î†à??ÏµúÏã† ÏßàÎ¨∏???µÎ???(?ÜÏúºÎ©?null) */
+  /**
+   * ?? Q&A: ?? ?? ????? ? ???(wr_last) ??
+   * (??? ???? ??? ??? ?? ??)
+   */
   async findLastQuestionAnswerDate(rootWrId) {
+    const root = await this.findById(rootWrId);
+    if (!root) return null;
+
     const rows = await this.findThreadByRoot(rootWrId);
-    if (!rows.length) return null;
+    const target = rows.length
+      ? [...rows].sort((a, b) => {
+          const dtCmp = new Date(a.wr_datetime) - new Date(b.wr_datetime);
+          if (dtCmp !== 0) return dtCmp;
+          return Number(a.wr_id) - Number(b.wr_id);
+        }).pop()
+      : root;
 
-    const sorted = [...rows].sort((a, b) => {
-      const dtCmp = new Date(a.wr_datetime) - new Date(b.wr_datetime);
-      if (dtCmp !== 0) return dtCmp;
-      return Number(a.wr_id) - Number(b.wr_id);
-    });
-
-    const lastQuestion = sorted[sorted.length - 1];
-    if (!this._isAnsweredRow(lastQuestion)) return null;
-    // wr_datetime ?Ä ÏßàÎ¨∏ ?±Î°ù?ºÏù¥ÎØÄÎ°??µÎ??ºÎ°ú ?∞Ï? ?äÏùå (?§Îãµ ???µÎ? ÏßÅÌõÑ Ï¶âÏãú ?êÎèôÏ¢ÖÎ£å??
-    const answerAt = lastQuestion.wr_last;
-    if (!answerAt) return null;
-    return answerAt;
+    if (!this._isAnsweredRow(target)) return null;
+    return target.wr_last || null;
   }
 
-  /** ÎßàÏ?Îß?ÏßàÎ¨∏ ?µÎ???+ 3??Í≤ΩÍ≥º ???êÎèô Ï¢ÖÎ£å (??Î™©Î°ù/?ÅÏÑ∏ Ï°∞Ìöå ?úÏ†ê?êÎßå ?âÍ?) */
+  /** ??? + 2? ?? ? ?? ?? */
   async autoCloseThreadIfExpired(rootWrId) {
     const root = await this.findById(rootWrId);
     if (!root || this._isClosedRow(root)) return root;
@@ -223,7 +171,7 @@ class QaRepository {
 
     const answerDay = this._startOfDay(answerDateRaw);
     const closeDay = new Date(answerDay);
-    closeDay.setDate(closeDay.getDate() + 3);
+    closeDay.setDate(closeDay.getDate() + 2);
 
     const today = this._startOfDay(new Date());
     if (today >= closeDay) {

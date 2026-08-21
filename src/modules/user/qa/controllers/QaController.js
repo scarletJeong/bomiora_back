@@ -1,11 +1,197 @@
 const qaRepository = require('../repositories/QaRepository');
+const fs = require('fs');
+const path = require('path');
+
+const QA_UPLOAD_DIR =
+  process.env.QA_IMAGE_UPLOAD_DIR || path.join(process.cwd(), 'uploads', 'qa_images');
+const QA_IMAGE_MIRROR_URL = (process.env.QA_IMAGE_MIRROR_URL || '').trim();
+const QA_IMAGE_MIRROR_SECRET = (
+  process.env.QA_IMAGE_MIRROR_SECRET ||
+  process.env.INTERNAL_NOTIFY_SECRET ||
+  ''
+).trim();
+const QA_IMAGE_PUBLIC_BASE = (
+  process.env.QA_IMAGE_PUBLIC_BASE ||
+  'https://bomiora0.mycafe24.com/data/qa_images'
+).replace(/\/$/, '');
 
 class QaController {
+  getUploadDir() {
+    return QA_UPLOAD_DIR;
+  }
+
+  /** Cafe24 data/qa_images ? ?? (??? ????? ????) */
+  _mirrorQaImageToCafe24(filename, buf, mime) {
+    if (!QA_IMAGE_MIRROR_URL || !buf || !buf.length) return Promise.resolve(false);
+    const https = require('https');
+    const http = require('http');
+    return new Promise((resolve) => {
+      try {
+        const body = new URLSearchParams({
+          filename,
+          data: buf.toString('base64'),
+          mime: mime || 'application/octet-stream',
+        }).toString();
+        const target = new URL(QA_IMAGE_MIRROR_URL);
+        const lib = target.protocol === 'https:' ? https : http;
+        const req = lib.request(
+          {
+            protocol: target.protocol,
+            hostname: target.hostname,
+            port: target.port || (target.protocol === 'https:' ? 443 : 80),
+            path: `${target.pathname}${target.search || ''}`,
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/x-www-form-urlencoded',
+              'Content-Length': Buffer.byteLength(body),
+              'X-Internal-Secret': QA_IMAGE_MIRROR_SECRET,
+            },
+            timeout: 20000,
+            rejectUnauthorized: false,
+          },
+          (res) => {
+            let raw = '';
+            res.on('data', (chunk) => {
+              raw += chunk;
+            });
+            res.on('end', () => {
+              if (res.statusCode < 200 || res.statusCode >= 300) {
+                return resolve(false);
+              }
+              try {
+                const parsed = JSON.parse(raw);
+                return resolve(!!(parsed && parsed.success));
+              } catch (_) {
+                return resolve(false);
+              }
+            });
+          }
+        );
+        req.on('error', () => resolve(false));
+        req.on('timeout', () => {
+          req.destroy();
+          resolve(false);
+        });
+        req.write(body);
+        req.end();
+      } catch (_) {
+        resolve(false);
+      }
+    });
+  }
+
+  /** create body.images: [{ filename, mime, data(base64) }] ? ?? ? URL */
+  _saveBase64Images(images) {
+    const urls = [];
+    const mirrorJobs = [];
+    if (!Array.isArray(images) || images.length === 0) return { urls, mirrorJobs };
+    if (!fs.existsSync(QA_UPLOAD_DIR)) {
+      fs.mkdirSync(QA_UPLOAD_DIR, { recursive: true });
+    }
+    const mimeExt = {
+      'image/jpeg': '.jpg',
+      'image/jpg': '.jpg',
+      'image/png': '.png',
+      'image/gif': '.gif',
+      'image/webp': '.webp',
+    };
+    for (const item of images.slice(0, 3)) {
+      if (!item || typeof item !== 'object') continue;
+      let raw = String(item.data || item.base64 || '').trim();
+      if (!raw) continue;
+      raw = raw.replace(/^data:[^;]+;base64,/i, '');
+      let buf;
+      try {
+        buf = Buffer.from(raw, 'base64');
+      } catch (_) {
+        continue;
+      }
+      if (!buf.length || buf.length > 5 * 1024 * 1024) continue;
+
+      const mime = String(item.mime || item.contentType || '').toLowerCase();
+      let ext = mimeExt[mime] || path.extname(String(item.filename || item.name || '')).toLowerCase();
+      if (!ext || ext.length > 5) ext = '.jpg';
+      const filename = `${Date.now()}_${Math.random().toString(36).slice(2, 10)}${ext}`;
+      fs.writeFileSync(path.join(QA_UPLOAD_DIR, filename), buf);
+      // Cafe24 ?? ?? ? ?? URL, ?? ? data URI (????? ?? ???)
+      if (QA_IMAGE_MIRROR_URL) {
+        const publicUrl = `${QA_IMAGE_PUBLIC_BASE}/${filename}`;
+        urls.push(publicUrl);
+        mirrorJobs.push(
+          this._mirrorQaImageToCafe24(filename, buf, mime || 'image/jpeg').then((ok) => {
+            if (!ok) {
+              const idx = urls.indexOf(publicUrl);
+              if (idx >= 0) {
+                urls[idx] = `data:${mime || 'image/png'};base64,${buf.toString('base64')}`;
+              }
+            }
+            return ok;
+          })
+        );
+      } else {
+        urls.push(`data:${mime || 'image/png'};base64,${buf.toString('base64')}`);
+      }
+    }
+    return { urls, mirrorJobs };
+  }
+
+  async uploadImage(req, res) {
+    try {
+      if (!req.file) {
+        return res.status(400).json({
+          success: false,
+          message: '??? ????.',
+        });
+      }
+      const filename = req.file.filename;
+      const buf = fs.readFileSync(req.file.path);
+      const mime = req.file.mimetype || 'application/octet-stream';
+      if (QA_IMAGE_MIRROR_URL) {
+        await this._mirrorQaImageToCafe24(filename, buf, mime);
+      }
+      const fileUrl = QA_IMAGE_MIRROR_URL
+        ? `${QA_IMAGE_PUBLIC_BASE}/${filename}`
+        : `/api/qa/images/${filename}`;
+      return res.json({
+        success: true,
+        filename,
+        url: fileUrl,
+        message: '??? ??',
+      });
+    } catch (error) {
+      return res.status(400).json({
+        success: false,
+        message: `??? ??: ${error.message}`,
+      });
+    }
+  }
+
+  async getImage(req, res) {
+    try {
+      const filePath = path.join(QA_UPLOAD_DIR, req.params.filename);
+      if (!fs.existsSync(filePath)) {
+        return res.status(404).end();
+      }
+      const ext = path.extname(filePath).toLowerCase();
+      const contentTypeMap = {
+        '.png': 'image/png',
+        '.gif': 'image/gif',
+        '.webp': 'image/webp',
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+      };
+      res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Content-Type', contentTypeMap[ext] || 'application/octet-stream');
+      return fs.createReadStream(filePath).pipe(res);
+    } catch (_) {
+      return res.status(404).end();
+    }
+  }
+
   _asText(value) {
     if (value == null) return value;
-    // mysql2ê°€ Bufferë¡?ì£¼ëŠ” ì¼€?´ìŠ¤
     if (Buffer.isBuffer(value)) return value.toString('utf8');
-    // JSON stringify ?´í›„?ë„ ?¨ëŠ” { type: 'Buffer', data: [...] } ?•íƒœ ë°©ì–´
     if (typeof value === 'object' && value.type === 'Buffer' && Array.isArray(value.data)) {
       try {
         return Buffer.from(value.data).toString('utf8');
@@ -39,6 +225,23 @@ class QaController {
     return wr8 === '1' || wr8.toLowerCase() === 'closed' || wr8 === 'Y';
   }
 
+  /** ????(ca_name) / ????(wr_6) ? ? ?? */
+  _normalizeInquiryFields(body = {}) {
+    const caName = (body.ca_name || body.primary_type || body.primaryType || '')
+      .toString()
+      .trim();
+    const wr6 = (
+      body.wr_6 ||
+      body.inquiry_detail_type ||
+      body.detail_type ||
+      body.detailType ||
+      ''
+    )
+      .toString()
+      .trim();
+    return { caName, wr6 };
+  }
+
   toMap(contact) {
     const wr8 = this._asText(contact.wr_8) ?? '';
     const closed = this._isClosedRow(contact);
@@ -49,12 +252,12 @@ class QaController {
       mb_id: this._asText(contact.mb_id) ?? '',
       wr_name: this._asText(contact.wr_name) ?? '',
       wr_email: this._asText(contact.wr_email) ?? '',
-      // ëª©ë¡?ì„œ???¤ë ˆ?œì˜ ìµœì‹  ?‘ì„±??ì¶”ê?ì§ˆë¬¸ ?¬í•¨)???œì‹œ/?•ë ¬ ê¸°ì??¼ë¡œ ?¬ìš©
       wr_datetime: contact.thread_last_datetime ?? contact.wr_datetime,
       wr_last: contact.wr_last,
       wr_comment: this._asInt(contact.wr_comment, 0),
       wr_reply: this._asText(contact.wr_reply) ?? '',
       wr_parent: this._asInt(contact.wr_parent, 0),
+      // ???? / ????
       ca_name: this._asText(contact.ca_name) ?? '',
       wr_6: this._asText(contact.wr_6) ?? '',
       wr_hit: this._asInt(contact.wr_hit, 0),
@@ -62,10 +265,14 @@ class QaController {
       wr_is_comment: this._asInt(contact.wr_is_comment, 0),
       wr_8: wr8,
       is_closed: closed ? 1 : 0,
-      followup_count: this._asInt(contact.followup_count, 0),
-      thread_last_datetime: contact.thread_last_datetime ?? null,
-      latest_wr_id: this._asInt(contact.latest_wr_id, 0),
-      latest_wr_is_comment: this._asInt(contact.latest_wr_is_comment, 0),
+      // ???? ??: ?? ?? ??? ??(?? 0 / ??)
+      followup_count: 0,
+      thread_last_datetime: contact.thread_last_datetime ?? contact.wr_datetime ?? null,
+      latest_wr_id: this._asInt(contact.latest_wr_id || contact.wr_id, 0),
+      latest_wr_is_comment: this._asInt(
+        contact.latest_wr_is_comment ?? contact.wr_is_comment,
+        0,
+      ),
     };
   }
 
@@ -92,7 +299,10 @@ class QaController {
       }
       return res.json({ success: true, data: processed.map((c) => this.toMap(c)) });
     } catch (error) {
-      return res.status(500).json({ success: false, message: `ë¬¸ì˜?´ì—­ ì¡°íšŒ ?¤íŒ¨: ${error.message}` });
+      return res.status(500).json({
+        success: false,
+        message: `???? ?? ??: ${error.message}`,
+      });
     }
   }
 
@@ -101,7 +311,7 @@ class QaController {
       const wrId = Number(req.params.wrId);
       const contact = await qaRepository.findById(wrId);
       if (!contact) {
-        return res.status(404).json({ success: false, message: 'ë¬¸ì˜ë¥?ì°¾ì„ ???†ìŠµ?ˆë‹¤.' });
+        return res.status(404).json({ success: false, message: '???? ?? ? ????.' });
       }
 
       await qaRepository.update(wrId, { wr_hit: (contact.wr_hit || 0) + 1 });
@@ -110,7 +320,9 @@ class QaController {
         await qaRepository.autoCloseThreadIfExpired(rootId);
       }
       const updated = await qaRepository.findById(wrId);
-      const thread = rootId ? await qaRepository.findThreadByRoot(rootId) : [];
+      // ?? Q&A: ??? ?? 1?? ???? ??? (??? ????? ?????? ??)
+      const root = rootId ? await qaRepository.findById(rootId) : updated;
+      const thread = root ? [root] : [];
       return res.json({
         success: true,
         data: this.toMap(updated),
@@ -118,50 +330,58 @@ class QaController {
         root_wr_id: rootId,
       });
     } catch (error) {
-      return res.status(500).json({ success: false, message: `ë¬¸ì˜ ?ì„¸ ì¡°íšŒ ?¤íŒ¨: ${error.message}` });
+      return res.status(500).json({
+        success: false,
+        message: `?? ?? ?? ??: ${error.message}`,
+      });
     }
   }
 
   async create(req, res) {
     try {
+      const parentWrIdRaw = req.body.parent_wr_id ?? req.body.parentWrId ?? null;
+      if (parentWrIdRaw != null && String(parentWrIdRaw).trim() !== '') {
+        return res.status(400).json({
+          success: false,
+          message: '?? ??? ???? ????. ? ??? ??? ???.',
+        });
+      }
+
       const nextWrId = (await qaRepository.findMaxWrId()) + 1;
       const nextWrNum = (await qaRepository.findMaxWrNum()) + 1;
       const now = new Date();
+      const { caName, wr6 } = this._normalizeInquiryFields(req.body);
 
-      const parentWrIdRaw = req.body.parent_wr_id ?? req.body.parentWrId ?? null;
-      const parentWrId = parentWrIdRaw != null ? Number(parentWrIdRaw) : null;
-      const rootId = parentWrId ? await qaRepository.findRootIdByWrId(parentWrId) : null;
-
-      if (parentWrId && !rootId) {
-        return res.status(400).json({ success: false, message: '?°ê²°??ë¬¸ì˜ë¥?ì°¾ì„ ???†ìŠµ?ˆë‹¤.' });
+      let content = String(req.body.wr_content ?? '');
+      const imageSaved = this._saveBase64Images(req.body.images);
+      const imageUrls = imageSaved.urls || [];
+      if (imageSaved.mirrorJobs && imageSaved.mirrorJobs.length) {
+        await Promise.all(imageSaved.mirrorJobs);
       }
-
-      if (rootId) {
-        const rootRow = await qaRepository.findById(rootId);
-        if (rootRow && this._isClosedRow(rootRow)) {
-          return res.status(400).json({ success: false, message: 'ì¢…ë£Œ??ë¬¸ì˜?ëŠ” ì¶”ê?ì§ˆë¬¸???????†ìŠµ?ˆë‹¤.' });
-        }
+      if (imageUrls.length > 0) {
+        const imgs = imageUrls.map((u) => `<img src="${u}">`).join('\n');
+        content = `${content}\n${imgs}`;
       }
 
       const contact = {
         wr_id: nextWrId,
         wr_num: nextWrNum,
         wr_reply: '',
-        wr_parent: rootId ?? nextWrId,
+        wr_parent: nextWrId, // single Q&A root
         wr_comment: 0,
         wr_comment_reply: '',
         wr_is_comment: 0,
-        ca_name: req.body.ca_name || '',
+        ca_name: caName,
         wr_option: req.body.wr_option || '',
         wr_subject: req.body.wr_subject,
-        wr_content: req.body.wr_content,
+        wr_content: content,
         wr_hit: 0,
         mb_id: req.body.mb_id,
         wr_password: '',
         wr_name: req.body.wr_name,
         wr_email: req.body.wr_email,
         wr_datetime: now,
-        wr_file: 0,
+        wr_file: imageUrls.length,
         wr_last: now,
         wr_ip: this.getClientIp(req),
         wr_1: req.body.wr_name || '',
@@ -169,17 +389,24 @@ class QaController {
         wr_3: '',
         wr_4: '',
         wr_5: req.body.wr_5 || '',
-        wr_6: (req.body.wr_6 || req.body.inquiry_detail_type || req.body.detail_type || '').toString().trim(),
+        wr_6: wr6,
         wr_7: '',
         wr_8: '',
         wr_9: '',
-        wr_10: ''
+        wr_10: '',
       };
 
       const saved = await qaRepository.create(contact);
-      return res.status(201).json({ success: true, message: 'ë¬¸ì˜ê°€ ?±ë¡?˜ì—ˆ?µë‹ˆ??', data: this.toMap(saved) });
+      return res.status(201).json({
+        success: true,
+        message: '??? ???????.',
+        data: this.toMap(saved),
+      });
     } catch (error) {
-      return res.status(500).json({ success: false, message: `ë¬¸ì˜ ?±ë¡ ?¤íŒ¨: ${error.message}` });
+      return res.status(500).json({
+        success: false,
+        message: `?? ?? ??: ${error.message}`,
+      });
     }
   }
 
@@ -188,7 +415,7 @@ class QaController {
       const wrId = Number(req.params.wrId);
       const current = await qaRepository.findById(wrId);
       if (!current) {
-        return res.status(404).json({ success: false, message: 'ë¬¸ì˜ë¥?ì°¾ì„ ???†ìŠµ?ˆë‹¤.' });
+        return res.status(404).json({ success: false, message: '???? ?? ? ????.' });
       }
 
       const mbId = req.body.mb_id || req.body.mbId;
@@ -200,65 +427,85 @@ class QaController {
       const rootId = await qaRepository.findRootIdByWrId(wrId);
       const root = rootId ? await qaRepository.findById(rootId) : current;
       if (root && this._isClosedRow(root)) {
-        return res.status(400).json({ success: false, message: 'ì¢…ë£Œ??ë¬¸ì˜???˜ì •?????†ìŠµ?ˆë‹¤.' });
+        return res.status(400).json({
+          success: false,
+          message: '??? ??? ??? ? ????.',
+        });
       }
 
       if (mbId && String(current.mb_id).trim() !== String(mbId).trim()) {
-        return res.status(403).json({ success: false, message: '?˜ì •??ê¶Œí•œ???†ìŠµ?ˆë‹¤.' });
+        return res.status(403).json({ success: false, message: '?? ??? ????.' });
       }
 
       if ((current.wr_is_comment ?? 0) === 1) {
-        return res.status(400).json({ success: false, message: '?µë????„ë£Œ??ë¬¸ì˜???˜ì •?????†ìŠµ?ˆë‹¤.' });
+        return res.status(400).json({
+          success: false,
+          message: '??? ??? ??? ??? ? ????.',
+        });
       }
 
       const fields = { wr_last: new Date() };
       if (req.body.wr_subject != null) fields.wr_subject = req.body.wr_subject;
       if (req.body.wr_content != null) fields.wr_content = req.body.wr_content;
-      if (req.body.wr_6 != null) {
-        fields.wr_6 = (req.body.wr_6 || req.body.inquiry_detail_type || req.body.detail_type || '').toString().trim();
+
+      const { caName, wr6 } = this._normalizeInquiryFields(req.body);
+      if (req.body.ca_name != null || req.body.primary_type != null || req.body.primaryType != null) {
+        fields.ca_name = caName;
+      }
+      if (
+        req.body.wr_6 != null ||
+        req.body.inquiry_detail_type != null ||
+        req.body.detail_type != null ||
+        req.body.detailType != null
+      ) {
+        fields.wr_6 = wr6;
       }
 
       await qaRepository.update(wrId, fields);
 
-      if (req.body.ca_name != null && rootId) {
-        await qaRepository.update(rootId, {
-          ca_name: req.body.ca_name,
-          wr_last: new Date(),
-        });
-      }
-      if (req.body.wr_6 != null && rootId) {
-        await qaRepository.update(rootId, {
-          wr_6: fields.wr_6,
-          wr_last: new Date(),
-        });
+      // ??? ??? ?? ??
+      if (rootId && rootId !== wrId) {
+        const rootFields = { wr_last: new Date() };
+        if (fields.ca_name != null) rootFields.ca_name = fields.ca_name;
+        if (fields.wr_6 != null) rootFields.wr_6 = fields.wr_6;
+        if (Object.keys(rootFields).length > 1) {
+          await qaRepository.update(rootId, rootFields);
+        }
       }
 
       const updated = await qaRepository.findById(wrId);
-      return res.json({ success: true, message: 'ë¬¸ì˜ê°€ ?˜ì •?˜ì—ˆ?µë‹ˆ??', data: this.toMap(updated) });
+      return res.json({
+        success: true,
+        message: '??? ???????.',
+        data: this.toMap(updated),
+      });
     } catch (error) {
-      return res.status(500).json({ success: false, message: `ë¬¸ì˜ ?˜ì • ?¤íŒ¨: ${error.message}` });
+      return res.status(500).json({
+        success: false,
+        message: `?? ?? ??: ${error.message}`,
+      });
     }
   }
 
   async _close(req, res, current, mbId) {
     const rootId = await qaRepository.findRootIdByWrId(current.wr_id);
     if (!rootId) {
-      return res.status(404).json({ success: false, message: 'ë¬¸ì˜ë¥?ì°¾ì„ ???†ìŠµ?ˆë‹¤.' });
+      return res.status(404).json({ success: false, message: '???? ?? ? ????.' });
     }
 
     const root = await qaRepository.findById(rootId);
     if (!root) {
-      return res.status(404).json({ success: false, message: 'ë¬¸ì˜ë¥?ì°¾ì„ ???†ìŠµ?ˆë‹¤.' });
+      return res.status(404).json({ success: false, message: '???? ?? ? ????.' });
     }
 
     if (mbId && String(root.mb_id).trim() !== String(mbId).trim()) {
-      return res.status(403).json({ success: false, message: 'ì¢…ë£Œ??ê¶Œí•œ???†ìŠµ?ˆë‹¤.' });
+      return res.status(403).json({ success: false, message: '?? ??? ????.' });
     }
 
     if (this._isClosedRow(root)) {
       return res.json({
         success: true,
-        message: '?´ë? ì¢…ë£Œ??ë¬¸ì˜?…ë‹ˆ??',
+        message: '?? ??? ?????.',
         data: this.toMap(root),
       });
     }
@@ -266,7 +513,7 @@ class QaController {
     const updated = await qaRepository.closeThread(rootId);
     return res.json({
       success: true,
-      message: 'ë¬¸ì˜ê°€ ì¢…ë£Œ?˜ì—ˆ?µë‹ˆ??',
+      message: '??? ???????.',
       data: this.toMap(updated),
     });
   }
@@ -276,33 +523,42 @@ class QaController {
       const wrId = Number(req.params.wrId);
       const mbId = req.query.mb_id || req.query.mbId;
       if (!mbId || !String(mbId).trim()) {
-        return res.status(400).json({ success: false, message: '?Œì› ?•ë³´ê°€ ?„ìš”?©ë‹ˆ??' });
+        return res.status(400).json({ success: false, message: '?? ??? ?????.' });
       }
       const row = await qaRepository.findById(wrId);
       if (!row) {
-        return res.status(404).json({ success: false, message: 'ë¬¸ì˜ë¥?ì°¾ì„ ???†ìŠµ?ˆë‹¤.' });
+        return res.status(404).json({ success: false, message: '???? ?? ? ????.' });
       }
       if (String(row.mb_id).trim() !== String(mbId).trim()) {
-        return res.status(403).json({ success: false, message: '?? œ??ê¶Œí•œ???†ìŠµ?ˆë‹¤.' });
+        return res.status(403).json({ success: false, message: '?? ??? ????.' });
       }
 
       const rootId = await qaRepository.findRootIdByWrId(wrId);
       const root = rootId ? await qaRepository.findById(rootId) : row;
       if (root && this._isClosedRow(root)) {
-        return res.status(400).json({ success: false, message: 'ì¢…ë£Œ??ë¬¸ì˜???? œ?????†ìŠµ?ˆë‹¤.' });
+        return res.status(400).json({
+          success: false,
+          message: '??? ??? ??? ? ????.',
+        });
       }
 
       if ((row.wr_is_comment ?? 0) === 1) {
-        return res.status(400).json({ success: false, message: '?µë????„ë£Œ??ë¬¸ì˜???? œ?????†ìŠµ?ˆë‹¤.' });
+        return res.status(400).json({
+          success: false,
+          message: '??? ??? ??? ??? ? ????.',
+        });
       }
 
       const ok = await qaRepository.deleteByIdAndMbId(wrId, mbId);
       if (!ok) {
-        return res.status(400).json({ success: false, message: 'ë¬¸ì˜ ?? œ???¤íŒ¨?ˆìŠµ?ˆë‹¤.' });
+        return res.status(400).json({ success: false, message: '?? ??? ??????.' });
       }
-      return res.json({ success: true, message: 'ë¬¸ì˜ê°€ ?? œ?˜ì—ˆ?µë‹ˆ??' });
+      return res.json({ success: true, message: '??? ???????.' });
     } catch (error) {
-      return res.status(500).json({ success: false, message: `ë¬¸ì˜ ?? œ ?¤íŒ¨: ${error.message}` });
+      return res.status(500).json({
+        success: false,
+        message: `?? ?? ??: ${error.message}`,
+      });
     }
   }
 
@@ -311,25 +567,31 @@ class QaController {
       const wrId = Number(req.params.wrId);
       const contact = await qaRepository.findById(wrId);
       if (!contact) {
-        return res.json({ success: false, message: 'ë¬¸ì˜ë¥?ì°¾ì„ ???†ìŠµ?ˆë‹¤.' });
+        return res.json({ success: false, message: '???? ?? ? ????.' });
       }
 
+      // ?? 1? ? ?? 1? (wr_7)
       if ((contact.wr_is_comment ?? 0) === 1 && contact.wr_7) {
         return res.json({
           success: true,
-          data: [{
-            wr_id: contact.wr_id,
-            wr_content: contact.wr_7,
-            wr_datetime: contact.wr_last || contact.wr_datetime,
-            wr_name: 'ê´€ë¦¬ì',
-            wr_option: contact.wr_option
-          }]
+          data: [
+            {
+              wr_id: contact.wr_id,
+              wr_content: contact.wr_7,
+              wr_datetime: contact.wr_last || contact.wr_datetime,
+              wr_name: '???',
+              wr_option: contact.wr_option,
+            },
+          ],
         });
       }
 
       return res.json({ success: true, data: [] });
     } catch (error) {
-      return res.status(500).json({ success: false, message: `?µë? ì¡°íšŒ ?¤íŒ¨: ${error.message}` });
+      return res.status(500).json({
+        success: false,
+        message: `?? ?? ??: ${error.message}`,
+      });
     }
   }
 }

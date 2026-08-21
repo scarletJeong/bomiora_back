@@ -10,12 +10,16 @@ const app = express();
 const PORT = process.env.PORT || 9000;
 
 // 미들웨어 설정
-app.use(helmet()); // 보안 헤더
+app.use(helmet({
+  // Flutter web(다른 포트)에서 /api/qa/images 로드 가능하도록
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
+})); // 보안 헤더
 app.use(compression()); // gzip — JSON 응답 전송량 감소
 app.use(cors()); // CORS 설정
 app.use(morgan('dev')); // 로깅
-app.use(express.json()); // JSON 파싱
-app.use(express.urlencoded({ extended: true })); // URL 인코딩
+// 문의 첨부(base64) 등 — 기본 100kb면 업로드 본문이 잘림
+app.use(express.json({ limit: '20mb' }));
+app.use(express.urlencoded({ extended: true, limit: '20mb' })); // URL 인코딩
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // 기본 라우트
