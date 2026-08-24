@@ -1,7 +1,7 @@
 const contentRepository = require('../repositories/ContentRepository');
 const { TtlCache } = require('../../../utils/ttlCache');
 
-const contentListCache = new TtlCache(90_000);
+const contentListCache = new TtlCache(180_000);
 
 class ContentController {
   normalizeText(value) {
@@ -233,7 +233,11 @@ class ContentController {
           })
         ),
         mbIdQ
-          ? contentRepository.hasUserRecommended(id, mbIdQ, pfNoQ)
+          ? contentListCache.getOrSet(
+              `rec:${id}:${mbIdQ}:${pfNoQ}`,
+              () => contentRepository.hasUserRecommended(id, mbIdQ, pfNoQ),
+              30_000
+            )
           : Promise.resolve(undefined),
       ]);
 
@@ -243,6 +247,7 @@ class ContentController {
         baseData.user_recommended = userRecommended;
       }
 
+      res.set('Cache-Control', 'public, max-age=30');
       return res.json({
         success: true,
         data: baseData,

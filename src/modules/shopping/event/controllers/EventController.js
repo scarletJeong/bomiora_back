@@ -2,6 +2,7 @@ const eventRepository = require('../repositories/EventRepository');
 const { TtlCache } = require('../../../../utils/ttlCache');
 
 const eventListCache = new TtlCache(90_000);
+const eventDetailCache = new TtlCache(60_000);
 
 class EventController {
   normalizeText(value) {
@@ -98,7 +99,7 @@ class EventController {
           data: rows.map((row) => this.toMap(row)),
         };
       });
-      res.set('Cache-Control', 'public, max-age=30');
+      res.set('Cache-Control', 'public, max-age=60');
       return res.json(payload);
     } catch (error) {
       return res.status(500).json({
@@ -110,11 +111,15 @@ class EventController {
 
   async getEndedEvents(req, res) {
     try {
-      const rows = await eventRepository.findEndedEvents();
-      return res.json({
-        success: true,
-        data: rows.map((row) => this.toMap(row)),
+      const payload = await eventListCache.getOrSet('ended', async () => {
+        const rows = await eventRepository.findEndedEvents();
+        return {
+          success: true,
+          data: rows.map((row) => this.toMap(row)),
+        };
       });
+      res.set('Cache-Control', 'public, max-age=60');
+      return res.json(payload);
     } catch (error) {
       return res.status(500).json({
         success: false,
@@ -133,24 +138,33 @@ class EventController {
         });
       }
 
-      const row = await eventRepository.findById(id);
-      if (!row) {
+      const payload = await eventDetailCache.getOrSet(`detail:${id}`, async () => {
+        const row = await eventRepository.findById(id);
+        if (!row) {
+          return { success: false, status: 404, message: '이벤트를 찾을 수 없습니다.' };
+        }
+        return {
+          success: true,
+          data: this.toMap(row),
+        };
+      });
+
+      if (payload.status === 404 || payload.success === false) {
         return res.status(404).json({
           success: false,
-          message: '이벤트를 찾을 수 없습니다.',
+          message: payload.message || '이벤트를 찾을 수 없습니다.',
         });
       }
 
-      await eventRepository.increaseViewCount(id);
-      const updated = {
-        ...row,
-        view_count: Number(row.view_count || 0) + 1,
+      // 조회수는 응답을 막지 않음
+      eventRepository.increaseViewCount(id).catch(() => {});
+      const data = {
+        ...payload.data,
+        view_count: Number(payload.data?.view_count || 0) + 1,
+        wr_hit: Number(payload.data?.wr_hit || payload.data?.view_count || 0) + 1,
       };
-
-      return res.json({
-        success: true,
-        data: this.toMap(updated),
-      });
+      res.set('Cache-Control', 'public, max-age=30');
+      return res.json({ ...payload, data });
     } catch (error) {
       return res.status(500).json({
         success: false,

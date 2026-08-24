@@ -1,5 +1,8 @@
 const couponRepository = require('../repositories/CouponRepository');
 const { HelpCouponError } = couponRepository;
+const { TtlCache } = require('../../../../utils/ttlCache');
+
+const couponResponseCache = new TtlCache(60_000);
 
 class CouponController {
   toMap(c) {
@@ -27,10 +30,26 @@ class CouponController {
     };
   }
 
+  _invalidate(mbId) {
+    const id = String(mbId || '').trim();
+    if (!id) return;
+    for (const key of couponResponseCache.store.keys()) {
+      if (key.includes(`:${id}`)) couponResponseCache.store.delete(key);
+    }
+    if (typeof couponRepository.invalidateMemberCoupons === 'function') {
+      couponRepository.invalidateMemberCoupons(id);
+    }
+  }
+
   async getUserCoupons(req, res) {
     try {
-      const rows = await couponRepository.findByUserId(req.query.mb_id);
-      return res.json({ success: true, data: rows.map((r) => this.toMap(r)) });
+      const mbId = String(req.query.mb_id || '').trim();
+      const payload = await couponResponseCache.getOrSet(`all:${mbId}`, async () => {
+        const rows = await couponRepository.findByUserId(mbId);
+        return { success: true, data: rows.map((r) => this.toMap(r)) };
+      });
+      res.set('Cache-Control', 'private, max-age=20');
+      return res.json(payload);
     } catch (error) {
       return res.status(500).json({ success: false, message: `쿠폰 목록 조회 실패: ${error.message}` });
     }
@@ -38,8 +57,13 @@ class CouponController {
 
   async getAvailableCoupons(req, res) {
     try {
-      const rows = await couponRepository.findAvailableCoupons(req.query.mb_id);
-      return res.json({ success: true, data: rows.map((r) => this.toMap(r)) });
+      const mbId = String(req.query.mb_id || '').trim();
+      const payload = await couponResponseCache.getOrSet(`avail:${mbId}`, async () => {
+        const rows = await couponRepository.findAvailableCoupons(mbId);
+        return { success: true, data: rows.map((r) => this.toMap(r)) };
+      });
+      res.set('Cache-Control', 'private, max-age=20');
+      return res.json(payload);
     } catch (error) {
       return res.status(500).json({ success: false, message: `사용가능한 쿠폰 조회 실패: ${error.message}` });
     }
@@ -47,8 +71,13 @@ class CouponController {
 
   async getUsedCoupons(req, res) {
     try {
-      const rows = await couponRepository.findUsedCoupons(req.query.mb_id);
-      return res.json({ success: true, data: rows.map((r) => this.toMap(r)) });
+      const mbId = String(req.query.mb_id || '').trim();
+      const payload = await couponResponseCache.getOrSet(`used:${mbId}`, async () => {
+        const rows = await couponRepository.findUsedCoupons(mbId);
+        return { success: true, data: rows.map((r) => this.toMap(r)) };
+      });
+      res.set('Cache-Control', 'private, max-age=20');
+      return res.json(payload);
     } catch (error) {
       return res.status(500).json({ success: false, message: `사용한 쿠폰 조회 실패: ${error.message}` });
     }
@@ -56,8 +85,13 @@ class CouponController {
 
   async getExpiredCoupons(req, res) {
     try {
-      const rows = await couponRepository.findExpiredCoupons(req.query.mb_id);
-      return res.json({ success: true, data: rows.map((r) => this.toMap(r)) });
+      const mbId = String(req.query.mb_id || '').trim();
+      const payload = await couponResponseCache.getOrSet(`exp:${mbId}`, async () => {
+        const rows = await couponRepository.findExpiredCoupons(mbId);
+        return { success: true, data: rows.map((r) => this.toMap(r)) };
+      });
+      res.set('Cache-Control', 'private, max-age=20');
+      return res.json(payload);
     } catch (error) {
       return res.status(500).json({ success: false, message: `만료된 쿠폰 조회 실패: ${error.message}` });
     }
@@ -98,6 +132,7 @@ class CouponController {
         is_id: coupon.is_id || null
       });
 
+      this._invalidate(userId);
       return res.json({ success: true, message: '쿠폰이 등록되었습니다.' });
     } catch (error) {
       return res.status(500).json({ success: false, message: `쿠폰 등록 실패: ${error.message}` });
@@ -128,6 +163,7 @@ class CouponController {
         isId
       });
 
+      this._invalidate(mbId);
       return res.json({
         success: true,
         message: '쿠폰 발급이 완료되었습니다.',

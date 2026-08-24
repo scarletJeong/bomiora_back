@@ -1,7 +1,7 @@
 const healthProfileRepository = require('../repositories/HealthProfileRepository');
 const { TtlCache } = require('../../../../utils/ttlCache');
 
-const healthProfileCache = new TtlCache(30_000);
+const healthProfileCache = new TtlCache(120_000);
 
 class HealthProfileController {
   normalizeAnswer102(body) {
@@ -98,6 +98,7 @@ class HealthProfileController {
         if (!row) return { success: true, message: '문진표가 없습니다', data: null };
         return { success: true, message: '문진표 조회 성공', data: this.toResponse(row) };
       });
+      res.set('Cache-Control', 'private, max-age=60');
       return res.json(payload);
     } catch (error) {
       return res.status(500).json({ success: false, message: '문진표 조회 중 오류가 발생했습니다', error: error.message });

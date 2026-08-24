@@ -3,7 +3,7 @@ const pool = require('../../../../config/database');
 const { addDaysToYmdDateString } = require('../../../../utils/healthDateTime');
 const { TtlCache } = require('../../../../utils/ttlCache');
 
-const couponBundleCache = new TtlCache(45_000);
+const couponBundleCache = new TtlCache(60_000);
 
 const COUPON_LIST_COLUMNS = `
   c.cp_no,
@@ -121,8 +121,18 @@ class CouponRepository {
       const cpId = String(row.cp_id || '').trim();
       if (cpId) usedMap.set(cpId, { cl_datetime: row.cl_datetime || null, od_id: row.od_id });
     }
-    await this.attachAppliedProductLabels(coupons);
+    // 이름 조인 없이 라벨만 (추가 SELECT 제거 — 마이페이지 가용 쿠폰 병목)
+    this.attachAppliedProductLabelsFast(coupons);
     return { coupons, usedMap };
+  }
+
+  /** DB 조회 없이 cp_method/target 기반 라벨 */
+  attachAppliedProductLabelsFast(rows) {
+    if (!rows || !rows.length) return rows;
+    for (const r of rows) {
+      r._applied_product = this.buildAppliedProductLine(r, {}, {});
+    }
+    return rows;
   }
 
   async findByUserId(userId) {

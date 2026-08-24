@@ -1,7 +1,7 @@
 const wishRepository = require('../repositories/WishRepository');
 const { TtlCache } = require('../../../../utils/ttlCache');
 
-const wishListCache = new TtlCache(20_000);
+const wishListCache = new TtlCache(60_000);
 
 class WishController {
   bufferToString(value) {
@@ -104,6 +104,7 @@ class WishController {
         `check:${mbId}:${itId}`,
         () => wishRepository.existsByMbIdAndItId(mbId, itId)
       );
+      res.set('Cache-Control', 'private, max-age=30');
       return res.json({ success: true, is_wished: isWished });
     } catch (error) {
       return res.status(500).json({ success: false, message: '찜하기 확인 중 오류가 발생했습니다.' });

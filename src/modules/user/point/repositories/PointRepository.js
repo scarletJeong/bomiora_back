@@ -2,7 +2,7 @@ const pool = require('../../../../config/database');
 const { notifyPointEarned } = require('../../notification/services/MemberNotifyService');
 const { TtlCache } = require('../../../../utils/ttlCache');
 
-const pointReadCache = new TtlCache(20_000);
+const pointReadCache = new TtlCache(60_000);
 
 class PointRepository {
   invalidateMemberPoint(mbId) {

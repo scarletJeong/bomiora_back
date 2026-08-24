@@ -36,10 +36,22 @@ class RecentViewRepository {
   async findByMbIdOrderByTimeDesc(mbId, limit) {
     const safeLimit = Math.min(Math.max(Number(limit) || 20, 1), MAX_PER_MEMBER);
     const [rows] = await pool.query(
-      `SELECT * FROM bomiora_shop_recent_view
-       WHERE mb_id = ?
-       ORDER BY rv_time DESC
-       LIMIT ?`,
+      `SELECT rv_id,
+              CAST(rv.mb_id AS CHAR) AS mb_id,
+              CAST(rv.it_id AS CHAR) AS it_id,
+              CAST(rv.it_kind AS CHAR) AS it_kind,
+              rv.rv_time,
+              CAST(p.it_name AS CHAR) AS it_name,
+              p.it_price,
+              CAST(p.it_kind AS CHAR) AS product_it_kind,
+              CAST(p.it_img1 AS CHAR) AS it_img1,
+              CAST(p.it_flutter_image_url AS CHAR) AS it_flutter_image_url,
+              CAST(LEFT(IFNULL(p.it_basic, ''), 120) AS CHAR) AS it_basic
+         FROM bomiora_shop_recent_view rv
+         LEFT JOIN bomiora_shop_item_new p ON p.it_id = rv.it_id
+        WHERE rv.mb_id = ?
+        ORDER BY rv.rv_time DESC
+        LIMIT ?`,
       [mbId, safeLimit]
     );
     return rows;
@@ -49,9 +61,15 @@ class RecentViewRepository {
     if (!itIds.length) return [];
     const placeholders = itIds.map(() => '?').join(', ');
     const [rows] = await pool.query(
-      `SELECT it_id, it_name, it_price, it_kind, it_img1, it_flutter_image_url, it_basic
-       FROM bomiora_shop_item_new
-       WHERE it_id IN (${placeholders})`,
+      `SELECT CAST(it_id AS CHAR) AS it_id,
+              CAST(it_name AS CHAR) AS it_name,
+              it_price,
+              CAST(it_kind AS CHAR) AS it_kind,
+              CAST(it_img1 AS CHAR) AS it_img1,
+              CAST(it_flutter_image_url AS CHAR) AS it_flutter_image_url,
+              CAST(LEFT(IFNULL(it_basic, ''), 120) AS CHAR) AS it_basic
+         FROM bomiora_shop_item_new
+        WHERE it_id IN (${placeholders})`,
       itIds
     );
     return rows;

@@ -4,11 +4,21 @@ const kcpApprovalService = require('../../../shopping/kcp_pay/services/kcpApprov
 const { TtlCache } = require('../../../../utils/ttlCache');
 
 const orderDetailCache = new TtlCache(10_000);
+const orderListCache = new TtlCache(45_000);
 
 class OrderController {
   invalidateOrderDetailCache(mbId, odId) {
     if (mbId && odId) {
       orderDetailCache.store.delete(`detail:${mbId}:${odId}`);
+    }
+    this.invalidateOrderListCache(mbId);
+  }
+
+  invalidateOrderListCache(mbId) {
+    const id = String(mbId || '').trim();
+    if (!id) return;
+    for (const key of orderListCache.store.keys()) {
+      if (key.startsWith(`list:${id}:`)) orderListCache.store.delete(key);
     }
   }
   bufferToString(value) {
@@ -388,79 +398,96 @@ class OrderController {
 
   async getOrderList(req, res) {
     try {
-      const mbId = req.query.mbId;
+      const mbId = req.query.mbId || req.query.mb_id;
       const period = Number(req.query.period || 0);
       const status = req.query.status || 'all';
       const page = Number(req.query.page || 0);
       const size = Number(req.query.size || 10);
+      const cacheKey = `list:${mbId}:${period}:${status}:${page}:${size}`;
 
-      const { rows, total } = await orderRepository.getOrders(mbId, period, status, page, size);
-      const odIds = rows.map((r) => this.toOdId(r.od_id)).filter(Boolean);
-
-      const allCarts = await orderCartRepository.findByOdIds(odIds);
-      const cartsByOrder = {};
-      allCarts.forEach((c) => {
-        const key = this.toOdId(c.od_id);
-        if (!cartsByOrder[key]) cartsByOrder[key] = [];
-        cartsByOrder[key].push(c);
-      });
-
-      const imageUrlMap = {};
-      allCarts.forEach((row) => {
-        if (row.it_id && row.it_img1) imageUrlMap[row.it_id] = row.it_img1;
-      });
-      const healthFlags = await orderRepository.getHealthProfileFlagsByOdIds(mbId, odIds);
-
-      const orders = rows.map((row) => {
-        const odId = this.toOdId(row.od_id);
-        const items = (cartsByOrder[odId] || []).map((c) => this.toOrderItem(c, imageUrlMap));
-        const flags = healthFlags[odId] || {};
-        // 상품 kind(ct_kind/it_kind) 우선 — health_profiles_cart 잔존만으로 비대면 분류하지 않음
-        const isPrescriptionOrder = this.resolveIsPrescriptionOrder(
-          items,
-          flags.isPrescriptionOrder === true
+      const payload = await orderListCache.getOrSet(cacheKey, async () => {
+        const { rows, total } = await orderRepository.getOrders(
+          mbId,
+          period,
+          status,
+          page,
+          size
         );
-        const isConsultationDone =
-          isPrescriptionOrder && flags.isConsultationDone === true;
+        const odIds = rows.map((r) => this.toOdId(r.od_id)).filter(Boolean);
+
+        // size=1(마이페이지 미리보기)은 헬스플래그 생략 → RTT 1회 절약
+        const [allCarts, healthFlags] = await Promise.all([
+          orderCartRepository.findByOdIds(odIds),
+          size <= 1
+            ? Promise.resolve({})
+            : orderRepository.getHealthProfileFlagsByOdIds(mbId, odIds),
+        ]);
+
+        const cartsByOrder = {};
+        allCarts.forEach((c) => {
+          const key = this.toOdId(c.od_id);
+          if (!cartsByOrder[key]) cartsByOrder[key] = [];
+          cartsByOrder[key].push(c);
+        });
+
+        const imageUrlMap = {};
+        allCarts.forEach((row) => {
+          if (row.it_id && row.it_img1) imageUrlMap[row.it_id] = row.it_img1;
+        });
+
+        const orders = rows.map((row) => {
+          const odId = this.toOdId(row.od_id);
+          const items = (cartsByOrder[odId] || []).map((c) => this.toOrderItem(c, imageUrlMap));
+          const flags = healthFlags[odId] || {};
+          const isPrescriptionOrder = this.resolveIsPrescriptionOrder(
+            items,
+            flags.isPrescriptionOrder === true
+          );
+          const isConsultationDone =
+            isPrescriptionOrder && flags.isConsultationDone === true;
+          return {
+            odId,
+            orderDate: this.formatDate(row.od_time, false),
+            orderDateTime: this.formatDate(row.od_time, true),
+            displayStatus: this.getDisplayStatus(
+              row.od_status,
+              row.delivery_completed,
+              row.admin_completed,
+              row.auto_confirm_at,
+              isConsultationDone
+            ),
+            odStatus: row.od_status,
+            totalPrice: this.computeOrderTotal(row),
+            deliveryFee: this.toInt(row.od_send_cost) + this.toInt(row.od_send_cost2),
+            recipientName: this.bufferToString(row.od_name) || '',
+            recipientPhone: this.bufferToString(row.od_hp) || '',
+            recipientAddress: this.bufferToString(row.od_addr1) || '',
+            recipientAddressDetail: `${this.bufferToString(row.od_addr2) || ''} ${this.bufferToString(row.od_addr3) || ''}`.trim(),
+            odCartCount: this.toInt(row.od_cart_count),
+            isPrescriptionOrder,
+            isConsultationDone,
+            canConfirmReceipt: this.canConfirmReceipt(row.od_status, row.delivery_completed),
+            items,
+            firstProductName: items[0]?.itName || null,
+            firstProductOption: items[0]?.ctOption || null,
+            firstProductQty: items[0]?.ctQty || null,
+            firstProductPrice: items[0]?.totalPrice || null,
+          };
+        });
+
+        const totalPages = Math.ceil(total / size) || 0;
         return {
-          odId,
-          orderDate: this.formatDate(row.od_time, false),
-          orderDateTime: this.formatDate(row.od_time, true),
-          displayStatus: this.getDisplayStatus(
-            row.od_status,
-            row.delivery_completed,
-            row.admin_completed,
-            row.auto_confirm_at,
-            isConsultationDone
-          ),
-          odStatus: row.od_status,
-          totalPrice: this.computeOrderTotal(row),
-          deliveryFee: this.toInt(row.od_send_cost) + this.toInt(row.od_send_cost2),
-          recipientName: this.bufferToString(row.od_name) || '',
-          recipientPhone: this.bufferToString(row.od_hp) || '',
-          recipientAddress: this.bufferToString(row.od_addr1) || '',
-          recipientAddressDetail: `${this.bufferToString(row.od_addr2) || ''} ${this.bufferToString(row.od_addr3) || ''}`.trim(),
-          odCartCount: this.toInt(row.od_cart_count),
-          isPrescriptionOrder,
-          isConsultationDone,
-          canConfirmReceipt: this.canConfirmReceipt(row.od_status, row.delivery_completed),
-          items,
-          firstProductName: items[0]?.itName || null,
-          firstProductOption: items[0]?.ctOption || null,
-          firstProductQty: items[0]?.ctQty || null,
-          firstProductPrice: items[0]?.totalPrice || null
+          orders,
+          currentPage: page,
+          totalPages,
+          totalElements: total,
+          totalItems: total,
+          hasNext: page + 1 < totalPages,
         };
       });
 
-      const totalPages = Math.ceil(total / size);
-      return res.json({
-        orders,
-        currentPage: page,
-        totalPages,
-        totalElements: total,
-        totalItems: total,
-        hasNext: page + 1 < totalPages
-      });
+      res.set('Cache-Control', 'private, max-age=30');
+      return res.json(payload);
     } catch (error) {
       return res.json({
         orders: [],

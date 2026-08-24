@@ -2,6 +2,9 @@ const cartRepository = require('../repositories/CartRepository');
 const healthProfileCartRepository = require('../repositories/HealthProfileCartRepository');
 const cartRecommendService = require('../services/CartRecommendService');
 const productController = require('../../product/controllers/ProductController');
+const { TtlCache } = require('../../../../utils/ttlCache');
+
+const cartRecommendCache = new TtlCache(60_000);
 
 class CartController {
   toInt(value, fallback = 0) {
@@ -1051,57 +1054,59 @@ class CartController {
   async getRecommendProducts(req, res) {
     try {
       const itId = String(req.query.it_id || '').trim();
-      const mbId = req.query.mb_id;
+      const mbId = String(req.query.mb_id || '').trim();
       const ctStatus = this.normalizeCartStatus(req.query.ct_status);
+      const cacheKey = `rec:${itId || '-'}:${mbId || '-'}:${ctStatus}`;
 
-      let cartList = [];
+      const payload = await cartRecommendCache.getOrSet(cacheKey, async () => {
+        let cartList = [];
 
-      if (itId) {
-        const product = await cartRepository.findProductById(itId);
-        if (!product) {
-          return res.json({ success: true, data: [], count: 0 });
+        if (itId) {
+          const product = await cartRepository.findProductById(itId);
+          if (!product) {
+            return { success: true, data: [], count: 0 };
+          }
+
+          let cartItIds = [];
+          if (mbId) {
+            const carts = await cartRepository.findByMbIdAndStatusAsc(mbId, ctStatus);
+            cartItIds = carts.map((cart) => this.bufferToString(cart.it_id));
+          }
+
+          const rows = await cartRecommendService.getProductDetailRecommendProducts(
+            itId,
+            cartItIds
+          );
+          const data = await productController.mapProductSearchDtos(rows);
+          return { success: true, data, count: data.length };
         }
 
-        let cartItIds = [];
-        if (mbId) {
-          const carts = await cartRepository.findByMbIdAndStatusAsc(mbId, ctStatus);
-          cartItIds = carts.map((cart) => this.bufferToString(cart.it_id));
-        }
-
-        // 2번째 인자 = 장바구니 it_id만 (현재 상세 상품은 서비스 내부에서 제외 ID로만 사용)
-        const rows = await cartRecommendService.getProductDetailRecommendProducts(
-          itId,
-          cartItIds
-        );
-        const data = await productController.mapProductDtos(rows);
-
-        return res.json({
-          success: true,
-          data,
-          count: data.length
-        });
-      } else {
         if (!mbId) {
-          return res.status(400).json({ success: false, message: 'mb_id 또는 it_id가 필요합니다.', data: [] });
+          return { success: false, status: 400, message: 'mb_id 또는 it_id가 필요합니다.', data: [], count: 0 };
         }
         const carts = await cartRepository.findByMbIdAndStatusAsc(mbId, ctStatus);
         if (!carts.length) {
-          return res.json({ success: true, data: [], count: 0 });
+          return { success: true, data: [], count: 0 };
         }
         cartList = carts.map((cart) => ({
           it_id: this.bufferToString(cart.it_id),
           it_name: this.bufferToString(cart.it_name)
         }));
-      }
 
-      const rows = await cartRecommendService.getRecommendProducts(cartList);
-      const data = await productController.mapProductDtos(rows);
-
-      return res.json({
-        success: true,
-        data,
-        count: data.length
+        const rows = await cartRecommendService.getRecommendProducts(cartList);
+        const data = await productController.mapProductSearchDtos(rows);
+        return { success: true, data, count: data.length };
       });
+
+      if (payload.status === 400) {
+        return res.status(400).json({
+          success: false,
+          message: payload.message,
+          data: [],
+        });
+      }
+      res.set('Cache-Control', 'private, max-age=30');
+      return res.json(payload);
     } catch (error) {
       return res.status(500).json({
         success: false,

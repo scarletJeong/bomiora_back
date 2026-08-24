@@ -3,10 +3,45 @@ const pool = require('../../../../config/database');
 class HealthProfileRepository {
   async findByMbId(mbId) {
     const [rows] = await pool.query(
-      'SELECT * FROM bomiora_member_health_profiles WHERE mb_id = ? LIMIT 1',
+      `SELECT pf_no,
+              CAST(mb_id AS CHAR) AS mb_id,
+              CAST(answer_1 AS CHAR) AS answer_1,
+              CAST(answer_2 AS CHAR) AS answer_2,
+              CAST(answer_3 AS CHAR) AS answer_3,
+              CAST(answer_4 AS CHAR) AS answer_4,
+              CAST(answer_5 AS CHAR) AS answer_5,
+              CAST(answer_6 AS CHAR) AS answer_6,
+              CAST(answer_7 AS CHAR) AS answer_7,
+              CAST(answer_8 AS CHAR) AS answer_8,
+              CAST(answer_9 AS CHAR) AS answer_9,
+              CAST(answer_10 AS CHAR) AS answer_10,
+              CAST(answer_10_2 AS CHAR) AS answer_10_2,
+              CAST(answer_11 AS CHAR) AS answer_11,
+              CAST(answer_12 AS CHAR) AS answer_12,
+              CAST(answer_13 AS CHAR) AS answer_13,
+              CAST(answer_13_period AS CHAR) AS answer_13_period,
+              CAST(answer_13_dosage AS CHAR) AS answer_13_dosage,
+              CAST(answer_13_medicine AS CHAR) AS answer_13_medicine,
+              CAST(answer_7_1 AS CHAR) AS answer_7_1,
+              CAST(answer_13_sideeffect AS CHAR) AS answer_13_sideeffect,
+              pf_wdatetime, pf_mdatetime,
+              CAST(pf_ip AS CHAR) AS pf_ip,
+              CAST(pf_memo AS CHAR) AS pf_memo
+         FROM bomiora_member_health_profiles
+        WHERE mb_id = ?
+        LIMIT 1`,
       [mbId]
     );
     return rows.length ? rows[0] : null;
+  }
+
+  /** 콘텐츠 추천용 — pf_no 만 */
+  async findPfNoByMbId(mbId) {
+    const [rows] = await pool.query(
+      'SELECT pf_no FROM bomiora_member_health_profiles WHERE mb_id = ? LIMIT 1',
+      [mbId]
+    );
+    return rows.length ? Number(rows[0].pf_no) || 0 : 0;
   }
 
   async findByPfNoAndMbId(pfNo, mbId) {

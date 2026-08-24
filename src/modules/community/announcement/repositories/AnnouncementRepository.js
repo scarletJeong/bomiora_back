@@ -103,22 +103,45 @@ class AnnouncementRepository {
     );
   }
 
-  async findAdjacentById(id) {
-    const [rows] = await pool.query(
-      `SELECT n.id, n.title
-       FROM bm_notice n
-       WHERE n.is_deleted = 0
-         AND ${this._topNoticeGuardSql()}
-       ORDER BY n.is_notice DESC, n.created_at DESC, n.id DESC`
-    );
+  /** 상세용 — 공지 고정 가드 없이 created_at/id 기준 prev·next (빠름) */
+  async findAdjacentByIdFast(id, current = null) {
+    const cur = current || (await this.findById(id));
+    if (!cur) return { prev: null, next: null };
 
-    const index = rows.findIndex((r) => Number(r.id) === Number(id));
-    if (index < 0) {
-      return { prev: null, next: null };
-    }
-    const prev = index > 0 ? rows[index - 1] : null;
-    const next = index < rows.length - 1 ? rows[index + 1] : null;
-    return { prev, next };
+    const createdAt = cur.created_at;
+    const curId = Number(cur.id);
+    const [[prevRows], [nextRows]] = await Promise.all([
+      pool.query(
+        `SELECT id, title FROM bm_notice
+          WHERE is_deleted = 0
+            AND (
+              created_at > ?
+              OR (created_at = ? AND id > ?)
+            )
+          ORDER BY created_at ASC, id ASC
+          LIMIT 1`,
+        [createdAt, createdAt, curId]
+      ),
+      pool.query(
+        `SELECT id, title FROM bm_notice
+          WHERE is_deleted = 0
+            AND (
+              created_at < ?
+              OR (created_at = ? AND id < ?)
+            )
+          ORDER BY created_at DESC, id DESC
+          LIMIT 1`,
+        [createdAt, createdAt, curId]
+      ),
+    ]);
+    return {
+      prev: prevRows[0] || null,
+      next: nextRows[0] || null,
+    };
+  }
+
+  async findAdjacentById(id, current = null) {
+    return this.findAdjacentByIdFast(id, current);
   }
 }
 

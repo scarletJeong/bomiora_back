@@ -1,4 +1,7 @@
 const recentViewRepository = require('../repositories/RecentViewRepository');
+const { TtlCache } = require('../../../../utils/ttlCache');
+
+const recentListCache = new TtlCache(45_000);
 
 class RecentViewController {
   bufferToString(value) {
@@ -19,6 +22,14 @@ class RecentViewController {
     if (!product.it_img1) return null;
     const v = String(product.it_img1);
     return v.startsWith('/') || v.startsWith('http') ? v : `/${v}`;
+  }
+
+  invalidateList(mbId) {
+    const id = String(mbId || '').trim();
+    if (!id) return;
+    for (const key of recentListCache.store.keys()) {
+      if (key.startsWith(`list:${id}:`)) recentListCache.store.delete(key);
+    }
   }
 
   resolveItKind(req, itId) {
@@ -68,6 +79,7 @@ class RecentViewController {
         itKind,
         rvIp: req.ip,
       });
+      this.invalidateList(mbId);
       recentViewRepository.pruneOldForMember(mbId).catch(() => {});
 
       return res.json({
@@ -94,58 +106,52 @@ class RecentViewController {
       }
 
       const limit = Number(req.query.limit) || 4;
-      const views = await recentViewRepository.findByMbIdOrderByTimeDesc(mbId, limit);
-      const itIds = [
-        ...new Set(
-          views
-            .map((v) => this.bufferToString(v.it_id || '').trim())
-            .filter((id) => id.length > 0)
-        ),
-      ];
-      const products = await recentViewRepository.findProductsByIds(itIds);
-      const map = {};
-      for (const p of products) {
-        const pid = this.bufferToString(p.it_id || '').trim();
-        if (pid) map[pid] = p;
-      }
+      const payload = await recentListCache.getOrSet(
+        `list:${mbId}:${limit}`,
+        async () => {
+          // JOIN 1회로 views+상품 조회 (기존 2 RTT → 1 RTT)
+          const rows = await recentViewRepository.findByMbIdOrderByTimeDesc(
+            mbId,
+            limit
+          );
+          const data = rows
+            .map((v) => {
+              const itIdKey = this.bufferToString(v.it_id || '').trim();
+              const kindFromView = this.bufferToString(v.it_kind || '').trim();
+              const kindFromProduct = this.bufferToString(
+                v.product_it_kind || ''
+              ).trim();
+              const productKind = kindFromView || kindFromProduct || '';
+              const hasProduct = !!(v.it_name || v.it_img1 || v.it_flutter_image_url);
 
-      const data = views
-        .map((v) => {
-          const itIdKey = this.bufferToString(v.it_id || '').trim() || v.it_id;
-          const p = map[itIdKey] || map[v.it_id];
-          const kindFromView = this.bufferToString(v.it_kind || '').trim();
-          const kindFromProduct = p ? this.bufferToString(p.it_kind || '').trim() : '';
-          const productKind = kindFromView || kindFromProduct || '';
+              const row = {
+                rv_id: v.rv_id,
+                it_id: itIdKey,
+                rv_time: v.rv_time,
+              };
+              if (kindFromView) row.it_kind = kindFromView;
+              if (productKind) {
+                row.product_kind = productKind;
+                row.it_kind = productKind;
+              }
+              if (hasProduct) {
+                row.product_name = v.it_name;
+                row.product_price = v.it_price;
+                row.image_url = this.toImage(v);
+                row.it_img = row.image_url;
+                row.it_img1 = row.image_url;
+                row.it_basic = v.it_basic;
+              }
+              return row;
+            })
+            .filter((row) => row.product_name || row.it_id);
 
-          const row = {
-            rv_id: v.rv_id,
-            it_id: itIdKey,
-            rv_time: v.rv_time,
-          };
-          if (kindFromView) {
-            row.it_kind = kindFromView;
-          }
-          if (productKind) {
-            row.product_kind = productKind;
-            row.it_kind = productKind;
-          }
-          if (p) {
-            row.product_name = p.it_name;
-            row.product_price = p.it_price;
-            if (!productKind) {
-              row.product_kind = this.bufferToString(p.it_kind || '').trim() || null;
-              row.it_kind = row.product_kind;
-            }
-            row.image_url = this.toImage(p);
-            row.it_img = this.toImage(p);
-            row.it_img1 = this.toImage(p);
-            row.it_basic = p.it_basic;
-          }
-          return row;
-        })
-        .filter((row) => row.product_name || row.it_id);
+          return { success: true, data, count: data.length };
+        }
+      );
 
-      return res.json({ success: true, data, count: data.length });
+      res.set('Cache-Control', 'private, max-age=20');
+      return res.json(payload);
     } catch (error) {
       return res.status(500).json({
         success: false,
@@ -166,6 +172,7 @@ class RecentViewController {
         });
       }
       await recentViewRepository.deleteByMbIdAndItId(mbId, itId);
+      this.invalidateList(mbId);
       return res.json({ success: true, message: '최근 본 상품이 삭제되었습니다.' });
     } catch (error) {
       return res.status(500).json({
@@ -186,6 +193,7 @@ class RecentViewController {
         });
       }
       const removed = await recentViewRepository.deleteAllByMbId(mbId);
+      this.invalidateList(mbId);
       return res.json({
         success: true,
         removed,

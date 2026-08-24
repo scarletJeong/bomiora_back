@@ -22,17 +22,17 @@ const LIST_COLUMNS = `
   it_order
 `;
 
-/** 상세용 — 상세 HTML은 쓰지만 헤드/테일 등 미사용 LONGTEXT는 제외 */
+/** 상세용 — 본문 HTML은 필요 필드만, 이미지 1~5만 */
 const DETAIL_COLUMNS = `
   CAST(it_id AS CHAR) AS it_id,
   CAST(it_name AS CHAR) AS it_name,
   CAST(it_basic AS CHAR) AS it_basic,
   CAST(it_subject AS CHAR) AS it_subject,
   it_explan,
-  CAST(it_precautions AS CHAR) AS it_precautions,
-  CAST(it_baesong_content AS CHAR) AS it_baesong_content,
-  CAST(it_shipping_process AS CHAR) AS it_shipping_process,
-  CAST(it_change_content AS CHAR) AS it_change_content,
+  CAST(LEFT(IFNULL(it_precautions, ''), 8000) AS CHAR) AS it_precautions,
+  CAST(LEFT(IFNULL(it_baesong_content, ''), 8000) AS CHAR) AS it_baesong_content,
+  CAST(LEFT(IFNULL(it_shipping_process, ''), 8000) AS CHAR) AS it_shipping_process,
+  CAST(LEFT(IFNULL(it_change_content, ''), 8000) AS CHAR) AS it_change_content,
   CAST(it_prescription AS CHAR) AS it_prescription,
   CAST(it_takeway AS CHAR) AS it_takeway,
   CAST(it_package AS CHAR) AS it_package,
@@ -60,11 +60,7 @@ const DETAIL_COLUMNS = `
   CAST(it_img2 AS CHAR) AS it_img2,
   CAST(it_img3 AS CHAR) AS it_img3,
   CAST(it_img4 AS CHAR) AS it_img4,
-  CAST(it_img5 AS CHAR) AS it_img5,
-  CAST(it_img6 AS CHAR) AS it_img6,
-  CAST(it_img7 AS CHAR) AS it_img7,
-  CAST(it_img8 AS CHAR) AS it_img8,
-  CAST(it_img9 AS CHAR) AS it_img9
+  CAST(it_img5 AS CHAR) AS it_img5
 `;
 
 class ProductRepository {

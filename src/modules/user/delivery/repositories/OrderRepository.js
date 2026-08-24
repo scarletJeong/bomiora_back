@@ -71,29 +71,28 @@ class OrderRepository {
     const whereSql = `mb_id = ? AND ${periodFilter.sql} AND ${statusFilter.sql}`;
     const whereParams = [mbId, ...periodFilter.params, ...statusFilter.params];
 
-    const [countRows] = await pool.query(
-      `SELECT COUNT(*) AS total FROM bomiora_shop_order WHERE ${whereSql}`,
-      whereParams
-    );
-    const total = Number(countRows[0].total || 0);
+    const [[countRows], [rows]] = await Promise.all([
+      pool.query(
+        `SELECT COUNT(*) AS total FROM bomiora_shop_order WHERE ${whereSql}`,
+        whereParams
+      ),
+      pool.query(
+        `SELECT od_id, mb_id, od_name, od_hp,
+                od_addr1, od_addr2, od_addr3, od_status,
+                od_cart_count, od_cart_price, od_send_cost, od_send_cost2,
+                od_receipt_price, od_settle_case,
+                NULLIF(od_time, '0000-00-00 00:00:00') AS od_time,
+                delivery_completed, admin_completed,
+                NULLIF(auto_confirm_at, '0000-00-00 00:00:00') AS auto_confirm_at
+         FROM bomiora_shop_order
+         WHERE ${whereSql}
+         ORDER BY od_id DESC
+         LIMIT ? OFFSET ?`,
+        [...whereParams, Number(size), offset]
+      ),
+    ]);
 
-    const [rows] = await pool.query(
-      `SELECT od_id, mb_id, od_name, od_email, od_hp,
-              od_addr1, od_addr2, od_addr3, od_status,
-              od_cart_count, od_cart_price, od_send_cost, od_send_cost2,
-              od_receipt_price, od_settle_case, od_delivery_company, od_invoice,
-              NULLIF(od_time, '0000-00-00 00:00:00') AS od_time,
-              NULLIF(od_invoice_time, '0000-00-00 00:00:00') AS od_invoice_time,
-              delivery_completed, admin_completed,
-              NULLIF(auto_confirm_at, '0000-00-00 00:00:00') AS auto_confirm_at
-       FROM bomiora_shop_order
-       WHERE ${whereSql}
-       ORDER BY od_id DESC
-       LIMIT ? OFFSET ?`,
-      [...whereParams, Number(size), offset]
-    );
-
-    return { rows, total };
+    return { rows, total: Number(countRows[0]?.total || 0) };
   }
 
   async getOrderDetail(odId, mbId) {

@@ -27,13 +27,20 @@ class ContentRepository {
 
     const whereSql = `WHERE ${whereParts.join(' AND ')}`;
 
+    // 홈/카드용 소량 목록: COUNT RTT 생략 (total ≈ 추정)
+    const skipCount =
+      safePage === 1 &&
+      !useQuery &&
+      !useCategory &&
+      safeSize <= 8;
+
     const listSql = `
       SELECT
           id,
           CAST(category AS CHAR) AS category,
           CAST(title AS CHAR) AS title,
           CAST(thumbnail AS CHAR) AS thumbnail_url,
-          LEFT(content, 400) AS content_html,
+          LEFT(content, 200) AS content_html,
           is_notice,
           is_published,
           view_count,
@@ -45,6 +52,19 @@ class ContentRepository {
        ${whereSql}
        ORDER BY is_notice DESC, sort_order ASC, id DESC
        LIMIT ? OFFSET ?`;
+
+    if (skipCount) {
+      const [rows] = await pool.query(listSql, [...params, safeSize, offset]);
+      const total =
+        rows.length < safeSize ? rows.length : Math.max(rows.length, safeSize + 1);
+      return {
+        rows,
+        total,
+        page: safePage,
+        size: safeSize,
+        categories: [],
+      };
+    }
 
     const [[countRows], [rows]] = await Promise.all([
       pool.query(

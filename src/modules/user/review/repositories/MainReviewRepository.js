@@ -60,8 +60,9 @@ class MainReviewRepository {
     const safeSize = Math.min(Math.max(Number(size) || 5, 1), 50);
     const safePage = Math.max(Number(page) || 0, 0);
     const offset = safePage * safeSize;
+    // 목록/더보기: 본문·여분 이미지 제외 (홈 카드와 동일 컬럼)
     const [rows] = await pool.query(
-      `${SELECT_MAIN_REVIEW}
+      `${SELECT_MAIN_REVIEW_HOME}
        ${ORDER_CLAUSE}
        LIMIT ? OFFSET ?`,
       [safeSize, offset]
@@ -69,17 +70,30 @@ class MainReviewRepository {
     return rows;
   }
 
-  /** 정렬 기준상 몇 번째인지 (0-based). 없으면 -1 */
+  /** 정렬 기준상 몇 번째인지 (0-based). 없으면 -1 — 전체 로드 없이 COUNT */
   async findPublishedIndex(mrNo) {
     const target = Number(mrNo);
     if (!Number.isFinite(target) || target < 1) return -1;
-    const [rows] = await pool.query(
-      `SELECT mr_no
-       FROM bomiora_main_review
-       WHERE mr_confirm = 1
-       ORDER BY mr_datetime DESC, mr_no DESC`
+    const [targets] = await pool.query(
+      `SELECT mr_no, mr_datetime
+         FROM bomiora_main_review
+        WHERE mr_confirm = 1 AND mr_no = ?
+        LIMIT 1`,
+      [target]
     );
-    return rows.findIndex((r) => Number(r.mr_no) === target);
+    if (!targets.length) return -1;
+    const t = targets[0];
+    const [cntRows] = await pool.query(
+      `SELECT COUNT(*) AS cnt
+         FROM bomiora_main_review
+        WHERE mr_confirm = 1
+          AND (
+            mr_datetime > ?
+            OR (mr_datetime = ? AND mr_no > ?)
+          )`,
+      [t.mr_datetime, t.mr_datetime, t.mr_no]
+    );
+    return Number(cntRows[0]?.cnt || 0);
   }
 
   async getPublishedStats() {

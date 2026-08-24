@@ -6,7 +6,7 @@ const { TtlCache } = require('../../../../utils/ttlCache');
 
 const homeProductCache = new TtlCache(90_000);
 const optionCache = new TtlCache(90_000);
-const productDetailCache = new TtlCache(45_000);
+const productDetailCache = new TtlCache(90_000);
 
 class ProductController {
   constructor() {
@@ -396,22 +396,22 @@ class ProductController {
     try {
       const productId = String(req.query.id || '').trim();
       if (productId) {
-        reviewRepository.refreshItemReviewAggregates(productId).catch((e) => {
-          console.warn('[ProductDetail] 리뷰 집계 스킵:', e?.message || e);
-        });
+        reviewRepository.refreshItemReviewAggregates(productId).catch(() => {});
       }
       const payload = await productDetailCache.getOrSet(`detail:${productId}`, async () => {
-        const row = await productRepository.findById(productId);
+        const [row, shopDefault] = await Promise.all([
+          productRepository.findById(productId),
+          this.getShopDefaultCached(),
+        ]);
         if (!row) {
           return { success: false, status: 404, message: '상품을 찾을 수 없습니다' };
         }
-        const shopDefault = await this.getShopDefaultCached();
         return { success: true, data: this.toProductDto(row, shopDefault) };
       });
       if (payload.status === 404 || payload.success === false) {
         return res.json({ success: false, message: payload.message || '상품을 찾을 수 없습니다' });
       }
-      res.set('Cache-Control', 'public, max-age=30');
+      res.set('Cache-Control', 'public, max-age=60');
       return res.json(payload);
     } catch (error) {
       return res.status(500).json({ success: false, message: `상품 상세 조회 실패: ${error.message}` });

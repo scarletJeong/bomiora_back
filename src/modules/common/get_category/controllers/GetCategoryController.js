@@ -1,7 +1,7 @@
 const getCategoryRepository = require('../repositories/GetCategoryRepository');
 const { TtlCache } = require('../../../../utils/ttlCache');
 
-const categoryCache = new TtlCache(120_000);
+const categoryCache = new TtlCache(300_000);
 
 class GetCategoryController {
   normalizeText(value) {
@@ -43,7 +43,7 @@ class GetCategoryController {
           data: rows.map((row) => this.toMap(row)),
         };
       });
-      res.set('Cache-Control', 'public, max-age=60');
+      res.set('Cache-Control', 'public, max-age=120');
       return res.json(payload);
     } catch (error) {
       return res.status(500).json({

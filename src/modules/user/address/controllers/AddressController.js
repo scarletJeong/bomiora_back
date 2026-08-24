@@ -1,7 +1,7 @@
 const addressRepository = require('../repositories/AddressRepository');
 const { TtlCache } = require('../../../../utils/ttlCache');
 
-const addressListCache = new TtlCache(30_000);
+const addressListCache = new TtlCache(60_000);
 
 class AddressController {
   toText(value) {
@@ -46,7 +46,7 @@ class AddressController {
           data: addresses.map((a) => this.mapAddress(a)),
         };
       });
-      res.set('Cache-Control', 'private, max-age=15');
+      res.set('Cache-Control', 'private, max-age=30');
       return res.json(payload);
     } catch (error) {
       return res.status(500).json({ error: error.message });
@@ -69,34 +69,45 @@ class AddressController {
     try {
       const dto = req.body;
       const mbId = dto.mb_id || dto.mbId;
-      const existingCount = await addressRepository.countByMbId(mbId);
       let adDefault = Number(dto.ad_default ?? dto.adDefault ?? 0);
-      // 최초 등록 배송지는 무조건 기본 배송지
-      if (existingCount === 0) {
-        adDefault = 1;
-      }
-      if (adDefault === 1) {
-        await addressRepository.clearDefaultByMbId(mbId);
+
+      // 목록 캐시가 있으면 COUNT RTT 생략
+      const cached = addressListCache.get(`list:${mbId}`);
+      let forceFirstDefault = null;
+      if (cached && Array.isArray(cached.data)) {
+        if (cached.data.length === 0) {
+          adDefault = 1;
+          forceFirstDefault = true;
+        } else {
+          forceFirstDefault = false;
+        }
       }
 
-      const saved = await addressRepository.create({
-        mb_id: mbId,
-        ad_subject: dto.ad_subject ?? dto.adSubject ?? '',
-        ad_default: adDefault,
-        ad_name: dto.ad_name || dto.adName,
-        ad_tel: dto.ad_tel || dto.adTel || '',
-        ad_hp: dto.ad_hp || dto.adHp || '',
-        ad_zip1: dto.ad_zip1 || dto.adZip1 || '',
-        ad_zip2: dto.ad_zip2 || dto.adZip2 || '',
-        ad_addr1: dto.ad_addr1 || dto.adAddr1 || '',
-        ad_addr2: dto.ad_addr2 || dto.adAddr2 || '',
-        ad_addr3: dto.ad_addr3 || dto.adAddr3 || '',
-        ad_jibeon: dto.ad_jibeon || dto.adJibeon || '',
-        ad_memo: dto.ad_memo ?? dto.adMemo ?? '',
-      });
+      const saved = await addressRepository.createFast(
+        {
+          mb_id: mbId,
+          ad_subject: dto.ad_subject ?? dto.adSubject ?? '',
+          ad_default: adDefault,
+          ad_name: dto.ad_name || dto.adName,
+          ad_tel: dto.ad_tel || dto.adTel || '',
+          ad_hp: dto.ad_hp || dto.adHp || '',
+          ad_zip1: dto.ad_zip1 || dto.adZip1 || '',
+          ad_zip2: dto.ad_zip2 || dto.adZip2 || '',
+          ad_addr1: dto.ad_addr1 || dto.adAddr1 || '',
+          ad_addr2: dto.ad_addr2 || dto.adAddr2 || '',
+          ad_addr3: dto.ad_addr3 || dto.adAddr3 || '',
+          ad_jibeon: dto.ad_jibeon || dto.adJibeon || '',
+          ad_memo: dto.ad_memo ?? dto.adMemo ?? '',
+        },
+        { forceFirstDefault }
+      );
 
       this.invalidateList(mbId);
-      return res.json({ success: true, data: this.mapAddress(saved), message: '배송지가 추가되었습니다.' });
+      return res.json({
+        success: true,
+        data: this.mapAddress(saved),
+        message: '배송지가 추가되었습니다.',
+      });
     } catch (error) {
       return res.status(400).json({ error: error.message });
     }
