@@ -23,42 +23,101 @@ class QaRepository {
     return rows;
   }
 
-  /**
-   * ? ?? ?? ? ??(??)?.
-   * ?? Q&A ??: wr_parent = wr_id
-   */
-  async findThreadsByIdentity({ mbId, mbEmail }) {
+  _identityWhere({ mbId, mbEmail, alias = '' }) {
     const id = (mbId ?? '').toString().trim();
     const email = (mbEmail ?? '').toString().trim();
-    if (!id && !email) return [];
+    if (!id && !email) return { where: '', args: [] };
+    const col = alias ? `${alias}.` : '';
 
-    const where = ['wr_parent = wr_id'];
+    const where = [`${col}wr_parent = ${col}wr_id`];
     const args = [];
     if (id && email) {
-      where.push('(mb_id = ? OR wr_email = ?)');
+      where.push(`(${col}mb_id = ? OR ${col}wr_email = ?)`);
       args.push(id, email);
     } else if (email) {
-      where.push('wr_email = ?');
+      where.push(`${col}wr_email = ?`);
       args.push(email);
     } else {
-      where.push('mb_id = ?');
+      where.push(`${col}mb_id = ?`);
       args.push(id);
     }
+    return { where: where.join(' AND '), args };
+  }
+
+  /**
+   * 내 문의 목록(원글만). 본문 LONGTEXT·첨부 대신 미리보기만 조회.
+   * is_closed 는 DB 값 + 답변 후 2일 경과를 SELECT에서 계산(목록 N+1 방지).
+   */
+  async findThreadsByIdentity({ mbId, mbEmail }) {
+    const { where, args } = this._identityWhere({ mbId, mbEmail, alias: 'root' });
+    if (!where) return [];
 
     const [rows] = await pool.query(
       `
-      SELECT root.*,
-             root.wr_datetime AS thread_last_datetime,
-             0 AS followup_count,
-             root.wr_id AS latest_wr_id,
-             root.wr_is_comment AS latest_wr_is_comment
+      SELECT
+        root.wr_id,
+        CAST(root.wr_subject AS CHAR) AS wr_subject,
+        CAST(LEFT(IFNULL(root.wr_content, ''), 800) AS CHAR) AS wr_content,
+        CAST(root.mb_id AS CHAR) AS mb_id,
+        CAST(root.wr_name AS CHAR) AS wr_name,
+        CAST(root.wr_email AS CHAR) AS wr_email,
+        root.wr_datetime,
+        root.wr_last,
+        root.wr_comment,
+        CAST(LEFT(IFNULL(root.wr_reply, ''), 200) AS CHAR) AS wr_reply,
+        root.wr_parent,
+        CAST(root.ca_name AS CHAR) AS ca_name,
+        CAST(root.wr_6 AS CHAR) AS wr_6,
+        root.wr_hit,
+        CAST(root.wr_option AS CHAR) AS wr_option,
+        root.wr_is_comment,
+        CAST(root.wr_8 AS CHAR) AS wr_8,
+        CASE
+          WHEN IFNULL(root.is_closed, 0) = 1 THEN 1
+          WHEN LOWER(TRIM(CAST(IFNULL(root.wr_8, '') AS CHAR))) IN ('1', 'y', 'closed') THEN 1
+          WHEN IFNULL(root.wr_is_comment, 0) = 1
+            AND (
+              TRIM(CAST(IFNULL(root.wr_7, '') AS CHAR)) <> ''
+              OR TRIM(CAST(IFNULL(root.wr_reply, '') AS CHAR)) <> ''
+            )
+            AND DATE(IFNULL(root.wr_last, root.wr_datetime)) <= DATE_SUB(CURDATE(), INTERVAL 2 DAY)
+          THEN 1
+          ELSE 0
+        END AS is_closed,
+        root.wr_datetime AS thread_last_datetime,
+        0 AS followup_count,
+        root.wr_id AS latest_wr_id,
+        root.wr_is_comment AS latest_wr_is_comment
       FROM bomiora_write_online root
-      WHERE ${where.join(' AND ')}
+      WHERE ${where}
       ORDER BY root.wr_datetime DESC, root.wr_id DESC
       `,
       args
     );
     return rows;
+  }
+
+  /** 답변 후 2일 경과 원글을 한 번에 종료. 목록 응답을 막지 않도록 호출측에서 fire-and-forget. */
+  async autoCloseExpiredForIdentity({ mbId, mbEmail }) {
+    const { where, args } = this._identityWhere({ mbId, mbEmail, alias: 'root' });
+    if (!where) return 0;
+    const [result] = await pool.query(
+      `
+      UPDATE bomiora_write_online root
+      SET is_closed = 1, wr_last = NOW()
+      WHERE ${where}
+        AND IFNULL(root.is_closed, 0) <> 1
+        AND LOWER(TRIM(CAST(IFNULL(root.wr_8, '') AS CHAR))) NOT IN ('1', 'y', 'closed')
+        AND IFNULL(root.wr_is_comment, 0) = 1
+        AND (
+          TRIM(CAST(IFNULL(root.wr_7, '') AS CHAR)) <> ''
+          OR TRIM(CAST(IFNULL(root.wr_reply, '') AS CHAR)) <> ''
+        )
+        AND DATE(IFNULL(root.wr_last, root.wr_datetime)) <= DATE_SUB(CURDATE(), INTERVAL 2 DAY)
+      `,
+      args
+    );
+    return Number(result?.affectedRows || 0);
   }
 
   async findById(wrId) {

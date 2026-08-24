@@ -1,21 +1,46 @@
 const pool = require('../../../../config/database');
 
+const CART_LIST_SELECT = `
+         c.ct_id,
+         CAST(c.od_id AS CHAR) AS od_id,
+         CAST(c.mb_id AS CHAR) AS mb_id,
+         CAST(c.it_id AS CHAR) AS it_id,
+         CAST(c.it_name AS CHAR) AS it_name,
+         CAST(c.it_subject AS CHAR) AS it_subject,
+         c.it_sc_type, c.it_sc_method, c.it_sc_price, c.it_sc_minimum, c.it_sc_qty,
+         CAST(c.ct_status AS CHAR) AS ct_status,
+         c.ct_price, c.ct_qty, c.io_type, c.io_price, c.ct_select, c.ct_time,
+         CAST(c.ct_option AS CHAR) AS ct_option,
+         CAST(c.io_id AS CHAR) AS io_id,
+         CAST(c.ct_kind AS CHAR) AS ct_kind,
+         CAST(c.parent AS CHAR) AS parent,
+         CAST(c.ct_mb_inf AS CHAR) AS ct_mb_inf,
+         COALESCE(NULLIF(TRIM(CAST(c.it_subject AS CHAR)), ''), CAST(p.it_subject AS CHAR)) AS resolved_it_subject,
+         CAST(p.it_brand AS CHAR) AS product_it_brand,
+         CAST(p.it_maker AS CHAR) AS product_it_maker,
+         CAST(p.ca_id AS CHAR) AS product_ca_id,
+         CAST(p.it_kind AS CHAR) AS product_it_kind,
+         CAST(LEFT(IFNULL(p.it_supply_items, ''), 500) AS CHAR) AS product_it_supply_items,
+         CAST(p.it_flutter_image_url AS CHAR) AS it_flutter_image_url,
+         CAST(p.it_img1 AS CHAR) AS it_img1
+`;
+
 class CartRepository {
   async findProductById(itId) {
-    const [rows] = await pool.query('SELECT * FROM bomiora_shop_item_new WHERE it_id = ? LIMIT 1', [itId]);
+    const [rows] = await pool.query(
+      `SELECT it_id, it_name, it_subject, it_kind, it_brand, it_maker,
+              it_img1, it_flutter_image_url, it_mb_inf, it_inf_price,
+              it_sc_type, it_sc_method, it_sc_price, it_sc_minimum, it_sc_qty,
+              it_price, it_point_type, it_point, it_supply_point
+       FROM bomiora_shop_item_new WHERE it_id = ? LIMIT 1`,
+      [itId]
+    );
     return rows.length ? rows[0] : null;
   }
 
   async findByMbIdAndStatus(mbId, ctStatus) {
     const [rows] = await pool.query(
-      `SELECT
-         c.*,
-         COALESCE(NULLIF(TRIM(CAST(c.it_subject AS CHAR)), ''), p.it_subject) AS resolved_it_subject,
-         p.it_brand AS product_it_brand,
-         p.it_maker AS product_it_maker,
-         p.ca_id AS product_ca_id,
-         p.it_kind AS product_it_kind,
-         p.it_supply_items AS product_it_supply_items
+      `SELECT ${CART_LIST_SELECT}
        FROM bomiora_shop_cart c
        LEFT JOIN bomiora_shop_item_new p ON p.it_id = c.it_id
        WHERE c.mb_id = ? AND c.ct_status = ?
@@ -27,14 +52,7 @@ class CartRepository {
 
   async findByMbIdAndStatusAsc(mbId, ctStatus) {
     const [rows] = await pool.query(
-      `SELECT
-         c.*,
-         COALESCE(NULLIF(TRIM(CAST(c.it_subject AS CHAR)), ''), p.it_subject) AS resolved_it_subject,
-         p.it_brand AS product_it_brand,
-         p.it_maker AS product_it_maker,
-         p.ca_id AS product_ca_id,
-         p.it_kind AS product_it_kind,
-         p.it_supply_items AS product_it_supply_items
+      `SELECT ${CART_LIST_SELECT}
        FROM bomiora_shop_cart c
        LEFT JOIN bomiora_shop_item_new p ON p.it_id = c.it_id
        WHERE c.mb_id = ? AND c.ct_status = ?

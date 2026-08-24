@@ -50,7 +50,13 @@ class BloodSugarRepository {
 
   async findByMbIdOrderByMeasuredAtDesc(mbId) {
     const [rows] = await pool.query(
-      'SELECT * FROM bm_blood_sugar WHERE mb_id = ? ORDER BY measured_at DESC',
+      `SELECT id, CAST(mb_id AS CHAR) AS mb_id, blood_sugar,
+              CAST(measurement_type AS CHAR) AS measurement_type,
+              CAST(status AS CHAR) AS status, measured_at
+       FROM bm_blood_sugar
+       WHERE mb_id = ?
+       ORDER BY measured_at DESC
+       LIMIT 90`,
       [mbId]
     );
     return rows.map((row) => new BloodSugar(row));

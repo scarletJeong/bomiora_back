@@ -1,6 +1,7 @@
 const BloodSugar = require('../models/BloodSugar');
 const bloodSugarRepository = require('../repositories/BloodSugarRepository');
 const { parseHealthDateTimeInput } = require('../../../../utils/healthDateTime');
+const { getHealthCached } = require('../../healthReadCache');
 
 class BloodSugarController {
   async addRecord(req, res) {
@@ -92,11 +93,15 @@ class BloodSugarController {
 
   async getRecords(req, res) {
     try {
-      const records = await bloodSugarRepository.findByMbIdOrderByMeasuredAtDesc(req.query.mb_id);
-      return res.json({
-        success: true,
-        data: records.map((row) => row.toResponse())
+      const mbId = req.query.mb_id;
+      const payload = await getHealthCached('sugar', mbId, async () => {
+        const records = await bloodSugarRepository.findByMbIdOrderByMeasuredAtDesc(mbId);
+        return {
+          success: true,
+          data: records.map((row) => row.toResponse()),
+        };
       });
+      return res.json(payload);
     } catch (error) {
       return res.status(500).json({
         success: false,

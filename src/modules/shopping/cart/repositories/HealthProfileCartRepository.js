@@ -197,6 +197,31 @@ class HealthProfileCartRepository {
     );
     return rows.length ? rows[0] : null;
   }
+
+  /** 회원 장바구니 목록용: od_id+it_id 당 최신 예약 1건 */
+  async findLatestMapByMbId(mbId) {
+    const id = String(mbId || '').trim();
+    if (!id) return new Map();
+    const [rows] = await pool.query(
+      `SELECT
+         CAST(it_id AS CHAR) AS it_id,
+         REPLACE(REPLACE(CAST(od_id AS CHAR), ',', ''), ' ', '') AS od_id,
+         CAST(hp_doc_name AS CHAR) AS hp_doc_name,
+         hp_rsvt_date,
+         CAST(hp_rsvt_stime AS CHAR) AS hp_rsvt_stime,
+         CAST(hp_rsvt_etime AS CHAR) AS hp_rsvt_etime
+       FROM bomiora_shop_health_profiles_cart
+       WHERE mb_id = ?
+       ORDER BY hp_no DESC`,
+      [id]
+    );
+    const map = new Map();
+    for (const row of rows) {
+      const key = `${row.od_id || ''}:${String(row.it_id || '').trim()}`;
+      if (key !== ':' && !map.has(key)) map.set(key, row);
+    }
+    return map;
+  }
 }
 
 module.exports = new HealthProfileCartRepository();

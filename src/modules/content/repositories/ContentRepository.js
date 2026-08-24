@@ -27,44 +27,31 @@ class ContentRepository {
 
     const whereSql = `WHERE ${whereParts.join(' AND ')}`;
 
-    // 목록은 본문 전체(LONGTEXT) 대신 앞부분만 — summary 용도
     const listSql = `
       SELECT
           id,
-          category,
-          title,
-          thumbnail AS thumbnail_url,
-          LEFT(content, 800) AS content_html,
+          CAST(category AS CHAR) AS category,
+          CAST(title AS CHAR) AS title,
+          CAST(thumbnail AS CHAR) AS thumbnail_url,
+          LEFT(content, 400) AS content_html,
           is_notice,
           is_published,
           view_count,
           recommend_count,
           sort_order,
-          writer_name,
-          created_by,
-          created_at,
-          updated_by,
-          updated_at,
-          NULL AS published_at
+          CAST(writer_name AS CHAR) AS writer_name,
+          created_at
        FROM bm_content
        ${whereSql}
        ORDER BY is_notice DESC, sort_order ASC, id DESC
        LIMIT ? OFFSET ?`;
 
-    const [[countRows], [rows], [categoryRows]] = await Promise.all([
+    const [[countRows], [rows]] = await Promise.all([
       pool.query(
         `SELECT COUNT(*) AS total FROM bm_content ${whereSql}`,
         params
       ),
       pool.query(listSql, [...params, safeSize, offset]),
-      pool.query(
-        `SELECT category_name
-         FROM bm_category
-         WHERE grp = 'content'
-           AND is_use = 1
-           AND is_deleted = 0
-         ORDER BY id ASC`
-      ),
     ]);
 
     return {
@@ -72,9 +59,7 @@ class ContentRepository {
       total: Number(countRows?.[0]?.total || 0),
       page: safePage,
       size: safeSize,
-      categories: categoryRows
-        .map((r) => (r?.category_name == null ? '' : String(r.category_name).trim()))
-        .filter((s) => s.length > 0),
+      categories: [],
     };
   }
 
@@ -202,37 +187,24 @@ class ContentRepository {
    * 이전/다음 글 — 목록과 동일 정렬(is_notice DESC, sort_order ASC, id DESC).
    * category가 있으면 해당 카테고리 안에서만 탐색.
    */
-  async findAdjacentById(id, { category } = {}) {
-    const [curRows] = await pool.query(
-      `SELECT id, is_notice, sort_order, category
-         FROM bm_content
-        WHERE id = ?
-          AND is_deleted = 0
-          AND is_published = 1
-        LIMIT 1`,
-      [id]
-    );
-    const cur = curRows[0];
-    if (!cur) return { prev: null, next: null };
-
-    const cat = String(category || cur.category || '').trim();
+  async findAdjacentById(id, { category, isNotice, sortOrder } = {}) {
+    const cat = String(category || '').trim();
     const useCategory = cat.length > 0 && cat !== '전체';
     const catClause = useCategory
       ? "AND REPLACE(category, ' ', '') = REPLACE(?, ' ', '')"
       : '';
     const catParams = useCategory ? [cat] : [];
-
-    const isNotice = Number(cur.is_notice || 0);
-    const sortOrder = Number(cur.sort_order || 0);
-    const curId = Number(cur.id);
+    const notice = Number(isNotice || 0);
+    const order = Number(sortOrder || 0);
+    const curId = Number(id);
 
     const adjParams = [
       ...catParams,
-      isNotice,
-      isNotice,
-      sortOrder,
-      isNotice,
-      sortOrder,
+      notice,
+      notice,
+      order,
+      notice,
+      order,
       curId,
     ];
 

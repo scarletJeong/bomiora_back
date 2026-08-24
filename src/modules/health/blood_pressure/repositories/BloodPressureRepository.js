@@ -113,7 +113,12 @@ class BloodPressureRepository {
 
   async findByMbIdOrderByMeasuredAtDesc(mbId) {
     const [rows] = await pool.query(
-      'SELECT * FROM bm_blood_pressure WHERE mb_id = ? ORDER BY measured_at DESC',
+      `SELECT id, CAST(mb_id AS CHAR) AS mb_id, systolic, diastolic, pulse,
+              CAST(status AS CHAR) AS status, measured_at
+       FROM bm_blood_pressure
+       WHERE mb_id = ?
+       ORDER BY measured_at DESC
+       LIMIT 90`,
       [mbId]
     );
 

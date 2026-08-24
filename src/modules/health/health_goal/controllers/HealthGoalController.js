@@ -1,5 +1,6 @@
 const healthGoalRepository = require('../repositories/HealthGoalRepository');
 const { parseHealthDateTimeOptional } = require('../../../../utils/healthDateTime');
+const { getHealthCached } = require('../../healthReadCache');
 
 function parsePositiveNumber(value, fieldName) {
   const n = Number(value);
@@ -85,11 +86,14 @@ class HealthGoalController {
         return res.status(400).json({ success: false, message: 'mb_id가 필요합니다.' });
       }
 
-      const goal = await healthGoalRepository.findLatestByMbId(mbId);
-      return res.json({
-        success: true,
-        data: goal ? goal.toResponse() : null
+      const goal = await getHealthCached('goal', mbId, async () => {
+        const row = await healthGoalRepository.findLatestByMbId(mbId);
+        return {
+          success: true,
+          data: row ? row.toResponse() : null,
+        };
       });
+      return res.json(goal);
     } catch (error) {
       return res.status(400).json({
         success: false,

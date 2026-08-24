@@ -3,6 +3,7 @@ const {
   toIsoUtcString,
   addDaysToYmdDateString
 } = require('../../../../utils/healthDateTime');
+const { getHealthCached } = require('../../healthReadCache');
 
 class StepsController {
   async createStepsRecord(req, res) {
@@ -161,6 +162,10 @@ class StepsController {
       const userId = Number(mbIdRaw);
       const numericUser = Number.isFinite(userId);
 
+      const payload = await getHealthCached(
+        'steps',
+        mbIdRaw,
+        async () => {
       let bmAgg;
       try {
         bmAgg = await stepsRepository.aggregateBmStepsForCalendarDay(mbIdRaw, date);
@@ -289,7 +294,9 @@ class StepsController {
         };
       }
 
-      return res.json({ success: true, data });
+      return { success: true, data };
+      }, date);
+      return res.json(payload);
     } catch (error) {
       console.error('daily-total 조회 실패:', error);
       return res.status(500).json({

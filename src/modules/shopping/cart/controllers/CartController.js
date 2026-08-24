@@ -131,7 +131,7 @@ class CartController {
     return `${y}-${m}-${d}`;
   }
 
-  async convertCartToMap(cart) {
+  async convertCartToMap(cart, opts = {}) {
     const clean = (value) =>
       String(this.bufferToString(value) ?? '')
         .replace(/\u0000/g, '')
@@ -141,14 +141,26 @@ class CartController {
     const itId = clean(cart.it_id);
     const mbId = clean(cart.mb_id);
     const odId = cleanNumberString(cart.od_id);
-    const product = await cartRepository.findProductById(itId);
+
+    const hasJoinedProduct =
+      !!(cart.it_img1 || cart.it_flutter_image_url || cart.product_it_kind);
+    let product = hasJoinedProduct ? cart : null;
+    if (!product && itId && opts.skipProductLookup !== true) {
+      product = await cartRepository.findProductById(itId);
+    }
+
     const imageUrl = product ? this.buildImageUrl(product, itId) : null;
-    const reservation =
-      await healthProfileCartRepository.findLatestByOrderAndItem({
+
+    let reservation = null;
+    if (opts.reservationMap instanceof Map) {
+      reservation = opts.reservationMap.get(`${odId}:${itId}`) || null;
+    } else if (opts.skipReservationLookup !== true) {
+      reservation = await healthProfileCartRepository.findLatestByOrderAndItem({
         mbId,
         odId,
         itId
       });
+    }
 
     const rawDate = reservation?.hp_rsvt_date;
     const hpRsvtDate = this.formatSqlDateForApi(rawDate);
@@ -181,8 +193,9 @@ class CartController {
           this.bufferToString(product.it_maker) ||
           ''
         : '');
-    const productType = product
+      const productType = product
       ? this.bufferToString(product.it_type) ||
+        this.bufferToString(product.product_it_type) ||
         this.bufferToString(product.product_type) ||
         this.bufferToString(product.ca_name) ||
         ''
@@ -556,7 +569,26 @@ class CartController {
       const mbId = req.query.mb_id;
       const ctStatus = this.normalizeCartStatus(req.query.ct_status);
       const carts = await cartRepository.findByMbIdAndStatus(mbId, ctStatus);
-      const data = await Promise.all(carts.map((c) => this.convertCartToMap(c)));
+      let reservationMap = new Map();
+      try {
+        reservationMap = await healthProfileCartRepository.findLatestMapByMbId(mbId);
+      } catch (e) {
+        console.warn('[getCart] 예약정보 스킵:', e?.message || e);
+      }
+      const data = [];
+      for (const c of carts) {
+        try {
+          data.push(
+            await this.convertCartToMap(c, {
+              reservationMap,
+              skipProductLookup: true,
+              skipReservationLookup: true,
+            })
+          );
+        } catch (rowErr) {
+          console.warn('[getCart] 행 스킵', c?.ct_id, rowErr?.message || rowErr);
+        }
+      }
       const shippingCost = this.calculateShippingCost(carts);
       const totalPrice = carts.reduce((sum, c) => sum + this.cartLineAmount(c), 0);
       return res.json({
@@ -567,6 +599,7 @@ class CartController {
         total_price: totalPrice
       });
     } catch (error) {
+      console.error('[getCart]', error);
       return res.status(500).json({ success: false, message: '장바구니 조회 중 오류가 발생했습니다.', error: error.message });
     }
   }
@@ -983,7 +1016,22 @@ class CartController {
       const scoped = ctKind
         ? carts.filter((c) => this.normalizeCartKind(c.ct_kind) === ctKind)
         : carts;
-      const data = await Promise.all(scoped.map((c) => this.convertCartToMap(c)));
+      let reservationMap = new Map();
+      try {
+        reservationMap = await healthProfileCartRepository.findLatestMapByMbId(mbId);
+      } catch (_) {}
+      const data = [];
+      for (const c of scoped) {
+        try {
+          data.push(
+            await this.convertCartToMap(c, {
+              reservationMap,
+              skipProductLookup: true,
+              skipReservationLookup: true,
+            })
+          );
+        } catch (_) {}
+      }
 
       return res.json({
         success: true,

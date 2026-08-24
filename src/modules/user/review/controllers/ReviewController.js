@@ -10,7 +10,8 @@ const MAX_REVIEW_IMAGES = 3;
 
 /** 리뷰 목록 한 번에 가져올 수 있는 최대 건수 (무제한에 가깝게; 과도한 부하 방지용 상한) */
 const MAX_REVIEW_PAGE_SIZE = 100000;
-const mainReviewHomeCache = new TtlCache(30_000);
+const mainReviewHomeCache = new TtlCache(90_000);
+const memberReviewListCache = new TtlCache(15_000);
 
 class ReviewController {
   /** 0.1 단위 만족도 (DB DECIMAL(3,1) 권장; TINYINT면 소수 잘림) */
@@ -262,6 +263,15 @@ class ReviewController {
     };
   }
 
+  _invalidateMemberReviewList(mbId) {
+    const id = String(mbId || '').trim();
+    if (!id) return;
+    const prefix = `member:${id}:`;
+    for (const key of memberReviewListCache.store.keys()) {
+      if (key.startsWith(prefix)) memberReviewListCache.store.delete(key);
+    }
+  }
+
   /**
    * ?all=1 | true | yes → 0페이지부터 최대 MAX_REVIEW_PAGE_SIZE건
    * 그 외 ?size= 숫자 (1 ~ MAX), 기본 20
@@ -400,6 +410,7 @@ class ReviewController {
         });
       }
 
+      this._invalidateMemberReviewList(mbId);
       return res.json({
         success: true,
         message: '리뷰가 성공적으로 작성되었습니다. 관리자 승인 후 게시됩니다.',
@@ -433,30 +444,17 @@ class ReviewController {
   async getMemberReviews(req, res) {
     try {
       const { page, size } = this._reviewListPagination(req);
-      const result = await reviewRepository.findByMember(req.params.mbId, page, size);
-      const reviews = result.rows.map((r) => this.toReviewResponse(r));
-
-      if (process.env.NODE_ENV !== 'production') {
-        result.rows.forEach((row, idx) => {
-          const rev = reviews[idx];
-          console.log('[ReviewController.getMemberReviews]', {
-            isId: rev.isId,
-            itId: this.trimSqlText(row.it_id) || rev.itId,
-            itName: rev.itName,
-            itKind: rev.itKind,
-            reviewUiHint: this._reviewUiHintFromItKind(rev.itKind),
-            productImage: rev.productImage,
-            shopItemImagesFromJoin: this._shopItemImageFieldsForLog(row),
-            reviewAttachCount: Array.isArray(rev.images) ? rev.images.length : 0,
-          });
-        });
-      }
-
-      return res.json({
-        success: true,
-        reviews,
-        ...this.pagePayload(page, size, result.total)
-      });
+      const mbId = String(req.params.mbId || '').trim();
+      const cacheKey = `member:${mbId}:${page}:${size}`;
+      const payload = await memberReviewListCache.getOrSet(cacheKey, async () => {
+        const result = await reviewRepository.findByMember(mbId, page, size);
+        return {
+          success: true,
+          reviews: result.rows.map((r) => this.toReviewResponse(r)),
+          ...this.pagePayload(page, size, result.total),
+        };
+      }, 15_000);
+      return res.json(payload);
     } catch (error) {
       return res.json({ success: false, message: `리뷰 목록 조회 중 오류가 발생했습니다: ${error.message}` });
     }
@@ -730,6 +728,7 @@ class ReviewController {
       if (updated?.it_id != null) {
         await reviewRepository.syncAggregatesForReviewItId(updated.it_id);
       }
+      this._invalidateMemberReviewList(row.mb_id);
       return res.json({ success: true, message: '리뷰가 성공적으로 수정되었습니다.', review: this.toReviewResponse(updated) });
     } catch (error) {
       return res.json({ success: false, message: `리뷰 수정 중 오류가 발생했습니다: ${error.message}` });
@@ -747,6 +746,7 @@ class ReviewController {
       const reviewItId = row.it_id;
       await reviewRepository.deleteById(isId);
       await reviewRepository.syncAggregatesForReviewItId(reviewItId);
+      this._invalidateMemberReviewList(row.mb_id);
       return res.json({ success: true, message: '리뷰가 성공적으로 삭제되었습니다.' });
     } catch (error) {
       return res.json({ success: false, message: `리뷰 삭제 중 오류가 발생했습니다: ${error.message}` });

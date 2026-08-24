@@ -1,4 +1,7 @@
 const wishRepository = require('../repositories/WishRepository');
+const { TtlCache } = require('../../../../utils/ttlCache');
+
+const wishListCache = new TtlCache(20_000);
 
 class WishController {
   bufferToString(value) {
@@ -21,6 +24,15 @@ class WishController {
     return v.startsWith('/') || v.startsWith('http') ? v : `/${v}`;
   }
 
+  invalidateList(mbId) {
+    if (!mbId) return;
+    for (const key of wishListCache.store.keys()) {
+      if (key.startsWith(`list:${mbId}`) || key.startsWith(`check:${mbId}:`)) {
+        wishListCache.store.delete(key);
+      }
+    }
+  }
+
   async toggleWish(req, res) {
     try {
       const mbId = req.body.mb_id;
@@ -32,6 +44,7 @@ class WishController {
       const existing = await wishRepository.findByMbIdAndItId(mbId, itId);
       if (existing) {
         await wishRepository.deleteById(existing.wi_id);
+        this.invalidateList(mbId);
         return res.json({
           success: true,
           is_wished: false,
@@ -72,6 +85,7 @@ class WishController {
         wiItKind,
         infCode: String(req.body.inf_code || req.body.infcode || req.body.in_id || '').trim()
       });
+      this.invalidateList(mbId);
       return res.json({
         success: true,
         is_wished: true,
@@ -84,7 +98,12 @@ class WishController {
 
   async checkWish(req, res) {
     try {
-      const isWished = await wishRepository.existsByMbIdAndItId(req.query.mb_id, req.query.it_id);
+      const mbId = req.query.mb_id;
+      const itId = req.query.it_id;
+      const isWished = await wishListCache.getOrSet(
+        `check:${mbId}:${itId}`,
+        () => wishRepository.existsByMbIdAndItId(mbId, itId)
+      );
       return res.json({ success: true, is_wished: isWished });
     } catch (error) {
       return res.status(500).json({ success: false, message: '찜하기 확인 중 오류가 발생했습니다.' });
@@ -95,65 +114,54 @@ class WishController {
     try {
       const mbId = req.query.mb_id;
       const category = req.query.category || 'all';
-      const wishes = await wishRepository.findByMbIdOrderByTimeDesc(mbId);
-      const itIds = [
-        ...new Set(
-          wishes
-            .map((w) => this.bufferToString(w.it_id || '').trim())
-            .filter((id) => id.length > 0)
-        )
-      ];
-      const products = await wishRepository.findProductsByIds(itIds);
-      const map = {};
-      for (const p of products) {
-        const pid = this.bufferToString(p.it_id || '').trim();
-        if (pid) map[pid] = p;
-      }
+      const payload = await wishListCache.getOrSet(`list:${mbId}:${category}`, async () => {
+        const rows = await wishRepository.findListByMbId(mbId);
+        const data = rows
+          .map((w) => {
+            const itIdKey = this.bufferToString(w.it_id || '').trim();
+            const kindFromWish = this.bufferToString(w.wi_it_kind || '').trim();
+            const kindFromProduct = this.bufferToString(w.it_kind || '').trim();
+            const productKind = kindFromWish || kindFromProduct || '';
+            const hasProduct = !!(w.it_name || w.it_img1 || w.it_flutter_image_url);
 
-      const data = wishes
-        .map((w) => {
-          const itIdKey = this.bufferToString(w.it_id || '').trim() || w.it_id;
-          const p = map[itIdKey] || map[w.it_id];
-          const kindFromWish = this.bufferToString(w.wi_it_kind || '').trim();
-          const kindFromProduct = p ? this.bufferToString(p.it_kind || '').trim() : '';
-          const productKind = kindFromWish || kindFromProduct || '';
-
-          const row = {
-            wi_id: w.wi_id,
-            it_id: itIdKey,
-            wi_time: w.wi_time
-          };
-          if (kindFromWish) {
-            row.wi_it_kind = kindFromWish;
-          }
-          if (productKind) {
-            row.product_kind = productKind;
-            row.it_kind = productKind;
-          }
-          if (p) {
-            row.product_name = p.it_name;
-            row.product_price = p.it_price;
-            if (!productKind) {
-              row.product_kind = this.bufferToString(p.it_kind || '').trim() || null;
-              row.it_kind = row.product_kind;
+            const row = {
+              wi_id: w.wi_id,
+              it_id: itIdKey,
+              wi_time: w.wi_time,
+            };
+            if (kindFromWish) row.wi_it_kind = kindFromWish;
+            if (productKind) {
+              row.product_kind = productKind;
+              row.it_kind = productKind;
             }
-            row.image_url = this.toImage(p);
-            row.it_img = this.toImage(p);
-            row.it_img1 = this.toImage(p);
-            row.it_basic = p.it_basic;
-          }
-          return row;
-        })
-        .filter((w) => {
-          if (category === 'all') return true;
-          const pk = String(w.product_kind || '').toLowerCase();
-          if (category === 'prescription') return pk === 'prescription';
-          if (category === 'product') return pk === 'general';
-          if (category === 'content') return pk === 'content';
-          return true;
-        });
+            if (hasProduct) {
+              row.product_name = w.it_name;
+              row.product_price = w.it_price;
+              if (!productKind) {
+                row.product_kind = kindFromProduct || null;
+                row.it_kind = row.product_kind;
+              }
+              const image = this.toImage(w);
+              row.image_url = image;
+              row.it_img = image;
+              row.it_img1 = image;
+              row.it_basic = w.it_basic;
+            }
+            return row;
+          })
+          .filter((w) => {
+            if (category === 'all') return true;
+            const pk = String(w.product_kind || '').toLowerCase();
+            if (category === 'prescription') return pk === 'prescription';
+            if (category === 'product') return pk === 'general';
+            if (category === 'content') return pk === 'content';
+            return true;
+          });
 
-      return res.json({ success: true, data, count: data.length });
+        return { success: true, data, count: data.length };
+      });
+      res.set('Cache-Control', 'private, max-age=10');
+      return res.json(payload);
     } catch (error) {
       return res.status(500).json({ success: false, message: '찜목록 조회 중 오류가 발생했습니다.' });
     }
@@ -167,6 +175,7 @@ class WishController {
         return res.status(400).json({ success: false, message: 'mb_id와 it_id가 필요합니다.' });
       }
       await wishRepository.deleteByMbIdAndItId(mbId, itId);
+      this.invalidateList(mbId);
       return res.json({ success: true, message: '찜하기가 삭제되었습니다.' });
     } catch (error) {
       return res.status(500).json({ success: false, message: '찜하기 삭제 중 오류가 발생했습니다.' });

@@ -284,24 +284,19 @@ class QaController {
 
   async getMyList(req, res) {
     try {
-      const contacts = await qaRepository.findThreadsByIdentity({
+      const identity = {
         mbId: req.query.mb_id || req.query.mbId,
         mbEmail: req.query.mb_email || req.query.mbEmail,
+      };
+      const contacts = await qaRepository.findThreadsByIdentity(identity);
+      qaRepository.autoCloseExpiredForIdentity(identity).catch((err) => {
+        console.warn('[QA] 일괄 자동종료 스킵:', err?.message || err);
       });
-      const processed = [];
-      for (const c of contacts) {
-        const updated = await qaRepository.autoCloseThreadIfExpired(c.wr_id);
-        if (updated && this._isClosedRow(updated)) {
-          processed.push({ ...c, is_closed: 1, wr_last: updated.wr_last });
-        } else {
-          processed.push(c);
-        }
-      }
-      return res.json({ success: true, data: processed.map((c) => this.toMap(c)) });
+      return res.json({ success: true, data: contacts.map((c) => this.toMap(c)) });
     } catch (error) {
       return res.status(500).json({
         success: false,
-        message: `???? ?? ??: ${error.message}`,
+        message: `문의내역 조회 오류: ${error.message}`,
       });
     }
   }

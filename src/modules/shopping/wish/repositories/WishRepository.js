@@ -41,15 +41,38 @@ class WishRepository {
 
   async existsByMbIdAndItId(mbId, itId) {
     const [rows] = await pool.query(
-      'SELECT COUNT(*) AS cnt FROM bomiora_shop_wish WHERE mb_id = ? AND it_id = ?',
+      'SELECT 1 AS ok FROM bomiora_shop_wish WHERE mb_id = ? AND it_id = ? LIMIT 1',
       [mbId, itId]
     );
-    return Number(rows[0]?.cnt || 0) > 0;
+    return rows.length > 0;
   }
 
   async findByMbIdOrderByTimeDesc(mbId) {
     const [rows] = await pool.query(
-      'SELECT * FROM bomiora_shop_wish WHERE mb_id = ? ORDER BY wi_time DESC',
+      'SELECT wi_id, it_id, wi_it_kind, wi_time FROM bomiora_shop_wish WHERE mb_id = ? ORDER BY wi_time DESC',
+      [mbId]
+    );
+    return rows;
+  }
+
+  /** 찜 + 상품 카드 필드 1회 JOIN (목록용 it_basic 미리보기만) */
+  async findListByMbId(mbId) {
+    const [rows] = await pool.query(
+      `SELECT
+         w.wi_id,
+         CAST(w.it_id AS CHAR) AS it_id,
+         w.wi_time,
+         CAST(w.wi_it_kind AS CHAR) AS wi_it_kind,
+         CAST(p.it_name AS CHAR) AS it_name,
+         p.it_price,
+         CAST(p.it_kind AS CHAR) AS it_kind,
+         CAST(p.it_img1 AS CHAR) AS it_img1,
+         CAST(p.it_flutter_image_url AS CHAR) AS it_flutter_image_url,
+         CAST(LEFT(IFNULL(p.it_basic, ''), 200) AS CHAR) AS it_basic
+       FROM bomiora_shop_wish w
+       LEFT JOIN bomiora_shop_item_new p ON p.it_id = w.it_id
+       WHERE w.mb_id = ?
+       ORDER BY w.wi_time DESC`,
       [mbId]
     );
     return rows;
@@ -59,7 +82,8 @@ class WishRepository {
     if (!itIds.length) return [];
     const placeholders = itIds.map(() => '?').join(', ');
     const [rows] = await pool.query(
-      `SELECT it_id, it_name, it_price, it_kind, it_img1, it_flutter_image_url, it_basic
+      `SELECT it_id, it_name, it_price, it_kind, it_img1, it_flutter_image_url,
+              CAST(LEFT(IFNULL(it_basic, ''), 200) AS CHAR) AS it_basic
        FROM bomiora_shop_item_new
        WHERE it_id IN (${placeholders})`,
       itIds

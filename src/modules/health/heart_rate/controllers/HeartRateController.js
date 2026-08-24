@@ -3,6 +3,7 @@ const {
   parseHealthDateTimeInput,
   parseHealthDateTimeOptional
 } = require('../../../../utils/healthDateTime');
+const { getHealthCached } = require('../../healthReadCache');
 
 class HeartRateController {
   async addRecord(req, res) {
@@ -71,11 +72,14 @@ class HeartRateController {
         });
       }
 
-      const records = await heartRateRepository.findByMbIdOrderByMeasuredAtDesc(mbId);
-      return res.json({
-        success: true,
-        data: records.map((row) => row.toResponse())
+      const payload = await getHealthCached('hr', mbId, async () => {
+        const records = await heartRateRepository.findByMbIdOrderByMeasuredAtDesc(mbId);
+        return {
+          success: true,
+          data: records.map((row) => row.toResponse()),
+        };
       });
+      return res.json(payload);
     } catch (error) {
       return res.status(500).json({
         success: false,

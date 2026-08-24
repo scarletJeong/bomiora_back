@@ -31,7 +31,11 @@ class HealthGoalRepository {
 
   async findLatestByMbId(mbId) {
     const [rows] = await pool.query(
-      `SELECT * FROM bm_health_goal_records WHERE mb_id = ? LIMIT 1`,
+      `SELECT goal_record_id, CAST(mb_id AS CHAR) AS mb_id,
+              current_weight, target_weight, daily_step_goal, weight_record_id
+       FROM bm_health_goal_records
+       WHERE mb_id = ?
+       LIMIT 1`,
       [mbId]
     );
     return rows.length ? new HealthGoalRecord(rows[0]) : null;

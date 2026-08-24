@@ -1,33 +1,28 @@
 const pool = require('../../../config/database');
+const { TtlCache } = require('../../../utils/ttlCache');
+
+const configCache = new TtlCache(300_000);
 
 class ConfigController {
   async getConfig(req, res) {
     try {
-      console.log('⚙️ 설정 조회 API 호출');
-
-      let cfUsePoint = true; // 기본값
-
-      try {
-        const [rows] = await pool.query(
-          'SELECT cf_use_point FROM bomiora_config LIMIT 1'
-        );
-
-        if (rows.length > 0 && rows[0].cf_use_point != null) {
-          cfUsePoint = Number(rows[0].cf_use_point) === 1;
-        }
-
-        console.log('✅ cf_use_point 조회: ' + cfUsePoint);
-      } catch (error) {
-        console.log('⚠️ cf_use_point 조회 실패, 기본값 사용: ' + error.message);
-        // 기본값: true (포인트 사용 가능)
-      }
-
-      return res.json({
-        success: true,
-        data: {
-          cf_use_point: cfUsePoint
-        }
+      const payload = await configCache.getOrSet('cf_use_point', async () => {
+        let cfUsePoint = true;
+        try {
+          const [rows] = await pool.query(
+            'SELECT cf_use_point FROM bomiora_config LIMIT 1'
+          );
+          if (rows.length > 0 && rows[0].cf_use_point != null) {
+            cfUsePoint = Number(rows[0].cf_use_point) === 1;
+          }
+        } catch (_) {}
+        return {
+          success: true,
+          data: { cf_use_point: cfUsePoint },
+        };
       });
+      res.set('Cache-Control', 'public, max-age=60');
+      return res.json(payload);
     } catch (error) {
       console.error('❌ 설정 조회 API 오류:', error);
 

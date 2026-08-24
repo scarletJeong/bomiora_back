@@ -47,7 +47,12 @@ class HeartRateRepository {
 
   async findByMbIdOrderByMeasuredAtDesc(mbId) {
     const [rows] = await pool.query(
-      'SELECT * FROM bm_heart_rate WHERE mb_id = ? ORDER BY measured_at DESC',
+      `SELECT id, CAST(mb_id AS CHAR) AS mb_id, heart_rate, measured_at,
+              CAST(status AS CHAR) AS status
+       FROM bm_heart_rate
+       WHERE mb_id = ?
+       ORDER BY measured_at DESC
+       LIMIT 90`,
       [mbId]
     );
     return rows.map((row) => new HeartRate(row));

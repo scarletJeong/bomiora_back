@@ -38,7 +38,7 @@ class AddressController {
 
   async getAddressList(req, res) {
     try {
-      const mbId = req.query.mbId;
+      const mbId = req.query.mbId || req.query.mb_id;
       const payload = await addressListCache.getOrSet(`list:${mbId}`, async () => {
         const addresses = await addressRepository.findByMbId(mbId);
         return {

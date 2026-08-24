@@ -1,4 +1,5 @@
 const menstrualCycleRepository = require('../repositories/MenstrualCycleRepository');
+const { getHealthCached } = require('../../healthReadCache');
 
 class MenstrualCycleController {
   async addRecord(req, res) {
@@ -149,13 +150,15 @@ class MenstrualCycleController {
         });
       }
 
-      const record = await menstrualCycleRepository.findFirstByMbIdOrderByCreatedAtDesc(mb_id);
-
-      return res.json({
-        success: true,
-        message: '최신 생리주기 기록 조회 성공',
-        data: record ? record.toResponse() : null
+      const payload = await getHealthCached('meno', mb_id, async () => {
+        const record = await menstrualCycleRepository.findFirstByMbIdOrderByCreatedAtDesc(mb_id);
+        return {
+          success: true,
+          message: '최신 생리주기 기록 조회 성공',
+          data: record ? record.toResponse() : null,
+        };
       });
+      return res.json(payload);
     } catch (error) {
       console.error('최신 생리주기 기록 조회 실패:', error);
       return res.status(500).json({

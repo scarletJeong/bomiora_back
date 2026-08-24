@@ -10,16 +10,14 @@ class AnnouncementRepository {
 
   _topNoticeGuardSql() {
     return `(
-      n.is_notice = 0 OR (
-        SELECT COUNT(*)
-        FROM bm_notice nn
-        WHERE nn.is_deleted = 0
-          AND nn.is_notice = 1
-          AND (
-            nn.created_at > n.created_at OR
-            (nn.created_at = n.created_at AND nn.id >= n.id)
-          )
-      ) <= 3
+      n.is_notice = 0 OR n.id IN (
+        SELECT id FROM (
+          SELECT id FROM bm_notice
+           WHERE is_deleted = 0 AND is_notice = 1
+           ORDER BY created_at DESC, id DESC
+           LIMIT 3
+        ) pinned
+      )
     )`;
   }
 

@@ -68,7 +68,7 @@ class RecentViewController {
         itKind,
         rvIp: req.ip,
       });
-      await recentViewRepository.pruneOldForMember(mbId);
+      recentViewRepository.pruneOldForMember(mbId).catch(() => {});
 
       return res.json({
         success: true,

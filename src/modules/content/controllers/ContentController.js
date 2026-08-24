@@ -1,7 +1,7 @@
 const contentRepository = require('../repositories/ContentRepository');
 const { TtlCache } = require('../../../utils/ttlCache');
 
-const contentListCache = new TtlCache(30_000);
+const contentListCache = new TtlCache(90_000);
 
 class ContentController {
   normalizeText(value) {
@@ -53,26 +53,51 @@ class ContentController {
     return plain.length > 120 ? `${plain.slice(0, 120)}...` : plain;
   }
 
+  toListMap(row) {
+    const contentHtml = this.normalizeText(row.content_html) || '';
+    return {
+      id: row.id,
+      category: this.normalizeText(row.category),
+      title: this.normalizeText(row.title),
+      summary: this.buildSummary(contentHtml),
+      thumbnail_url: this.normalizeText(row.thumbnail_url),
+      is_notice: Number(row.is_notice || 0) === 1,
+      is_published: Number(row.is_published || 0) === 1,
+      view_count: Number(row.view_count || 0),
+      recommend_count:
+        row.recommend_count == null || row.recommend_count === ''
+          ? 0
+          : Number(row.recommend_count) || 0,
+      sort_order: Number(row.sort_order || 0),
+      writer_name: this.normalizeText(row.writer_name),
+      created_at: row.created_at ? String(row.created_at) : null,
+    };
+  }
+
   async getList(req, res) {
     try {
       const page = Number(req.query.page || 1);
       const size = Number(req.query.size || 20);
       const query = req.query.query || '';
       const category = req.query.category || '전체';
-      const cacheKey = `list:${page}:${size}:${String(query).trim()}:${category}`;
+      const fetchSize =
+        page === 1 && !String(query).trim() && String(category) === '전체'
+          ? Math.max(size, 8)
+          : size;
+      const cacheKey = `list:${page}:${fetchSize}:${String(query).trim()}:${category}`;
 
       const payload = await contentListCache.getOrSet(cacheKey, async () => {
         const result = await contentRepository.findList({
           page,
-          size,
+          size: fetchSize,
           query,
           category,
         });
 
         return {
           success: true,
-          data: result.rows.map((row) => this.toMap(row)),
-          categories: ['전체', ...result.categories],
+          data: result.rows.map((row) => this.toListMap(row)),
+          categories: ['전체'],
           pagination: {
             total: result.total,
             page: result.page,
@@ -83,7 +108,22 @@ class ContentController {
         };
       });
 
-      res.set('Cache-Control', 'public, max-age=30');
+      if (payload.data && payload.data.length > size) {
+        return res.json({
+          ...payload,
+          data: payload.data.slice(0, size),
+          pagination: {
+            ...payload.pagination,
+            size,
+            totalPages:
+              payload.pagination?.total > 0
+                ? Math.ceil(payload.pagination.total / size)
+                : payload.pagination?.totalPages,
+          },
+        });
+      }
+
+      res.set('Cache-Control', 'public, max-age=60');
       return res.json(payload);
     } catch (error) {
       return res.status(500).json({
@@ -169,21 +209,29 @@ class ContentController {
           .json({ success: false, message: '유효한 콘텐츠 ID가 아닙니다.' });
       }
 
-      const row = await contentRepository.findById(id);
+      const row = await contentListCache.getOrSet(`detail:${id}`, () =>
+        contentRepository.findById(id)
+      );
       if (!row) {
         return res
           .status(404)
           .json({ success: false, message: '콘텐츠를 찾을 수 없습니다.' });
       }
 
+      contentRepository.increaseHit(id).catch(() => {});
+
       const mbIdQ = String(req.query.mb_id || '').trim();
       const pfNoQ = this.parsePfNo(req.query.pf_no);
       const category = this.normalizeText(row.category) || '';
 
-      // hit / 카테고리 내 prev·next / 추천여부 병렬 — findById 재조회 제거
-      const [, adjacent, userRecommended] = await Promise.all([
-        contentRepository.increaseHit(id),
-        contentRepository.findAdjacentById(id, { category }),
+      const [adjacent, userRecommended] = await Promise.all([
+        contentListCache.getOrSet(`adj:${id}`, () =>
+          contentRepository.findAdjacentById(id, {
+            category,
+            isNotice: Number(row.is_notice || 0),
+            sortOrder: Number(row.sort_order || 0),
+          })
+        ),
         mbIdQ
           ? contentRepository.hasUserRecommended(id, mbIdQ, pfNoQ)
           : Promise.resolve(undefined),

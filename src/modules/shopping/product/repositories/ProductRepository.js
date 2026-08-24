@@ -1,14 +1,70 @@
 const pool = require('../../../../config/database');
 
-/** 목록/카드용 — LONGTEXT(상세 HTML 등) 제외 */
+/** 목록/카드용 — LONGTEXT·여분 이미지 제외 */
 const LIST_COLUMNS = `
-  it_id, it_name, it_basic, it_subject, it_price, it_cust_price,
-  ca_id, it_kind, it_type3, it_type4, it_type5, it_stock_qty,
-  it_use_avg, it_use_cnt, it_flutter_image_url,
-  it_img1, it_img2, it_img3,
+  CAST(it_id AS CHAR) AS it_id,
+  CAST(it_name AS CHAR) AS it_name,
+  CAST(LEFT(IFNULL(it_basic, ''), 200) AS CHAR) AS it_basic,
+  CAST(it_subject AS CHAR) AS it_subject,
+  it_price, it_cust_price,
+  CAST(ca_id AS CHAR) AS ca_id,
+  CAST(it_kind AS CHAR) AS it_kind,
+  it_type3, it_type4, it_type5, it_stock_qty,
+  it_use_avg, it_use_cnt,
+  CAST(it_flutter_image_url AS CHAR) AS it_flutter_image_url,
+  CAST(it_img1 AS CHAR) AS it_img1,
   it_sc_type, it_sc_price, it_sc_minimum,
-  it_depopt1_subject, it_depopt1_label, it_depopt2_subject, it_depopt2_label,
-  it_supply_items, it_order
+  CAST(it_depopt1_subject AS CHAR) AS it_depopt1_subject,
+  CAST(it_depopt1_label AS CHAR) AS it_depopt1_label,
+  CAST(it_depopt2_subject AS CHAR) AS it_depopt2_subject,
+  CAST(it_depopt2_label AS CHAR) AS it_depopt2_label,
+  CAST(LEFT(IFNULL(it_supply_items, ''), 400) AS CHAR) AS it_supply_items,
+  it_order
+`;
+
+/** 상세용 — 상세 HTML은 쓰지만 헤드/테일 등 미사용 LONGTEXT는 제외 */
+const DETAIL_COLUMNS = `
+  CAST(it_id AS CHAR) AS it_id,
+  CAST(it_name AS CHAR) AS it_name,
+  CAST(it_basic AS CHAR) AS it_basic,
+  CAST(it_subject AS CHAR) AS it_subject,
+  it_explan,
+  CAST(it_precautions AS CHAR) AS it_precautions,
+  CAST(it_baesong_content AS CHAR) AS it_baesong_content,
+  CAST(it_shipping_process AS CHAR) AS it_shipping_process,
+  CAST(it_change_content AS CHAR) AS it_change_content,
+  CAST(it_prescription AS CHAR) AS it_prescription,
+  CAST(it_takeway AS CHAR) AS it_takeway,
+  CAST(it_package AS CHAR) AS it_package,
+  CAST(it_maker AS CHAR) AS it_maker,
+  CAST(it_origin AS CHAR) AS it_origin,
+  CAST(it_brand AS CHAR) AS it_brand,
+  CAST(it_model AS CHAR) AS it_model,
+  CAST(it_option_subject AS CHAR) AS it_option_subject,
+  CAST(it_supply_subject AS CHAR) AS it_supply_subject,
+  CAST(it_supply_items AS CHAR) AS it_supply_items,
+  CAST(it_depopt1_subject AS CHAR) AS it_depopt1_subject,
+  CAST(it_depopt1_label AS CHAR) AS it_depopt1_label,
+  CAST(it_depopt2_subject AS CHAR) AS it_depopt2_subject,
+  CAST(it_depopt2_label AS CHAR) AS it_depopt2_label,
+  CAST(it_weight AS CHAR) AS it_weight,
+  it_point, it_point_type,
+  CAST(it_mb_inf AS CHAR) AS it_mb_inf,
+  it_price, it_cust_price, it_stock_qty, it_use_avg, it_use_cnt,
+  it_type3, it_type4,
+  CAST(ca_id AS CHAR) AS ca_id,
+  CAST(it_kind AS CHAR) AS it_kind,
+  it_sc_type, it_sc_price, it_sc_minimum,
+  CAST(it_flutter_image_url AS CHAR) AS it_flutter_image_url,
+  CAST(it_img1 AS CHAR) AS it_img1,
+  CAST(it_img2 AS CHAR) AS it_img2,
+  CAST(it_img3 AS CHAR) AS it_img3,
+  CAST(it_img4 AS CHAR) AS it_img4,
+  CAST(it_img5 AS CHAR) AS it_img5,
+  CAST(it_img6 AS CHAR) AS it_img6,
+  CAST(it_img7 AS CHAR) AS it_img7,
+  CAST(it_img8 AS CHAR) AS it_img8,
+  CAST(it_img9 AS CHAR) AS it_img9
 `;
 
 class ProductRepository {
@@ -34,11 +90,22 @@ class ProductRepository {
   }
 
   async findById(productId) {
-    const [rows] = await pool.query(
-      'SELECT * FROM bomiora_shop_item_new WHERE it_id = ? LIMIT 1',
-      [productId]
-    );
-    return rows.length ? rows[0] : null;
+    try {
+      const [rows] = await pool.query(
+        `SELECT ${DETAIL_COLUMNS} FROM bomiora_shop_item_new WHERE it_id = ? LIMIT 1`,
+        [productId]
+      );
+      return rows.length ? rows[0] : null;
+    } catch (err) {
+      if (err && (err.errno === 1054 || err.code === 'ER_BAD_FIELD_ERROR')) {
+        const [rows] = await pool.query(
+          'SELECT * FROM bomiora_shop_item_new WHERE it_id = ? LIMIT 1',
+          [productId]
+        );
+        return rows.length ? rows[0] : null;
+      }
+      throw err;
+    }
   }
 
   /** it_id 목록으로 상품 조회 (연결상품 등) */

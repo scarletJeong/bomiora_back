@@ -1,6 +1,28 @@
 const crypto = require('crypto');
 const pool = require('../../../../config/database');
 const { addDaysToYmdDateString } = require('../../../../utils/healthDateTime');
+const { TtlCache } = require('../../../../utils/ttlCache');
+
+const couponBundleCache = new TtlCache(45_000);
+
+const COUPON_LIST_COLUMNS = `
+  c.cp_no,
+  CAST(c.cp_id AS CHAR) AS cp_id,
+  CAST(c.cp_subject AS CHAR) AS cp_subject,
+  c.cp_method,
+  CAST(c.cp_target AS CHAR) AS cp_target,
+  CAST(c.mb_id AS CHAR) AS mb_id,
+  c.cz_id,
+  DATE_FORMAT(c.cp_start, '%Y-%m-%d') AS cp_start,
+  DATE_FORMAT(c.cp_end, '%Y-%m-%d') AS cp_end,
+  c.cp_price,
+  c.cp_type,
+  c.cp_trunc,
+  c.cp_minimum,
+  c.cp_maximum,
+  c.od_id,
+  DATE_FORMAT(c.cp_datetime, '%Y-%m-%d %H:%i:%s') AS cp_datetime
+`;
 
 const COUPON_ID_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ123456789';
 
@@ -51,87 +73,99 @@ function parseTargetIds(raw) {
 }
 
 class CouponRepository {
-  async findByUserId(userId) {
-    const [rows] = await pool.query(
-      'SELECT * FROM bomiora_shop_coupon WHERE mb_id = ? ORDER BY cp_end DESC, cp_no DESC',
-      [userId]
-    );
-    return rows;
+  invalidateMemberCoupons(mbId) {
+    const id = String(mbId || '').trim();
+    if (id) couponBundleCache.store.delete(`bundle:${id}`);
   }
 
-  /** 사용 처리: 주문에 연결(od_id) 또는 bomiora_shop_coupon_log에 기록(영카트 방식, cp_id+mb_id) */
-  _usedByCouponSql(alias = 'c') {
-    return `(
-      (${alias}.od_id IS NOT NULL AND ${alias}.od_id > 0)
-      OR EXISTS (
-        SELECT 1 FROM bomiora_shop_coupon_log l
-        WHERE l.mb_id = ${alias}.mb_id AND l.cp_id = ${alias}.cp_id
-      )
-    )`;
+  _ymd(value) {
+    if (value == null) return '';
+    return String(value).trim().slice(0, 10);
+  }
+
+  _isUsedRow(c, usedMap) {
+    if (Number(c.od_id || 0) > 0) return true;
+    return usedMap.has(String(c.cp_id || ''));
+  }
+
+  /** 회원 쿠폰 + 사용 로그 1세트. 사용/만료/가능 API가 동시에 와도 DB는 1회만. */
+  async getMemberCouponBundle(userId) {
+    const id = String(userId || '').trim();
+    if (!id) return { coupons: [], usedMap: new Map() };
+    return couponBundleCache.getOrSet(`bundle:${id}`, () => this._loadMemberCouponBundle(id));
+  }
+
+  async _loadMemberCouponBundle(userId) {
+    const [couponRows, logRows] = await Promise.all([
+      pool.query(
+        `SELECT ${COUPON_LIST_COLUMNS}
+         FROM bomiora_shop_coupon c
+         WHERE c.mb_id = ?
+         ORDER BY c.cp_end DESC, c.cp_no DESC`,
+        [userId]
+      ),
+      pool.query(
+        `SELECT
+           CAST(cp_id AS CHAR) AS cp_id,
+           DATE_FORMAT(MAX(cl_datetime), '%Y-%m-%d %H:%i:%s') AS cl_datetime,
+           MAX(od_id) AS od_id
+         FROM bomiora_shop_coupon_log
+         WHERE mb_id = ?
+         GROUP BY cp_id`,
+        [userId]
+      ),
+    ]);
+    const coupons = couponRows[0] || [];
+    const usedMap = new Map();
+    for (const row of logRows[0] || []) {
+      const cpId = String(row.cp_id || '').trim();
+      if (cpId) usedMap.set(cpId, { cl_datetime: row.cl_datetime || null, od_id: row.od_id });
+    }
+    await this.attachAppliedProductLabels(coupons);
+    return { coupons, usedMap };
+  }
+
+  async findByUserId(userId) {
+    const { coupons } = await this.getMemberCouponBundle(userId);
+    return coupons;
   }
 
   async findAvailableCoupons(userId) {
-    const [rows] = await pool.query(
-      `SELECT c.* FROM bomiora_shop_coupon c
-       WHERE c.mb_id = ?
-         AND c.cp_start <= CURDATE()
-         AND c.cp_end >= CURDATE()
-         AND NOT ${this._usedByCouponSql('c')}
-       ORDER BY c.cp_end ASC, c.cp_no DESC`,
-      [userId]
-    );
-    return rows;
+    const { coupons, usedMap } = await this.getMemberCouponBundle(userId);
+    const today = kstTodayYmd();
+    return coupons
+      .filter((c) => {
+        if (this._isUsedRow(c, usedMap)) return false;
+        const start = this._ymd(c.cp_start);
+        const end = this._ymd(c.cp_end);
+        return start && end && start <= today && end >= today;
+      })
+      .sort((a, b) => String(a.cp_end || '').localeCompare(String(b.cp_end || '')) || Number(b.cp_no || 0) - Number(a.cp_no || 0));
   }
 
   async findUsedCoupons(userId) {
-    // "사용한 쿠폰"의 기준은 coupon_log(bomiora_shop_coupon_log)이며,
-    // 사용시간은 log.cl_datetime 이다. 쿠폰 테이블(bomiora_shop_coupon)은 메타 정보 제공용.
-    const [rows] = await pool.query(
-      `SELECT
-         c.cp_no,
-         CAST(c.cp_id AS CHAR) AS cp_id,
-         c.cp_subject,
-         c.cp_method,
-         c.cp_target,
-         c.mb_id,
-         c.cz_id,
-         c.cp_start,
-         c.cp_end,
-         c.cp_price,
-         c.cp_type,
-         c.cp_trunc,
-         c.cp_minimum,
-         c.cp_maximum,
-         lg.max_od_id AS od_id,
-         c.cp_datetime,
-         DATE_FORMAT(lg.max_cl_datetime, '%Y-%m-%d %H:%i:%s') AS cl_datetime
-       FROM bomiora_shop_coupon c
-       JOIN (
-         SELECT mb_id, cp_id,
-                MAX(cl_datetime) AS max_cl_datetime,
-                MAX(od_id) AS max_od_id
-         FROM bomiora_shop_coupon_log
-         WHERE mb_id = ?
-         GROUP BY mb_id, cp_id
-       ) lg
-         ON lg.mb_id = c.mb_id AND lg.cp_id = c.cp_id
-       WHERE c.mb_id = ?
-       ORDER BY lg.max_cl_datetime DESC, c.cp_no DESC`,
-      [userId, userId]
-    );
-    return rows;
+    const { coupons, usedMap } = await this.getMemberCouponBundle(userId);
+    return coupons
+      .filter((c) => this._isUsedRow(c, usedMap))
+      .map((c) => {
+        const log = usedMap.get(String(c.cp_id || '')) || {};
+        return {
+          ...c,
+          od_id: log.od_id || c.od_id,
+          cl_datetime: log.cl_datetime || null,
+        };
+      })
+      .sort((a, b) => String(b.cl_datetime || '').localeCompare(String(a.cl_datetime || '')));
   }
 
   async findExpiredCoupons(userId) {
-    const [rows] = await pool.query(
-      `SELECT c.* FROM bomiora_shop_coupon c
-       WHERE c.mb_id = ?
-         AND c.cp_end < CURDATE()
-         AND NOT ${this._usedByCouponSql('c')}
-       ORDER BY c.cp_end DESC, c.cp_no DESC`,
-      [userId]
-    );
-    return rows;
+    const { coupons, usedMap } = await this.getMemberCouponBundle(userId);
+    const today = kstTodayYmd();
+    return coupons.filter((c) => {
+      if (this._isUsedRow(c, usedMap)) return false;
+      const end = this._ymd(c.cp_end);
+      return end && end < today;
+    });
   }
 
   /**
@@ -178,7 +212,8 @@ class CouponRepository {
     const itemMap = {};
     if (caIds.length) {
       const [cats] = await pool.query(
-        `SELECT ca_id, ca_name FROM bomiora_shop_category WHERE ca_id IN (${caIds.map(() => '?').join(',')})`,
+        `SELECT CAST(ca_id AS CHAR) AS ca_id, CAST(ca_name AS CHAR) AS ca_name
+         FROM bomiora_shop_category WHERE ca_id IN (${caIds.map(() => '?').join(',')})`,
         caIds
       );
       cats.forEach((row) => {
@@ -187,7 +222,8 @@ class CouponRepository {
     }
     if (itIds.length) {
       const [items] = await pool.query(
-        `SELECT it_id, it_name FROM bomiora_shop_item_new WHERE it_id IN (${itIds.map(() => '?').join(',')})`,
+        `SELECT CAST(it_id AS CHAR) AS it_id, CAST(it_name AS CHAR) AS it_name
+         FROM bomiora_shop_item_new WHERE it_id IN (${itIds.map(() => '?').join(',')})`,
         itIds
       );
       items.forEach((row) => {
@@ -236,6 +272,7 @@ class CouponRepository {
         data.cp_minimum, data.cp_maximum, data.od_id, data.cp_datetime, data.mb_inf_id, data.is_id
       ]
     );
+    this.invalidateMemberCoupons(data.mb_id);
   }
 
   async _generateUniqueCouponId(conn, maxRetries = 8) {
@@ -309,6 +346,7 @@ class CouponRepository {
       );
 
       await conn.commit();
+      this.invalidateMemberCoupons(mbId);
 
       return {
         cpId,

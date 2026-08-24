@@ -1,4 +1,7 @@
 const getCategoryRepository = require('../repositories/GetCategoryRepository');
+const { TtlCache } = require('../../../../utils/ttlCache');
+
+const categoryCache = new TtlCache(120_000);
 
 class GetCategoryController {
   normalizeText(value) {
@@ -33,11 +36,15 @@ class GetCategoryController {
         });
       }
 
-      const rows = await getCategoryRepository.findByGroup(grp);
-      return res.json({
-        success: true,
-        data: rows.map((row) => this.toMap(row)),
+      const payload = await categoryCache.getOrSet(`grp:${grp}`, async () => {
+        const rows = await getCategoryRepository.findByGroup(grp);
+        return {
+          success: true,
+          data: rows.map((row) => this.toMap(row)),
+        };
       });
+      res.set('Cache-Control', 'public, max-age=60');
+      return res.json(payload);
     } catch (error) {
       return res.status(500).json({
         success: false,

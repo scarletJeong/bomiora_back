@@ -4,8 +4,9 @@ const reviewRepository = require('../../../user/review/repositories/ReviewReposi
 const shopDefaultRepository = require('../../../common/shopdefault/repositories/ShopDefaultRepository');
 const { TtlCache } = require('../../../../utils/ttlCache');
 
-const homeProductCache = new TtlCache(60_000);
-const optionCache = new TtlCache(60_000);
+const homeProductCache = new TtlCache(90_000);
+const optionCache = new TtlCache(90_000);
+const productDetailCache = new TtlCache(45_000);
 
 class ProductController {
   constructor() {
@@ -380,7 +381,7 @@ class ProductController {
           pageSize,
         };
       });
-      res.set('Cache-Control', 'public, max-age=30');
+      res.set('Cache-Control', 'public, max-age=60');
       return res.json(payload);
     } catch (error) {
       return res.status(500).json({
@@ -393,26 +394,25 @@ class ProductController {
 
   async getProductDetail(req, res) {
     try {
-      if (req.query.id != null && String(req.query.id).trim() !== '') {
-        await reviewRepository.refreshItemReviewAggregates(req.query.id);
+      const productId = String(req.query.id || '').trim();
+      if (productId) {
+        reviewRepository.refreshItemReviewAggregates(productId).catch((e) => {
+          console.warn('[ProductDetail] 리뷰 집계 스킵:', e?.message || e);
+        });
       }
-      const row = await productRepository.findById(req.query.id);
-      if (!row) {
-        return res.json({ success: false, message: '상품을 찾을 수 없습니다' });
+      const payload = await productDetailCache.getOrSet(`detail:${productId}`, async () => {
+        const row = await productRepository.findById(productId);
+        if (!row) {
+          return { success: false, status: 404, message: '상품을 찾을 수 없습니다' };
+        }
+        const shopDefault = await this.getShopDefaultCached();
+        return { success: true, data: this.toProductDto(row, shopDefault) };
+      });
+      if (payload.status === 404 || payload.success === false) {
+        return res.json({ success: false, message: payload.message || '상품을 찾을 수 없습니다' });
       }
-      
-      // bomiora_shop_item_new 테이블에서 가져온 원본 데이터 로그 출력
-      const itIdStr = this.bufferToString(row.it_id);
-      const itKindStr = this.bufferToString(row.it_kind);
-      
-      console.log('📦 [상품 상세 조회] bomiora_shop_item_new 테이블 원본 데이터:');
-      console.log('  - it_id (원본):', row.it_id);
-      console.log('  - it_id (문자열):', itIdStr);
-      console.log('  - it_kind (원본):', row.it_kind);
-      console.log('  - it_kind (문자열):', itKindStr);
-      
-      const shopDefault = await this.getShopDefaultCached();
-      return res.json({ success: true, data: this.toProductDto(row, shopDefault) });
+      res.set('Cache-Control', 'public, max-age=30');
+      return res.json(payload);
     } catch (error) {
       return res.status(500).json({ success: false, message: `상품 상세 조회 실패: ${error.message}` });
     }

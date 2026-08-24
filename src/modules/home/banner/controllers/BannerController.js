@@ -1,7 +1,7 @@
 const bannerRepository = require('../repositories/BannerRepository');
 const { TtlCache } = require('../../../../utils/ttlCache');
 
-const bannerCache = new TtlCache(60_000);
+const bannerCache = new TtlCache(90_000);
 
 class BannerController {
   toMap(row, platform) {

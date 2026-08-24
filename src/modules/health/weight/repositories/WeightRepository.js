@@ -101,7 +101,11 @@ class WeightRepository {
 
   async findByMbIdOrderByMeasuredAtDesc(mbId) {
     const [rows] = await pool.query(
-      'SELECT * FROM bm_weight_records WHERE mb_id = ? ORDER BY measured_at DESC',
+      `SELECT record_id, CAST(mb_id AS CHAR) AS mb_id, measured_at, weight, height, bmi
+       FROM bm_weight_records
+       WHERE mb_id = ?
+       ORDER BY measured_at DESC
+       LIMIT 90`,
       [mbId]
     );
 

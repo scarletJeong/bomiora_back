@@ -1,4 +1,7 @@
 const healthProfileRepository = require('../repositories/HealthProfileRepository');
+const { TtlCache } = require('../../../../utils/ttlCache');
+
+const healthProfileCache = new TtlCache(30_000);
 
 class HealthProfileController {
   normalizeAnswer102(body) {
@@ -82,11 +85,20 @@ class HealthProfileController {
     };
   }
 
+  invalidate(mbId) {
+    const id = String(mbId || '').trim();
+    if (id) healthProfileCache.store.delete(`hp:${id}`);
+  }
+
   async getHealthProfile(req, res) {
     try {
-      const row = await healthProfileRepository.findByMbId(req.params.userId);
-      if (!row) return res.json({ success: true, message: '문진표가 없습니다', data: null });
-      return res.json({ success: true, message: '문진표 조회 성공', data: this.toResponse(row) });
+      const userId = req.params.userId;
+      const payload = await healthProfileCache.getOrSet(`hp:${userId}`, async () => {
+        const row = await healthProfileRepository.findByMbId(userId);
+        if (!row) return { success: true, message: '문진표가 없습니다', data: null };
+        return { success: true, message: '문진표 조회 성공', data: this.toResponse(row) };
+      });
+      return res.json(payload);
     } catch (error) {
       return res.status(500).json({ success: false, message: '문진표 조회 중 오류가 발생했습니다', error: error.message });
     }
@@ -99,6 +111,7 @@ class HealthProfileController {
       const saved = exists
         ? await healthProfileRepository.update(exists.pf_no, fields.mb_id, fields)
         : await healthProfileRepository.create(fields);
+      this.invalidate(fields.mb_id);
 
       return res.status(201).json({ success: true, message: '문진표가 저장되었습니다', data: this.toResponse(saved) });
     } catch (error) {
@@ -115,6 +128,7 @@ class HealthProfileController {
         return res.status(404).json({ success: false, message: `문진표를 찾을 수 없습니다. 문진표 번호: ${pfNo}, 사용자 ID: ${mbId}`, error: `문진표를 찾을 수 없습니다. 문진표 번호: ${pfNo}, 사용자 ID: ${mbId}` });
       }
       const updated = await healthProfileRepository.update(pfNo, mbId, this.bodyToFields(req.body));
+      this.invalidate(mbId);
       return res.json({ success: true, message: '문진표가 수정되었습니다', data: this.toResponse(updated) });
     } catch (error) {
       return res.status(500).json({ success: false, message: '문진표 수정 중 오류가 발생했습니다', error: error.message });
@@ -129,6 +143,7 @@ class HealthProfileController {
       if (!deleted) {
         return res.status(404).json({ success: false, message: `문진표를 찾을 수 없습니다. 문진표 번호: ${pfNo}, 사용자 ID: ${mbId}`, error: `문진표를 찾을 수 없습니다. 문진표 번호: ${pfNo}, 사용자 ID: ${mbId}` });
       }
+      this.invalidate(mbId);
       return res.json({ success: true, message: '문진표가 삭제되었습니다', data: null });
     } catch (error) {
       return res.status(500).json({ success: false, message: '문진표 삭제 중 오류가 발생했습니다', error: error.message });

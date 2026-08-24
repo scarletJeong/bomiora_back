@@ -100,7 +100,13 @@ class MenstrualCycleRepository {
 
   async findFirstByMbIdOrderByCreatedAtDesc(mbId) {
     const [rows] = await pool.query(
-      'SELECT * FROM bm_menstrual_cycle WHERE mb_id = ? ORDER BY created_at DESC LIMIT 1',
+      `SELECT id, CAST(mb_id AS CHAR) AS mb_id,
+              last_period_start, period_start_date, period_end_date,
+              cycle_length, period_length
+       FROM bm_menstrual_cycle
+       WHERE mb_id = ?
+       ORDER BY created_at DESC
+       LIMIT 1`,
       [mbId]
     );
 

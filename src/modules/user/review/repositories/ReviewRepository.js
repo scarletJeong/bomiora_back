@@ -298,8 +298,26 @@ ${JOIN_SHOP_ITEM_NEW_SELECT}
     const total = countRows[0].count;
     const offset = page * size;
     const [rows] = await pool.query(
-      `SELECT r.*,
-${JOIN_SHOP_ITEM_NEW_SELECT}
+      `SELECT
+         r.is_id,
+         CAST(r.it_id AS CHAR) AS it_id,
+         CAST(r.mb_id AS CHAR) AS mb_id,
+         CAST(r.is_name AS CHAR) AS is_name,
+         r.is_time,
+         r.is_confirm,
+         r.is_score1, r.is_score2, r.is_score3, r.is_score4, r.total_is_score,
+         CAST(r.is_rvkind AS CHAR) AS is_rvkind,
+         r.is_recommend, r.is_good, r.cz_download,
+         CAST(LEFT(IFNULL(r.is_positive_review_text, ''), 2000) AS CHAR) AS is_positive_review_text,
+         CAST(LEFT(IFNULL(r.is_negative_review_text, ''), 2000) AS CHAR) AS is_negative_review_text,
+         CAST(LEFT(IFNULL(r.is_more_review_text, ''), 2000) AS CHAR) AS is_more_review_text,
+         CAST(r.is_img1 AS CHAR) AS is_img1,
+         CAST(r.is_img2 AS CHAR) AS is_img2,
+         CAST(r.is_img3 AS CHAR) AS is_img3,
+         CAST(r.od_id AS CHAR) AS od_id,
+         CAST(COALESCE(n.it_name, n.it_subject) AS CHAR) AS it_name,
+         CAST(n.it_kind AS CHAR) AS it_kind,
+         CAST(n.it_img1 AS CHAR) AS it_img1
        FROM bomiora_shop_item_use r
        LEFT JOIN bomiora_shop_item_new n ON n.it_id = r.it_id
        WHERE r.mb_id = ?

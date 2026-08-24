@@ -2,8 +2,11 @@ const userRepository = require('../repositories/UserRepository');
 const pointRepository = require('../../user/point/repositories/PointRepository');
 const otpRepository = require('../repositories/OtpRepository');
 const { verifyPBKDF2Password, mysqlPassword, createPBKDF2Password } = require('../../../utils/passwordUtil');
+const { TtlCache } = require('../../../utils/ttlCache');
 const fs = require('fs');
 const path = require('path');
+
+const refundAccountCache = new TtlCache(30_000);
 
 class UserController {
   async checkDupInfo(req, res) {
@@ -90,14 +93,9 @@ class UserController {
   async login(req, res) {
     try {
       const { email, password } = req.body;
-      
-      console.log('🔐 [LOGIN] 로그인 시도:', email);
-
-      // 1. 이메일로 사용자 조회
       const user = await userRepository.findByEmail(email);
-      
+
       if (!user) {
-        console.log('❌ [LOGIN] 사용자를 찾을 수 없음');
         return res.json({
           success: false,
           message: '가입된 회원이 아니거나 비밀번호가 틀립니다.'
@@ -105,7 +103,6 @@ class UserController {
       }
 
       if (isWithdrawnMember(user)) {
-        console.log('❌ [LOGIN] 탈퇴 회원 로그인 차단:', user.mbId || email);
         return res.json({
           success: false,
           message: '탈퇴한 계정입니다.',
@@ -115,16 +112,11 @@ class UserController {
       const storedHash = Buffer.isBuffer(user.password)
         ? user.password.toString('utf8')
         : String(user.password || '');
-      const sha1PasswordFromFlutter = password; // Flutter에서 SHA1 해시된 값
-      
-      console.log('[LOGIN] DB 저장된 해시:', storedHash);
-      console.log('[LOGIN] Flutter에서 받은 SHA1:', sha1PasswordFromFlutter);
+      const sha1PasswordFromFlutter = password;
 
-      // 2. DB 저장된 해시 형식 확인
       let passwordMatch = false;
-      
+
       if (!storedHash) {
-        console.log('❌ [LOGIN] 저장된 비밀번호 해시가 비어 있음');
         return res.json({
           success: false,
           message: '가입된 회원이 아니거나 비밀번호가 틀립니다.'
@@ -132,70 +124,51 @@ class UserController {
       }
 
       if (storedHash.startsWith('sha256:')) {
-        // PBKDF2 방식 (PHP password_hash)
-        console.log('[LOGIN] PBKDF2 방식으로 검증');
         passwordMatch = verifyPBKDF2Password(sha1PasswordFromFlutter, storedHash);
-        
       } else if (storedHash.startsWith('*') && storedHash.length === 41) {
-        // MySQL PASSWORD() 방식
-        console.log('[LOGIN] MySQL PASSWORD() 방식으로 검증');
-        const mysqlHash = mysqlPassword(sha1PasswordFromFlutter);
-        console.log('[LOGIN] MySQL PASSWORD() 해시:', mysqlHash);
-        passwordMatch = mysqlHash === storedHash;
-        
+        passwordMatch = mysqlPassword(sha1PasswordFromFlutter) === storedHash;
       } else {
-        // 알 수 없는 형식
-        console.log('❌ [LOGIN] 알 수 없는 해시 형식');
         return res.json({
           success: false,
           message: '비밀번호 형식 오류'
         });
       }
 
-      console.log('[LOGIN] 비밀번호 일치 여부:', passwordMatch);
-
       if (passwordMatch) {
-        // 오늘 첫 로그인 포인트는 mb_today_login 갱신 "전"에 판별해야 함 (그누보드 common.php와 동일)
         const clientIp = getClientIp(req);
-        let firstLoginPoint = null;
-        try {
-          firstLoginPoint = await pointRepository.grantDailyFirstLoginPoint({
-            mbId: user.mbId,
-            ip: clientIp,
-          });
-          if (firstLoginPoint?.granted) {
-            console.log(
-              '[LOGIN] 첫로그인 100P 지급 — 푸시는 FCM 토큰 등록 시 발송',
-              user.mbId
-            );
+        const today = getKstDateString();
+        const lastLoginYmd = String(user.lastLoginAt || '').slice(0, 10);
+        let firstLoginPoint = { granted: false, code: lastLoginYmd === today ? 'ALREADY' : null };
+
+        if (lastLoginYmd === today) {
+          userRepository.touchLastLogin(user.mbId, clientIp).catch(() => {});
+        } else {
+          try {
+            firstLoginPoint = await pointRepository.grantDailyFirstLoginPoint({
+              mbId: user.mbId,
+              ip: clientIp,
+            });
+          } catch (e) {
+            console.error('[LOGIN] 첫로그인 포인트 지급 실패(로그인은 계속):', e?.message || e);
+            userRepository.touchLastLogin(user.mbId, clientIp).catch(() => {});
           }
-        } catch (e) {
-          console.error('[LOGIN] 첫로그인 포인트 지급 실패(로그인은 계속):', e?.message || e);
         }
 
-        user.lastLoginAt = getKstDateTimeString();
-        const updatedUser = await userRepository.update(user);
-
-        const response = {
+        return res.json({
           success: true,
-          user: updatedUser.toResponse(),
-          token: 'token_' + Date.now(), // JWT 토큰으로 대체 가능
+          user: user.toResponse(),
+          token: 'token_' + Date.now(),
           message: '로그인 성공',
           firstLoginPoint: firstLoginPoint?.granted
             ? { granted: true, point: firstLoginPoint.poPoint || 100 }
             : { granted: false, code: firstLoginPoint?.code || null },
-        };
-
-        console.log('[LOGIN] 로그인 성공!');
-        return res.json(response);
-      } else {
-        console.log('❌ [LOGIN] 비밀번호 불일치');
-        return res.json({
-          success: false,
-          message: '가입된 회원이 아니거나 비밀번호가 틀립니다.'
         });
       }
 
+      return res.json({
+        success: false,
+        message: '가입된 회원이 아니거나 비밀번호가 틀립니다.'
+      });
     } catch (error) {
       console.error('❌ [LOGIN] 로그인 오류:', error);
       return res.json({
@@ -835,7 +808,10 @@ class UserController {
       if (!mbId) {
         return res.status(400).json({ success: false, message: 'mb_id가 필요합니다.' });
       }
-      const row = await userRepository.findRefundAccountByMbId(mbId);
+      const row = await refundAccountCache.getOrSet(`refund:${mbId}`, async () => {
+        const found = await userRepository.findRefundAccountByMbId(mbId);
+        return found || null;
+      });
       if (!row) {
         return res.status(404).json({ success: false, message: '사용자를 찾을 수 없습니다.' });
       }
@@ -891,6 +867,7 @@ class UserController {
         account,
         holder,
       });
+      refundAccountCache.store.delete(`refund:${mbId}`);
 
       return res.json({
         success: true,

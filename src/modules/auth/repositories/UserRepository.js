@@ -22,14 +22,52 @@ class UserRepository {
   async findByEmail(email) {
     try {
       const [rows] = await pool.query(
-        'SELECT * FROM bomiora_member WHERE mb_email = ?',
+        `SELECT
+            mb_no,
+            CAST(mb_id AS CHAR) AS mb_id,
+            CAST(mb_email AS CHAR) AS mb_email,
+            CAST(mb_password AS CHAR) AS mb_password,
+            CAST(mb_name AS CHAR) AS mb_name,
+            CAST(mb_nick AS CHAR) AS mb_nick,
+            mb_nick_date,
+            CAST(mb_hp AS CHAR) AS mb_hp,
+            mb_birth,
+            CAST(mb_sex AS CHAR) AS mb_sex,
+            CAST(profile_img AS CHAR) AS profile_img,
+            mb_datetime,
+            mb_today_login,
+            CAST(mb_leave_date AS CHAR) AS mb_leave_date,
+            mb_level
+         FROM bomiora_member
+         WHERE mb_email = ?
+         LIMIT 1`,
         [email]
       );
       return rows.length > 0 ? new User(rows[0]) : null;
     } catch (error) {
+      if (error && (error.errno === 1054 || error.code === 'ER_BAD_FIELD_ERROR')) {
+        const [rows] = await pool.query(
+          'SELECT * FROM bomiora_member WHERE mb_email = ? LIMIT 1',
+          [email]
+        );
+        return rows.length > 0 ? new User(rows[0]) : null;
+      }
       console.error('❌ [UserRepository] findByEmail 오류:', error);
       throw error;
     }
+  }
+
+  async touchLastLogin(mbId, ip = '') {
+    const id = String(mbId || '').trim();
+    if (!id) return;
+    await pool.query(
+      `UPDATE bomiora_member
+          SET mb_today_login = ?,
+              mb_login_ip = ?
+        WHERE mb_id = ?
+        LIMIT 1`,
+      [getKstDateTimeString(), String(ip || '').slice(0, 45), id]
+    );
   }
 
   /**
@@ -613,7 +651,9 @@ class UserRepository {
   async findRefundAccountByMbId(mbId) {
     try {
       const [rows] = await pool.query(
-        `SELECT mb_refund_bank, mb_refund_account, mb_refund_holder
+        `SELECT CAST(mb_refund_bank AS CHAR) AS mb_refund_bank,
+                CAST(mb_refund_account AS CHAR) AS mb_refund_account,
+                CAST(mb_refund_holder AS CHAR) AS mb_refund_holder
          FROM bomiora_member WHERE mb_id = ? LIMIT 1`,
         [mbId]
       );

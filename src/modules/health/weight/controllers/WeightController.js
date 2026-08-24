@@ -6,6 +6,7 @@ const {
   parseHealthDateTimeInput,
   utcRangeForKstCalendarDay
 } = require('../../../../utils/healthDateTime');
+const { getHealthCached } = require('../../healthReadCache');
 
 const UPLOAD_DIR = process.env.WEIGHT_IMAGE_UPLOAD_DIR || path.join(process.cwd(), 'uploads', 'weight_images');
 
@@ -193,13 +194,16 @@ class WeightController {
 
   async getWeights(req, res) {
     try {
-      const records = await weightRepository.findByMbIdOrderByMeasuredAtDesc(req.query.mb_id);
-
-      return res.json({
-        success: true,
-        data: records.map((record) => record.toResponse()),
-        count: records.length
+      const mbId = req.query.mb_id;
+      const payload = await getHealthCached('weight', mbId, async () => {
+        const records = await weightRepository.findByMbIdOrderByMeasuredAtDesc(mbId);
+        return {
+          success: true,
+          data: records.map((record) => record.toResponse()),
+          count: records.length,
+        };
       });
+      return res.json(payload);
     } catch (error) {
       return res.status(400).json({
         success: false,

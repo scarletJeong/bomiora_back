@@ -1,21 +1,54 @@
 const pool = require('../../../../config/database');
 const { notifyPointEarned } = require('../../notification/services/MemberNotifyService');
+const { TtlCache } = require('../../../../utils/ttlCache');
+
+const pointReadCache = new TtlCache(20_000);
 
 class PointRepository {
+  invalidateMemberPoint(mbId) {
+    const id = String(mbId || '').trim();
+    if (!id) return;
+    pointReadCache.store.delete(`balance:${id}`);
+    pointReadCache.store.delete(`history:${id}`);
+  }
+
   async findLatestMbPointByUserId(userId) {
-    const [rows] = await pool.query(
-      'SELECT po_mb_point FROM bomiora_point WHERE mb_id = ? ORDER BY po_datetime DESC, po_id DESC LIMIT 1',
-      [userId]
-    );
-    return rows.length ? rows[0].po_mb_point : null;
+    const id = String(userId || '').trim();
+    if (!id) return 0;
+    return pointReadCache.getOrSet(`balance:${id}`, async () => {
+      const [rows] = await pool.query(
+        'SELECT mb_point FROM bomiora_member WHERE mb_id = ? LIMIT 1',
+        [id]
+      );
+      if (rows.length) return Number(rows[0].mb_point || 0);
+      const [fallback] = await pool.query(
+        'SELECT po_mb_point FROM bomiora_point WHERE mb_id = ? ORDER BY po_id DESC LIMIT 1',
+        [id]
+      );
+      return fallback.length ? Number(fallback[0].po_mb_point || 0) : 0;
+    });
   }
 
   async findHistoryByUserId(userId) {
-    const [rows] = await pool.query(
-      'SELECT * FROM bomiora_point WHERE mb_id = ? ORDER BY po_datetime DESC, po_id DESC',
-      [userId]
-    );
-    return rows;
+    const id = String(userId || '').trim();
+    if (!id) return [];
+    return pointReadCache.getOrSet(`history:${id}`, async () => {
+      const [rows] = await pool.query(
+        `SELECT
+           po_id,
+           DATE_FORMAT(po_datetime, '%Y-%m-%d %H:%i:%s') AS po_datetime,
+           CAST(po_content AS CHAR) AS po_content,
+           po_point,
+           po_use_point,
+           DATE_FORMAT(po_expire_date, '%Y-%m-%d') AS po_expire_date
+         FROM bomiora_point
+         WHERE mb_id = ?
+         ORDER BY po_id DESC
+         LIMIT 300`,
+        [id]
+      );
+      return rows;
+    });
   }
 
   async grantDailyFirstLoginPoint({ mbId, ip = '' }) {
@@ -101,20 +134,11 @@ class PointRepository {
       );
 
       await conn.commit();
+      this.invalidateMemberPoint(safeMbId);
 
-      // 1) 이미 등록된 토큰이 있으면 즉시 푸시 (자동로그인/재실행)
-      // 2) 실패·미등록이면 이후 FCM 토큰 등록 시 pushTodayLoginPointIfPending 이 보완
-      try {
-        const pushResult = await notifyPointEarned(safeMbId, loginPoint);
-        console.log('[Point] 첫로그인 100P 지급 + 푸시 시도', safeMbId, {
-          successCount: pushResult?.successCount,
-          failureCount: pushResult?.failureCount,
-          skipped: pushResult?.skipped,
-          reason: pushResult?.reason,
-        });
-      } catch (e) {
+      notifyPointEarned(safeMbId, loginPoint).catch((e) => {
         console.error('[Point] 첫로그인 푸시 실패(지급은 유지):', e?.message || e);
-      }
+      });
 
       return {
         granted: true,
@@ -266,6 +290,8 @@ class PointRepository {
         `UPDATE bomiora_member SET mb_point = ? WHERE mb_id = ?`,
         [nextPoint, safeMbId]
       );
+
+      this.invalidateMemberPoint(safeMbId);
 
       if (didBegin) {
         await db.commit();

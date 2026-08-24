@@ -3,6 +3,7 @@ const {
   parseHealthDateTimeInput,
   parseHealthDateTimeOptional
 } = require('../../../../utils/healthDateTime');
+const { getHealthCached } = require('../../healthReadCache');
 
 class BloodPressureController {
   parseMeasuredAt(rawMeasuredAt) {
@@ -115,12 +116,14 @@ class BloodPressureController {
         });
       }
 
-      const records = await bloodPressureRepository.findByMbIdOrderByMeasuredAtDesc(mb_id);
-
-      return res.json({
-        success: true,
-        data: records.map((r) => r.toResponse())
+      const payload = await getHealthCached('bp', mb_id, async () => {
+        const records = await bloodPressureRepository.findByMbIdOrderByMeasuredAtDesc(mb_id);
+        return {
+          success: true,
+          data: records.map((r) => r.toResponse()),
+        };
       });
+      return res.json(payload);
     } catch (error) {
       console.error('혈압 기록 조회 실패:', error);
       return res.status(500).json({
