@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const { SUBDIRS, mirrorUploadedFile } = require('../../../../utils/cafe24ImageMirror');
 const reviewRepository = require('../repositories/ReviewRepository');
 const mainReviewRepository = require('../repositories/MainReviewRepository');
 const { TtlCache } = require('../../../../utils/ttlCache');
@@ -73,7 +74,14 @@ class ReviewController {
         });
       }
 
-      const fileUrl = `/api/user/reviews/images/${req.file.filename}`;
+      const localUrl = `/api/user/reviews/images/${req.file.filename}`;
+      const fileUrl = await mirrorUploadedFile({
+        subdir: SUBDIRS.review,
+        filePath: req.file.path,
+        filename: req.file.filename,
+        mime: req.file.mimetype || 'application/octet-stream',
+        localUrl,
+      });
       return res.json({
         success: true,
         filename: req.file.filename,

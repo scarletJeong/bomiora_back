@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const { SUBDIRS, mirrorUploadedFile } = require('../../../../utils/cafe24ImageMirror');
 const foodRecordRepository = require('../repositories/FoodRecordRepository');
 const foodRepository = require('../repositories/FoodRepository');
 const { toIsoUtcString } = require('../../../../utils/healthDateTime');
@@ -198,7 +199,14 @@ class FoodRecordController {
         });
       }
 
-      const fileUrl = `/api/health/food/images/${req.file.filename}`;
+      const localUrl = `/api/health/food/images/${req.file.filename}`;
+      const fileUrl = await mirrorUploadedFile({
+        subdir: SUBDIRS.food,
+        filePath: req.file.path,
+        filename: req.file.filename,
+        mime: req.file.mimetype || 'application/octet-stream',
+        localUrl,
+      });
 
       return res.json({
         success: true,

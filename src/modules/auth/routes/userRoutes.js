@@ -18,9 +18,10 @@ const storage = multer.diskStorage({
   },
 });
 
+const { multerImageLimits } = require('../../../utils/uploadLimits');
 const upload = multer({
   storage,
-  limits: { fileSize: 5 * 1024 * 1024 },
+  limits: multerImageLimits,
   fileFilter: (req, file, cb) => {
     const mimeOk = /^image\/(jpeg|jpg|png|webp)$/.test(file.mimetype || '');
     const ext = path.extname(file.originalname || '').toLowerCase();

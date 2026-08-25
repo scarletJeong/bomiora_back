@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const { SUBDIRS, mirrorUploadedFile } = require('../../../../utils/cafe24ImageMirror');
 const weightRepository = require('../repositories/WeightRepository');
 const Weight = require('../models/Weight');
 const {
@@ -24,7 +25,14 @@ class WeightController {
         });
       }
 
-      const fileUrl = `/api/health/weight/images/${req.file.filename}`;
+      const localUrl = `/api/health/weight/images/${req.file.filename}`;
+      const fileUrl = await mirrorUploadedFile({
+        subdir: SUBDIRS.weight,
+        filePath: req.file.path,
+        filename: req.file.filename,
+        mime: req.file.mimetype || 'application/octet-stream',
+        localUrl,
+      });
 
       return res.json({
         success: true,

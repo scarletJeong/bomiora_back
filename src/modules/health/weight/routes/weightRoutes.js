@@ -20,7 +20,9 @@ const storage = multer.diskStorage({
   }
 });
 
-const upload = multer({ storage });
+const { multerImageLimits } = require('../../../../utils/uploadLimits');
+
+const upload = multer({ storage, limits: multerImageLimits });
 
 router.post('/upload-image', upload.single('file'), (req, res) => weightController.uploadImage(req, res));
 router.get('/images/:filename', (req, res) => weightController.getImage(req, res));

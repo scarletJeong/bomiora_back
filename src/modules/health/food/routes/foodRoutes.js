@@ -21,7 +21,9 @@ const storage = multer.diskStorage({
   }
 });
 
-const upload = multer({ storage });
+const { multerImageLimits } = require('../../../../utils/uploadLimits');
+
+const upload = multer({ storage, limits: multerImageLimits });
 
 // 식사 사진 업로드·조회 (체중 모듈과 동일 패턴)
 router.post(

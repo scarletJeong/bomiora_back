@@ -3,6 +3,7 @@ const pointRepository = require('../../user/point/repositories/PointRepository')
 const otpRepository = require('../repositories/OtpRepository');
 const { verifyPBKDF2Password, mysqlPassword, createPBKDF2Password } = require('../../../utils/passwordUtil');
 const { TtlCache } = require('../../../utils/ttlCache');
+const { SUBDIRS, mirrorUploadedFile } = require('../../../utils/cafe24ImageMirror');
 const fs = require('fs');
 const path = require('path');
 
@@ -1273,7 +1274,15 @@ class UserController {
         });
       }
 
-      const relativePath = `/uploads/profiles/${mbId}/${req.file.filename}`;
+      const localPath = `/uploads/profiles/${mbId}/${req.file.filename}`;
+      const profileImgUrl = await mirrorUploadedFile({
+        subdir: SUBDIRS.profile,
+        filePath: req.file.path,
+        filename: req.file.filename,
+        mime: req.file.mimetype || 'application/octet-stream',
+        mbId,
+        localUrl: localPath,
+      });
 
       // 기존 파일 정리(같은 사용자 경로 내에서 현재 업로드 파일 제외)
       try {
@@ -1289,7 +1298,7 @@ class UserController {
         // 파일 정리 실패는 업로드 성공에 영향 주지 않음
       }
 
-      user.profileImg = relativePath;
+      user.profileImg = profileImgUrl;
       const updatedUser = await userRepository.update(user);
 
       return res.json({

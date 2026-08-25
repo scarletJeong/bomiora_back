@@ -9,7 +9,9 @@ class PointRepository {
     const id = String(mbId || '').trim();
     if (!id) return;
     pointReadCache.store.delete(`balance:${id}`);
-    pointReadCache.store.delete(`history:${id}`);
+    for (const key of pointReadCache.store.keys()) {
+      if (key.startsWith(`history:${id}:`)) pointReadCache.store.delete(key);
+    }
   }
 
   async findLatestMbPointByUserId(userId) {
@@ -29,23 +31,24 @@ class PointRepository {
     });
   }
 
-  async findHistoryByUserId(userId) {
+  async findHistoryByUserId(userId, limit = 100) {
     const id = String(userId || '').trim();
     if (!id) return [];
-    return pointReadCache.getOrSet(`history:${id}`, async () => {
+    const safeLimit = Math.min(Math.max(Number(limit) || 100, 1), 200);
+    return pointReadCache.getOrSet(`history:${id}:${safeLimit}`, async () => {
       const [rows] = await pool.query(
         `SELECT
            po_id,
            DATE_FORMAT(po_datetime, '%Y-%m-%d %H:%i:%s') AS po_datetime,
-           CAST(po_content AS CHAR) AS po_content,
+           CAST(LEFT(IFNULL(po_content, ''), 120) AS CHAR) AS po_content,
            po_point,
            po_use_point,
            DATE_FORMAT(po_expire_date, '%Y-%m-%d') AS po_expire_date
          FROM bomiora_point
          WHERE mb_id = ?
          ORDER BY po_id DESC
-         LIMIT 300`,
-        [id]
+         LIMIT ?`,
+        [id, safeLimit]
       );
       return rows;
     });
