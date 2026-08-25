@@ -123,6 +123,7 @@ class BloodPressureController {
           data: records.map((r) => r.toResponse()),
         };
       });
+      res.set('Cache-Control', 'private, max-age=30');
       return res.json(payload);
     } catch (error) {
       console.error('혈압 기록 조회 실패:', error);

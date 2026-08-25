@@ -158,6 +158,7 @@ class MenstrualCycleController {
           data: record ? record.toResponse() : null,
         };
       });
+      res.set('Cache-Control', 'private, max-age=30');
       return res.json(payload);
     } catch (error) {
       console.error('최신 생리주기 기록 조회 실패:', error);

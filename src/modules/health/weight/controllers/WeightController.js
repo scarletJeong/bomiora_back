@@ -211,6 +211,7 @@ class WeightController {
           count: records.length,
         };
       });
+      res.set('Cache-Control', 'private, max-age=30');
       return res.json(payload);
     } catch (error) {
       return res.status(400).json({

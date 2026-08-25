@@ -79,6 +79,7 @@ class HeartRateController {
           data: records.map((row) => row.toResponse()),
         };
       });
+      res.set('Cache-Control', 'private, max-age=30');
       return res.json(payload);
     } catch (error) {
       return res.status(500).json({

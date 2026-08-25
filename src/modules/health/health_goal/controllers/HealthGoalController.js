@@ -93,6 +93,7 @@ class HealthGoalController {
           data: row ? row.toResponse() : null,
         };
       });
+      res.set('Cache-Control', 'private, max-age=30');
       return res.json(goal);
     } catch (error) {
       return res.status(400).json({
