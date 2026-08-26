@@ -1,7 +1,7 @@
 const BloodSugar = require('../models/BloodSugar');
 const bloodSugarRepository = require('../repositories/BloodSugarRepository');
 const { parseHealthDateTimeInput } = require('../../../../utils/healthDateTime');
-const { getHealthCached } = require('../../healthReadCache');
+const { getHealthCached, invalidateHealthMember } = require('../../healthReadCache');
 
 class BloodSugarController {
   async addRecord(req, res) {
@@ -18,6 +18,7 @@ class BloodSugarController {
         status,
         measuredAt: parseHealthDateTimeInput(req.body.measured_at)
       });
+      invalidateHealthMember(req.body.mb_id);
 
       return res.status(201).json({
         success: true,
@@ -35,25 +36,25 @@ class BloodSugarController {
   async updateRecord(req, res) {
     try {
       const id = Number(req.params.id);
-      const exists = await bloodSugarRepository.existsById(id);
-      if (!exists) {
-        return res.status(404).json({
-          success: false,
-          message: `혈당 기록을 찾을 수 없습니다. ID: ${id}`
-        });
-      }
-
       const status = req.body.status || BloodSugar.determineStatus(
         req.body.blood_sugar,
         req.body.measurement_type
       );
 
       const updated = await bloodSugarRepository.update(id, {
+        mbId: req.body.mb_id,
         bloodSugar: Number(req.body.blood_sugar),
         measurementType: req.body.measurement_type,
         status,
         measuredAt: parseHealthDateTimeInput(req.body.measured_at)
       });
+      if (!updated) {
+        return res.status(404).json({
+          success: false,
+          message: `혈당 기록을 찾을 수 없습니다. ID: ${id}`
+        });
+      }
+      invalidateHealthMember(req.body.mb_id);
 
       return res.json({
         success: true,
@@ -78,6 +79,7 @@ class BloodSugarController {
           message: `혈당 기록을 찾을 수 없습니다. ID: ${id}`
         });
       }
+      invalidateHealthMember(req.body.mb_id || req.query.mb_id);
 
       return res.json({
         success: true,

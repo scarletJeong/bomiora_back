@@ -72,12 +72,17 @@ class HealthProfileRepository {
         fields.answer_13_medicine, fields.answer_7_1, fields.answer_13_sideeffect, fields.pf_ip, fields.pf_memo
       ]
     );
-    const [rows] = await pool.query('SELECT * FROM bomiora_member_health_profiles WHERE pf_no = ?', [result.insertId]);
-    return rows[0];
+    const now = new Date();
+    return {
+      pf_no: result.insertId,
+      ...fields,
+      pf_wdatetime: now,
+      pf_mdatetime: now,
+    };
   }
 
   async update(pfNo, mbId, fields) {
-    await pool.query(
+    const [result] = await pool.query(
       `UPDATE bomiora_member_health_profiles SET
        answer_1 = ?, answer_2 = ?, answer_3 = ?, answer_4 = ?, answer_5 = ?, answer_6 = ?, answer_7 = ?, answer_8 = ?, answer_9 = ?,
        answer_10 = ?, answer_10_2 = ?, answer_11 = ?, answer_12 = ?, answer_13 = ?, answer_13_period = ?, answer_13_dosage = ?, answer_13_medicine = ?,
@@ -89,7 +94,12 @@ class HealthProfileRepository {
         fields.answer_7_1, fields.answer_13_sideeffect, fields.pf_memo, pfNo, mbId
       ]
     );
-    return this.findByPfNoAndMbId(pfNo, mbId);
+    if (result.affectedRows < 1) return null;
+    return {
+      pf_no: pfNo,
+      ...fields,
+      pf_mdatetime: new Date(),
+    };
   }
 
   async delete(pfNo, mbId) {

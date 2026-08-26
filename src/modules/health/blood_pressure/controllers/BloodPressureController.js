@@ -3,7 +3,7 @@ const {
   parseHealthDateTimeInput,
   parseHealthDateTimeOptional
 } = require('../../../../utils/healthDateTime');
-const { getHealthCached } = require('../../healthReadCache');
+const { getHealthCached, invalidateHealthMember } = require('../../healthReadCache');
 
 class BloodPressureController {
   parseMeasuredAt(rawMeasuredAt) {
@@ -28,6 +28,7 @@ class BloodPressureController {
         pulse: Number(pulse),
         measuredAt: this.parseMeasuredAt(measured_at)
       });
+      invalidateHealthMember(mb_id);
 
       return res.status(201).json({
         success: true,
@@ -63,6 +64,7 @@ class BloodPressureController {
       if (measured_at != null) updateFields.measuredAt = this.parseMeasuredAt(measured_at);
 
       const updated = await bloodPressureRepository.update(id, updateFields);
+      invalidateHealthMember(req.body.mb_id);
 
       return res.json({
         success: true,
@@ -91,6 +93,7 @@ class BloodPressureController {
       }
 
       await bloodPressureRepository.deleteById(id);
+      invalidateHealthMember(req.body.mb_id || req.query.mb_id);
 
       return res.json({
         success: true,

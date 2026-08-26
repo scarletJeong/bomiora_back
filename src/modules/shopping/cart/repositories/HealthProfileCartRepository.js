@@ -108,21 +108,9 @@ class HealthProfileCartRepository {
     );
     if (existing?.hp_no) {
       await this.updateByHpNo(existing.hp_no, payload);
-      await this.dedupeKeepHpNo(
-        payload.mb_id,
-        payload.od_id,
-        payload.it_id,
-        existing.hp_no
-      );
       return existing.hp_no;
     }
     const hpNo = await this.insert(payload);
-    await this.dedupeKeepHpNo(
-      payload.mb_id,
-      payload.od_id,
-      payload.it_id,
-      hpNo
-    );
     return hpNo;
   }
 

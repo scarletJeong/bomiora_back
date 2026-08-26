@@ -1,6 +1,6 @@
 const healthGoalRepository = require('../repositories/HealthGoalRepository');
 const { parseHealthDateTimeOptional } = require('../../../../utils/healthDateTime');
-const { getHealthCached } = require('../../healthReadCache');
+const { getHealthCached, invalidateHealthMember } = require('../../healthReadCache');
 
 function parsePositiveNumber(value, fieldName) {
   const n = Number(value);
@@ -56,6 +56,7 @@ class HealthGoalController {
         dailyStepGoal,
         measuredAt
       });
+      invalidateHealthMember(mbId);
 
       return res.status(201).json({
         success: true,

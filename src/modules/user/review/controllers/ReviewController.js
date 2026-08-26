@@ -590,6 +590,11 @@ class ReviewController {
       size = Math.min(size, 50);
       const payload = await mainReviewHomeCache.getOrSet(`main:${size}`, async () => {
         const rows = await mainReviewRepository.findPublished(size);
+        rows.forEach((row, index) => {
+          if (row.mr_no != null) {
+            mainReviewBestCache.set(`idx:${row.mr_no}`, index, 90_000);
+          }
+        });
         return {
           success: true,
           reviews: rows.map((r) => this.toMainReviewRow(r)),

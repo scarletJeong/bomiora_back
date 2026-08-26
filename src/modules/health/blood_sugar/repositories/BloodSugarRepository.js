@@ -10,7 +10,17 @@ class BloodSugarRepository {
       [data.mbId, data.bloodSugar, data.measurementType, data.status, data.measuredAt]
     );
 
-    return this.findById(result.insertId);
+    const now = new Date();
+    return new BloodSugar({
+      id: result.insertId,
+      mb_id: data.mbId,
+      blood_sugar: data.bloodSugar,
+      measurement_type: data.measurementType,
+      status: data.status,
+      measured_at: data.measuredAt,
+      created_at: now,
+      updated_at: now
+    });
   }
 
   async findById(id) {
@@ -22,14 +32,23 @@ class BloodSugarRepository {
   }
 
   async update(id, data) {
-    await pool.query(
+    const [result] = await pool.query(
       `UPDATE bm_blood_sugar
        SET blood_sugar = ?, measurement_type = ?, status = ?, measured_at = ?, updated_at = NOW()
        WHERE id = ?`,
       [data.bloodSugar, data.measurementType, data.status, data.measuredAt, id]
     );
 
-    return this.findById(id);
+    if (result.affectedRows < 1) return null;
+    return new BloodSugar({
+      id,
+      mb_id: data.mbId,
+      blood_sugar: data.bloodSugar,
+      measurement_type: data.measurementType,
+      status: data.status,
+      measured_at: data.measuredAt,
+      updated_at: new Date()
+    });
   }
 
   async deleteById(id) {

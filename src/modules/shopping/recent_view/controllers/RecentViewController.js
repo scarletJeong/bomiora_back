@@ -1,7 +1,7 @@
 const recentViewRepository = require('../repositories/RecentViewRepository');
 const { TtlCache } = require('../../../../utils/ttlCache');
 
-const recentListCache = new TtlCache(45_000);
+const recentListCache = new TtlCache(90_000);
 
 class RecentViewController {
   bufferToString(value) {
@@ -94,6 +94,33 @@ class RecentViewController {
     }
   }
 
+  /** POST /api/recent-view/sync — 로그인 전 로컬 기록 일괄 반영 */
+  async syncViews(req, res) {
+    try {
+      const mbId = String(req.body.mb_id || '').trim();
+      const items = Array.isArray(req.body.items) ? req.body.items : [];
+      if (!mbId) {
+        return res.status(400).json({
+          success: false,
+          message: 'mb_id가 필요합니다.',
+        });
+      }
+      const affected = await recentViewRepository.upsertRecentViews(
+        mbId,
+        items,
+        req.ip
+      );
+      this.invalidateList(mbId);
+      recentViewRepository.pruneOldForMember(mbId).catch(() => {});
+      return res.json({ success: true, affected });
+    } catch (error) {
+      return res.status(500).json({
+        success: false,
+        message: '최근 본 상품 동기화 중 오류가 발생했습니다.',
+      });
+    }
+  }
+
   /** GET /api/recent-view/list?mb_id=&limit=4 */
   async getRecentList(req, res) {
     try {
@@ -150,7 +177,7 @@ class RecentViewController {
         }
       );
 
-      res.set('Cache-Control', 'private, max-age=20');
+      res.set('Cache-Control', 'private, max-age=60');
       return res.json(payload);
     } catch (error) {
       return res.status(500).json({

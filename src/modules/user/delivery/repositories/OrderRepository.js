@@ -95,6 +95,24 @@ class OrderRepository {
     return { rows, total: Number(countRows[0]?.total || 0) };
   }
 
+  async hasPrescriptionShippedOrCompleted(mbId) {
+    const [rows] = await pool.query(
+      `SELECT 1
+         FROM bomiora_shop_order o
+         INNER JOIN bomiora_shop_cart c ON c.od_id = o.od_id
+         LEFT JOIN bomiora_shop_item_new p ON p.it_id = c.it_id
+        WHERE o.mb_id = ?
+          AND o.od_status IN ('배송', '완료')
+          AND (
+            c.ct_kind = 'prescription'
+            OR p.it_kind = 'prescription'
+          )
+        LIMIT 1`,
+      [mbId]
+    );
+    return rows.length > 0;
+  }
+
   async getOrderDetail(odId, mbId) {
     const [rows] = await pool.query(
       `SELECT od_id, mb_id, od_name, od_email, od_tel, od_hp,

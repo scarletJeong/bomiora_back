@@ -1,5 +1,5 @@
 const menstrualCycleRepository = require('../repositories/MenstrualCycleRepository');
-const { getHealthCached } = require('../../healthReadCache');
+const { getHealthCached, invalidateHealthMember } = require('../../healthReadCache');
 
 class MenstrualCycleController {
   async addRecord(req, res) {
@@ -28,6 +28,7 @@ class MenstrualCycleController {
         cycleLength: Number(cycle_length),
         periodLength: Number(period_length)
       });
+      invalidateHealthMember(mb_id);
 
       return res.status(201).json({
         success: true,
@@ -70,6 +71,7 @@ class MenstrualCycleController {
       if (period_length != null) updateFields.periodLength = Number(period_length);
 
       const updated = await menstrualCycleRepository.update(id, updateFields);
+      invalidateHealthMember(req.body.mb_id);
 
       return res.json({
         success: true,
@@ -98,6 +100,7 @@ class MenstrualCycleController {
       }
 
       await menstrualCycleRepository.deleteById(id);
+      invalidateHealthMember(req.body.mb_id || req.query.mb_id);
 
       return res.json({
         success: true,

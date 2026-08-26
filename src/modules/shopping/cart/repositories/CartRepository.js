@@ -67,6 +67,49 @@ class CartRepository {
     return rows.length ? rows[0] : null;
   }
 
+  async findByIds(ctIds = []) {
+    const ids = [...new Set(
+      (Array.isArray(ctIds) ? ctIds : [])
+        .map((id) => Number(id))
+        .filter((id) => Number.isFinite(id) && id > 0)
+    )];
+    if (!ids.length) return [];
+
+    const [rows] = await pool.query(
+      `SELECT c.*, CAST(p.it_kind AS CHAR) AS product_it_kind
+         FROM bomiora_shop_cart c
+         LEFT JOIN bomiora_shop_item_new p ON p.it_id = c.it_id
+        WHERE c.ct_id IN (?)`,
+      [ids]
+    );
+    const byId = new Map(rows.map((row) => [Number(row.ct_id), row]));
+    return ids.map((id) => byId.get(id)).filter(Boolean);
+  }
+
+  async findProductsByIds(itIds = []) {
+    const ids = [...new Set(
+      (Array.isArray(itIds) ? itIds : [])
+        .map((id) => String(id || '').trim())
+        .filter(Boolean)
+    )];
+    if (!ids.length) return new Map();
+
+    const [rows] = await pool.query(
+      `SELECT it_id, it_name, it_subject, it_kind, it_brand, it_maker,
+              it_img1, it_flutter_image_url, it_mb_inf, it_inf_price,
+              it_sc_type, it_sc_method, it_sc_price, it_sc_minimum, it_sc_qty,
+              it_price, it_point_type, it_point, it_supply_point
+       FROM bomiora_shop_item_new
+       WHERE it_id IN (?)`,
+      [ids]
+    );
+    const map = new Map();
+    for (const row of rows) {
+      map.set(String(row.it_id), row);
+    }
+    return map;
+  }
+
   /**
    * 동일 라인: mb + it_id + option + parent + status
    * (본품 parent='', 추가상품 parent=부모it_id)
@@ -130,6 +173,22 @@ class CartRepository {
     const values = keys.map((k) => fields[k]);
     await pool.query(`UPDATE bomiora_shop_cart SET ${setClause} WHERE ct_id = ?`, [...values, ctId]);
     return this.findById(ctId);
+  }
+
+  async markReservedByIds(ctIds, mbId, odId, now = new Date()) {
+    const ids = [...new Set(
+      (Array.isArray(ctIds) ? ctIds : [])
+        .map((id) => Number(id))
+        .filter((id) => Number.isFinite(id) && id > 0)
+    )];
+    if (!ids.length) return 0;
+    const [result] = await pool.query(
+      `UPDATE bomiora_shop_cart
+          SET od_id = ?, ct_time = ?, ct_select = 1, ct_select_time = ?
+        WHERE mb_id = ? AND ct_id IN (?)`,
+      [odId, now, now, mbId, ids]
+    );
+    return result.affectedRows;
   }
 
   async deleteById(ctId) {

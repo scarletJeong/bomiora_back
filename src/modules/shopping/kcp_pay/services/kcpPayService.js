@@ -283,10 +283,8 @@ class KcpPayService {
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <title>KCP 모바일 결제</title>
   <style>
-    body { margin: 0; padding: 24px; font-family: -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', sans-serif; background: #f7f7f7; color: #222; }
-    .box { background: #fff; border-radius: 12px; padding: 20px; }
-    h3 { margin: 0 0 8px; font-size: 18px; }
-    p { margin: 0; color: #666; font-size: 14px; line-height: 1.5; }
+    body { margin: 0; padding: 0; background: transparent; }
+    .box { display: none !important; }
   </style>
 </head>
 <body>
@@ -347,10 +345,6 @@ class KcpPayService {
   }) {
     const rcvrZipx = this.rcvrZipx(receiver);
     const lineCount = Math.max(1, Number(basketLineCount) || 1);
-    const uaHint = String(userAgent || 'Android').trim() || 'Android';
-    const mobileUa = /iphone|ipad|ios/i.test(uaHint)
-      ? 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1'
-      : 'Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Mobile Safari/537.36';
 
     const fields = {
       req_tx: 'pay',
@@ -424,60 +418,14 @@ class KcpPayService {
       .map(([key, value]) => `<input type="hidden" name="${this.escape(key)}" value="${this.escape(value)}" />`)
       .join('\n');
 
-    // payplus_web.jsp / Chromium 이 PC로 분기하지 않도록 UA·userAgentData 강제
-    const forceMobileScript = `
-(function () {
-  var MOBILE_UA = ${JSON.stringify(mobileUa)};
-  var IS_IOS = /iPhone|iPad|iPod/i.test(MOBILE_UA);
-  function spoof(obj, prop, value) {
-    try {
-      Object.defineProperty(obj, prop, {
-        configurable: true,
-        get: function () { return value; }
-      });
-    } catch (e) {}
-  }
-  try {
-    spoof(Navigator.prototype, 'userAgent', MOBILE_UA);
-    spoof(Navigator.prototype, 'appVersion', MOBILE_UA);
-    spoof(Navigator.prototype, 'platform', IS_IOS ? 'iPhone' : 'Linux armv8l');
-    spoof(Navigator.prototype, 'vendor', 'Google Inc.');
-    spoof(Navigator.prototype, 'maxTouchPoints', 5);
-    spoof(Navigator.prototype, 'userAgentData', {
-      mobile: true,
-      platform: IS_IOS ? 'iOS' : 'Android',
-      brands: [
-        { brand: 'Chromium', version: '123' },
-        { brand: 'Google Chrome', version: '123' }
-      ],
-      getHighEntropyValues: function () {
-        return Promise.resolve({
-          mobile: true,
-          platform: IS_IOS ? 'iOS' : 'Android',
-          model: IS_IOS ? 'iPhone' : 'Pixel 7',
-          uaFullVersion: '123.0.0.0'
-        });
-      }
-    });
-    try { spoof(navigator, 'userAgent', MOBILE_UA); } catch (e2) {}
-    try {
-      if (window.screen) {
-        spoof(window.screen, 'width', 390);
-        spoof(window.screen, 'height', 844);
-        spoof(window.screen, 'availWidth', 390);
-        spoof(window.screen, 'availHeight', 844);
-      }
-    } catch (e3) {}
-  } catch (e) {}
-})();`;
-
+    // PC payplus_web — 앱은 mobile SmartPay 경로를 사용하므로 UA 스푸핑 없음
     return `<!doctype html>
 <html lang="ko">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>KCP 결제</title>
-  <script>${forceMobileScript}</script>
+  <style>html,body{margin:0;padding:0;background:transparent;overflow:hidden;}</style>
   <script>
     function m_Completepayment(FormOrJson, closeEvent) {
       var form = document.kcp_form || document.getElementById('kcp_form');
@@ -599,15 +547,10 @@ class KcpPayService {
   </script>
   <script src="${this.escape(jsUrl)}"></script>
 </head>
-<body style="font-family: sans-serif; padding: 24px;">
-  <h3 style="margin-top: 0;">결제창을 여는 중입니다…</h3>
-  <p style="margin:8px 0 16px;color:#666;font-size:13px;">
-    잠시 후 KCP 결제창이 열립니다. 열리지 않으면 아래 버튼을 눌러 주세요.<br />
-  </p>
+<body>
   <form id="kcp_form" name="kcp_form" method="post">
     ${inputs}
   </form>
-  <button type="button" onclick="openKcp()" style="height:44px; padding:0 16px;">결제창 열기</button>
   <script>
     autoOpenKcpWhenReady();
   </script>

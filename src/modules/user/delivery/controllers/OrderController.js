@@ -500,6 +500,33 @@ class OrderController {
     }
   }
 
+  async hasPrescriptionHistory(req, res) {
+    try {
+      const mbId = String(req.query.mb_id || req.query.mbId || '').trim();
+      if (!mbId) {
+        return res.status(400).json({
+          success: false,
+          message: 'mb_id가 필요합니다.',
+        });
+      }
+      const payload = await orderListCache.getOrSet(
+        `prescription-history:${mbId}`,
+        async () => ({
+          success: true,
+          hasHistory:
+            await orderRepository.hasPrescriptionShippedOrCompleted(mbId),
+        }),
+        300_000
+      );
+      return res.json(payload);
+    } catch (error) {
+      return res.status(500).json({
+        success: false,
+        hasHistory: false,
+      });
+    }
+  }
+
   async getOrderDetail(req, res) {
     try {
       const odId = this.toOdId(req.params.odId);

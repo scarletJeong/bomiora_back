@@ -7,7 +7,10 @@ const {
   parseHealthDateTimeInput,
   utcRangeForKstCalendarDay
 } = require('../../../../utils/healthDateTime');
-const { getHealthCached } = require('../../healthReadCache');
+const {
+  getHealthCached,
+  invalidateHealthMember,
+} = require('../../healthReadCache');
 
 const UPLOAD_DIR = process.env.WEIGHT_IMAGE_UPLOAD_DIR || path.join(process.cwd(), 'uploads', 'weight_images');
 
@@ -98,6 +101,7 @@ class WeightController {
         frontImagePath: req.body.front_image_path ?? null,
         sideImagePath: req.body.side_image_path ?? null
       });
+      invalidateHealthMember(mbId);
 
       return res.json({
         success: true,
@@ -115,31 +119,21 @@ class WeightController {
   async updateWeight(req, res) {
     try {
       const recordId = Number(req.params.recordId);
-      const exists = await weightRepository.existsById(recordId);
-
-      if (!exists) {
-        return res.status(404).json({
-          success: false,
-          message: '기록을 찾을 수 없습니다'
-        });
-      }
-
-      const currentRecord = await weightRepository.findById(recordId);
-      const fields = {};
+      const fields = {
+        mbId: req.body.mb_id == null ? null : String(req.body.mb_id),
+      };
 
       if (Object.prototype.hasOwnProperty.call(req.body, 'weight')) {
         fields.weight = req.body.weight == null ? null : Number(req.body.weight);
-      } else {
-        fields.weight = currentRecord.weight;
       }
 
       if (Object.prototype.hasOwnProperty.call(req.body, 'height')) {
         fields.height = req.body.height == null ? null : Number(req.body.height);
-      } else {
-        fields.height = currentRecord.height;
       }
 
-      fields.bmi = Weight.calculateBMI(fields.weight, fields.height);
+      if (Object.prototype.hasOwnProperty.call(fields, 'weight')) {
+        fields.bmi = Weight.calculateBMI(fields.weight, fields.height);
+      }
 
       if (Object.prototype.hasOwnProperty.call(req.body, 'measured_at')) {
         try {
@@ -162,6 +156,13 @@ class WeightController {
       }
 
       const updatedRecord = await weightRepository.update(recordId, fields);
+      if (!updatedRecord) {
+        return res.status(404).json({
+          success: false,
+          message: '기록을 찾을 수 없습니다'
+        });
+      }
+      invalidateHealthMember(fields.mbId);
 
       return res.json({
         success: true,
@@ -187,6 +188,7 @@ class WeightController {
           message: '기록을 찾을 수 없습니다'
         });
       }
+      invalidateHealthMember(req.body.mb_id || req.query.mb_id);
 
       return res.json({
         success: true,

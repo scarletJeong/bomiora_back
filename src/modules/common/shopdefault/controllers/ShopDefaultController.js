@@ -1,4 +1,7 @@
 const shopDefaultRepository = require('../repositories/ShopDefaultRepository');
+const { TtlCache } = require('../../../../utils/ttlCache');
+
+const reservationSettingsCache = new TtlCache(60_000);
 
 class ShopDefaultController {
   normalizeTimeValue(timeValue) {
@@ -26,25 +29,27 @@ class ShopDefaultController {
 
   async getReservationSettings(req, res) {
     try {
-      const row = await shopDefaultRepository.findFirst();
-      if (!row) return res.json({});
+      const settings = await reservationSettingsCache.getOrSet('default', async () => {
+        const row = await shopDefaultRepository.findFirst();
+        if (!row) return {};
 
-      const settings = {
-        monday: this.createDaySettings(row.de_rsvt_mon_stime, row.de_rsvt_mon_etime, row.de_rsvt_mon_act),
-        tuesday: this.createDaySettings(row.de_rsvt_tue_stime, row.de_rsvt_tue_etime, row.de_rsvt_tue_act),
-        wednesday: this.createDaySettings(row.de_rsvt_wed_stime, row.de_rsvt_wed_etime, row.de_rsvt_wed_act),
-        thursday: this.createDaySettings(row.de_rsvt_thu_stime, row.de_rsvt_thu_etime, row.de_rsvt_thu_act),
-        friday: this.createDaySettings(row.de_rsvt_fri_stime, row.de_rsvt_fri_etime, row.de_rsvt_fri_act),
-        saturday: this.createDaySettings(row.de_rsvt_sat_stime, row.de_rsvt_sat_etime, row.de_rsvt_sat_act),
-        sunday: this.createDaySettings(row.de_rsvt_sun_stime, row.de_rsvt_sun_etime, row.de_rsvt_sun_act),
-        lunch: {
-          start_time: this.normalizeTimeValue(row.de_rsvt_lunch_stime),
-          end_time: this.normalizeTimeValue(row.de_rsvt_lunch_etime)
-        },
-        holiday: this.createDaySettings(row.de_rsvt_holiday_stime, row.de_rsvt_holiday_etime, row.de_rsvt_holiday_act),
-        relay_time: row.de_rsvt_grelay_time != null ? Number(row.de_rsvt_grelay_time) : 30,
-        limit_person: row.de_rsvt_limit_person != null ? Number(row.de_rsvt_limit_person) : 15
-      };
+        return {
+          monday: this.createDaySettings(row.de_rsvt_mon_stime, row.de_rsvt_mon_etime, row.de_rsvt_mon_act),
+          tuesday: this.createDaySettings(row.de_rsvt_tue_stime, row.de_rsvt_tue_etime, row.de_rsvt_tue_act),
+          wednesday: this.createDaySettings(row.de_rsvt_wed_stime, row.de_rsvt_wed_etime, row.de_rsvt_wed_act),
+          thursday: this.createDaySettings(row.de_rsvt_thu_stime, row.de_rsvt_thu_etime, row.de_rsvt_thu_act),
+          friday: this.createDaySettings(row.de_rsvt_fri_stime, row.de_rsvt_fri_etime, row.de_rsvt_fri_act),
+          saturday: this.createDaySettings(row.de_rsvt_sat_stime, row.de_rsvt_sat_etime, row.de_rsvt_sat_act),
+          sunday: this.createDaySettings(row.de_rsvt_sun_stime, row.de_rsvt_sun_etime, row.de_rsvt_sun_act),
+          lunch: {
+            start_time: this.normalizeTimeValue(row.de_rsvt_lunch_stime),
+            end_time: this.normalizeTimeValue(row.de_rsvt_lunch_etime)
+          },
+          holiday: this.createDaySettings(row.de_rsvt_holiday_stime, row.de_rsvt_holiday_etime, row.de_rsvt_holiday_act),
+          relay_time: row.de_rsvt_grelay_time != null ? Number(row.de_rsvt_grelay_time) : 30,
+          limit_person: row.de_rsvt_limit_person != null ? Number(row.de_rsvt_limit_person) : 15
+        };
+      }, 60_000);
 
       return res.json(settings);
     } catch (error) {

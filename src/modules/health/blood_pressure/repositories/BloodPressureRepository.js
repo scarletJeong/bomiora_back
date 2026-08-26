@@ -29,7 +29,18 @@ class BloodPressureRepository {
       );
 
       await connection.commit();
-      return this.findById(result.insertId);
+      const now = new Date();
+      return new BloodPressure({
+        id: result.insertId,
+        mb_id: mbId,
+        systolic,
+        diastolic,
+        pulse,
+        status,
+        measured_at: measuredAt,
+        created_at: now,
+        updated_at: now
+      });
     } catch (error) {
       await connection.rollback();
       throw error;

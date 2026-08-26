@@ -5,6 +5,7 @@ const shopDefaultRepository = require('../../../common/shopdefault/repositories/
 const { TtlCache } = require('../../../../utils/ttlCache');
 
 const homeProductCache = new TtlCache(90_000);
+const productListCache = new TtlCache(120_000);
 const optionCache = new TtlCache(90_000);
 const productDetailCache = new TtlCache(90_000);
 
@@ -48,12 +49,17 @@ class ProductController {
 
   async getShopDefaultCached() {
     const now = Date.now();
-    if (this._shopDefaultCache && now - this._shopDefaultCacheAt < 60_000) {
+    if (this._shopDefaultCache && now - this._shopDefaultCacheAt < 300_000) {
       return this._shopDefaultCache;
     }
     this._shopDefaultCache = await shopDefaultRepository.findFirst();
     this._shopDefaultCacheAt = now;
     return this._shopDefaultCache;
+  }
+
+  /** 서버 기동 시 shopDefault 미리 로드 — 목록 API 2번째 RTT 제거 */
+  warmShopDefault() {
+    return this.getShopDefaultCached().catch(() => null);
   }
 
   _toInt(value, fallback = 0) {
@@ -365,14 +371,12 @@ class ProductController {
       const page = Number(req.query.page || 1);
       const pageSize = Number(req.query.pageSize || 20);
       const cacheKey = `list:${categoryId}:${itKind || ''}:${page}:${pageSize}`;
-      const payload = await homeProductCache.getOrSet(cacheKey, async () => {
-        const rows = await productRepository.findByCategory(
-          categoryId,
-          itKind,
-          page,
-          pageSize
-        );
-        const products = await this.mapProductSearchDtos(rows);
+      const payload = await productListCache.getOrSet(cacheKey, async () => {
+        const [rows, shopDefault] = await Promise.all([
+          productRepository.findByCategory(categoryId, itKind, page, pageSize),
+          this.getShopDefaultCached(),
+        ]);
+        const products = (rows || []).map((r) => this.toProductSearchDto(r, shopDefault));
         return {
           success: true,
           data: products,
@@ -381,7 +385,7 @@ class ProductController {
           pageSize,
         };
       });
-      res.set('Cache-Control', 'public, max-age=60');
+      res.set('Cache-Control', 'public, max-age=120');
       return res.json(payload);
     } catch (error) {
       return res.status(500).json({
@@ -395,10 +399,11 @@ class ProductController {
   async getProductDetail(req, res) {
     try {
       const productId = String(req.query.id || '').trim();
-      if (productId) {
+      const detailKey = `detail:${productId}`;
+      if (productId && productDetailCache.get(detailKey) === undefined) {
         reviewRepository.refreshItemReviewAggregates(productId).catch(() => {});
       }
-      const payload = await productDetailCache.getOrSet(`detail:${productId}`, async () => {
+      const payload = await productDetailCache.getOrSet(detailKey, async () => {
         const [row, shopDefault] = await Promise.all([
           productRepository.findById(productId),
           this.getShopDefaultCached(),

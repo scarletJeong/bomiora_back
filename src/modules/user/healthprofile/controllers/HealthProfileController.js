@@ -108,10 +108,26 @@ class HealthProfileController {
   async saveHealthProfile(req, res) {
     try {
       const fields = this.bodyToFields(req.body);
-      const exists = await healthProfileRepository.findByMbId(fields.mb_id);
-      const saved = exists
-        ? await healthProfileRepository.update(exists.pf_no, fields.mb_id, fields)
-        : await healthProfileRepository.create(fields);
+      const requestedPfNo = Number(req.body.pfNo ?? req.body.pf_no);
+      let saved;
+      if (Number.isFinite(requestedPfNo) && requestedPfNo > 0) {
+        saved = await healthProfileRepository.update(
+          requestedPfNo,
+          fields.mb_id,
+          fields
+        );
+      } else {
+        const exists = await healthProfileRepository.findByMbId(fields.mb_id);
+        saved = exists
+          ? await healthProfileRepository.update(exists.pf_no, fields.mb_id, fields)
+          : await healthProfileRepository.create(fields);
+      }
+      if (!saved) {
+        return res.status(404).json({
+          success: false,
+          message: '수정할 문진표를 찾을 수 없습니다',
+        });
+      }
       this.invalidate(fields.mb_id);
 
       return res.status(201).json({ success: true, message: '문진표가 저장되었습니다', data: this.toResponse(saved) });
@@ -124,11 +140,14 @@ class HealthProfileController {
     try {
       const pfNo = Number(req.params.pfNo);
       const mbId = req.body.mbId;
-      const current = await healthProfileRepository.findByPfNoAndMbId(pfNo, mbId);
-      if (!current) {
+      const updated = await healthProfileRepository.update(
+        pfNo,
+        mbId,
+        this.bodyToFields(req.body)
+      );
+      if (!updated) {
         return res.status(404).json({ success: false, message: `문진표를 찾을 수 없습니다. 문진표 번호: ${pfNo}, 사용자 ID: ${mbId}`, error: `문진표를 찾을 수 없습니다. 문진표 번호: ${pfNo}, 사용자 ID: ${mbId}` });
       }
-      const updated = await healthProfileRepository.update(pfNo, mbId, this.bodyToFields(req.body));
       this.invalidate(mbId);
       return res.json({ success: true, message: '문진표가 수정되었습니다', data: this.toResponse(updated) });
     } catch (error) {

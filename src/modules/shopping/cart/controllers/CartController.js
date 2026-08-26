@@ -5,6 +5,7 @@ const productController = require('../../product/controllers/ProductController')
 const { TtlCache } = require('../../../../utils/ttlCache');
 
 const cartRecommendCache = new TtlCache(60_000);
+const cartListCache = new TtlCache(30_000);
 
 class CartController {
   toInt(value, fallback = 0) {
@@ -214,6 +215,7 @@ class CartController {
         (product ? this.bufferToString(product.it_kind) : '') ||
         ''
     );
+    const effectiveParent = ctKindRaw === 'general' ? '' : parentRaw;
     const itKindRaw =
       this.bufferToString(cart.product_it_kind) ||
       (product ? this.bufferToString(product.it_kind) : '') ||
@@ -224,7 +226,8 @@ class CartController {
         : String(itKindRaw).trim()
           ? String(itKindRaw).trim().toLowerCase()
           : ctKindRaw;
-    const kind = parentRaw ? 'supply_add' : ctKindRaw;
+    const kind = effectiveParent ? 'supply_add' : ctKindRaw;
+    const attachReservation = ctKindRaw === 'prescription';
 
     return {
       ct_id: cart.ct_id,
@@ -247,8 +250,8 @@ class CartController {
       ct_select: this.toInt(cart.ct_select, 0) ? 1 : 0,
       ct_kind: ctKindRaw,
       kind,
-      parent: parentRaw,
-      parent_it_id: parentRaw || null,
+      parent: effectiveParent,
+      parent_it_id: effectiveParent || null,
       it_supply_items: this.bufferToString(cart.product_it_supply_items) || '',
       ct_mb_inf: this.bufferToString(cart.ct_mb_inf) || '',
       point_usage_rate: this.toInt(
@@ -259,13 +262,13 @@ class CartController {
       image_url: imageUrl,
       it_img: imageUrl,
       it_img1: imageUrl,
-      hp_rsvt_date: hpRsvtDate,
-      hp_rsvt_stime: hpRsvtStime,
-      hp_rsvt_etime: hpRsvtEtime,
-      hp_doc_name: hpDocName,
-      doctor_name: hpDocName,
-      reservation_date: hpRsvtDate,
-      reservation_time: reservationTimeRange
+      hp_rsvt_date: attachReservation ? hpRsvtDate : null,
+      hp_rsvt_stime: attachReservation ? hpRsvtStime : null,
+      hp_rsvt_etime: attachReservation ? hpRsvtEtime : null,
+      hp_doc_name: attachReservation ? hpDocName : null,
+      doctor_name: attachReservation ? hpDocName : null,
+      reservation_date: attachReservation ? hpRsvtDate : null,
+      reservation_time: attachReservation ? reservationTimeRange : null
     };
   }
 
@@ -335,6 +338,12 @@ class CartController {
 
     // 본품으로 명시 담기 — supply 복원 금지
     if (bodyKind === 'prescription' || bodyKind === 'general') {
+      return '';
+    }
+
+    const ioType = this.toInt(reqBody.io_type ?? reqBody.ioType, 0);
+    // 본품 옵션(io_type 0)은 ct_kind 미전달 레거시만 supply 복원 (신규 담기는 ct_kind=general|prescription)
+    if (ioType === 0) {
       return '';
     }
 
@@ -456,11 +465,13 @@ class CartController {
         itId,
         ctStatus,
       });
-      const isSupplyLine = Boolean(resolvedParent);
       const resolvedKind = this.resolveProductKind({
         reqBody: req.body,
         product,
       });
+      const effectiveParent =
+        resolvedKind === 'general' ? '' : resolvedParent;
+      const isSupplyLine = Boolean(effectiveParent);
 
       // ct_price는 라인 총액(단가*수량). io_type 1~3은 본가 미포함(연결상품만 본가 총액).
       if (!price) {
@@ -480,7 +491,7 @@ class CartController {
         itId,
         ioIdForSearch,
         ctStatus,
-        resolvedParent
+        effectiveParent
       );
       if (existing) {
         const newQty = this.toInt(existing.ct_qty, 0) + quantity;
@@ -490,7 +501,7 @@ class CartController {
           ct_qty: newQty,
           ct_price: unitCt * newQty,
           ct_kind: resolvedKind,
-          parent: resolvedParent,
+          parent: effectiveParent,
           io_type: this.toInt(existing.io_type, ioType),
           ct_time: new Date(),
           ct_point: this.calculatePoint(product, optionId, optionPrice, newQty),
@@ -501,6 +512,8 @@ class CartController {
         const updated = await cartRepository.updateCart(existing.ct_id, updateFields);
         const updatedData = await this.convertCartToMap(updated);
 
+        this.invalidateCartListCache(mbId, ctStatus);
+        this.warmCartListCache(mbId, ctStatus);
         return res.json({
           success: true,
           message: '장바구니에 추가되었습니다.',
@@ -544,7 +557,7 @@ class CartController {
         inf_code: influencerFields.inf_code,
         ct_output: 'Y',
         ct_kind: resolvedKind,
-        parent: resolvedParent,
+        parent: effectiveParent,
         ct_mb_inf: influencerFields.ct_mb_inf,
         ct_inf_price: influencerFields.ct_inf_price,
         ct_settlement_status: 'N'
@@ -553,6 +566,8 @@ class CartController {
 
       const cartData = await this.convertCartToMap(cart);
 
+      this.invalidateCartListCache(mbId, ctStatus);
+      this.warmCartListCache(mbId, ctStatus);
       return res.json({
         success: true,
         message: '장바구니에 추가되었습니다.',
@@ -567,44 +582,77 @@ class CartController {
     }
   }
 
+  async loadCartPayload(mbId, ctStatus) {
+    const [carts, reservationMap] = await Promise.all([
+      cartRepository.findByMbIdAndStatus(mbId, ctStatus),
+      healthProfileCartRepository.findLatestMapByMbId(mbId).catch((e) => {
+        console.warn('[getCart] 예약정보 스킵:', e?.message || e);
+        return new Map();
+      }),
+    ]);
+    const data = [];
+    for (const c of carts) {
+      try {
+        data.push(
+          await this.convertCartToMap(c, {
+            reservationMap,
+            skipProductLookup: true,
+            skipReservationLookup: true,
+          })
+        );
+      } catch (rowErr) {
+        console.warn('[getCart] 행 스킵', c?.ct_id, rowErr?.message || rowErr);
+      }
+    }
+    return {
+      success: true,
+      data,
+      total: data.length,
+      shipping_cost: this.calculateShippingCost(carts),
+      total_price: carts.reduce((sum, c) => sum + this.cartLineAmount(c), 0),
+    };
+  }
+
+  warmCartListCache(mbId, ctStatus = '쇼핑') {
+    const status = this.normalizeCartStatus(ctStatus);
+    const id = String(mbId || '').trim();
+    if (!id) return;
+    const key = `${id}:${status}`;
+    cartListCache
+      .getOrSet(key, () => this.loadCartPayload(id, status), 30_000)
+      .catch(() => {});
+  }
+
   async getCart(req, res) {
     try {
-      const mbId = req.query.mb_id;
+      const mbId = String(req.query.mb_id || '').trim();
       const ctStatus = this.normalizeCartStatus(req.query.ct_status);
-      const carts = await cartRepository.findByMbIdAndStatus(mbId, ctStatus);
-      let reservationMap = new Map();
-      try {
-        reservationMap = await healthProfileCartRepository.findLatestMapByMbId(mbId);
-      } catch (e) {
-        console.warn('[getCart] 예약정보 스킵:', e?.message || e);
+      if (!mbId) {
+        return res.status(400).json({ success: false, message: 'mb_id가 필요합니다.' });
       }
-      const data = [];
-      for (const c of carts) {
-        try {
-          data.push(
-            await this.convertCartToMap(c, {
-              reservationMap,
-              skipProductLookup: true,
-              skipReservationLookup: true,
-            })
-          );
-        } catch (rowErr) {
-          console.warn('[getCart] 행 스킵', c?.ct_id, rowErr?.message || rowErr);
-        }
+
+      const cacheKey = `${mbId}:${ctStatus}`;
+      const forceRefresh = String(req.query.refresh || '').trim() === '1';
+      if (forceRefresh) {
+        cartListCache.store.delete(cacheKey);
       }
-      const shippingCost = this.calculateShippingCost(carts);
-      const totalPrice = carts.reduce((sum, c) => sum + this.cartLineAmount(c), 0);
-      return res.json({
-        success: true,
-        data,
-        total: data.length,
-        shipping_cost: shippingCost,
-        total_price: totalPrice
-      });
+
+      const payload = await cartListCache.getOrSet(
+        cacheKey,
+        () => this.loadCartPayload(mbId, ctStatus),
+        30_000
+      );
+
+      return res.json(payload);
     } catch (error) {
       console.error('[getCart]', error);
       return res.status(500).json({ success: false, message: '장바구니 조회 중 오류가 발생했습니다.', error: error.message });
     }
+  }
+
+  invalidateCartListCache(mbId, ctStatus = '쇼핑') {
+    const status = this.normalizeCartStatus(ctStatus);
+    cartListCache.remove(`${String(mbId || '').trim()}:${status}`);
   }
 
   async generateOrderIdEndpoint(req, res) {
@@ -701,12 +749,46 @@ class CartController {
       if (cartCtIds.length > 0) {
         const cartIds = [];
         const failedItems = [];
-        const profileItIdsDone = new Set();
         let firstItKind = null;
         let firstCtKind = null;
 
+        const cartRows = await cartRepository.findByIds(cartCtIds);
+        const cartById = new Map(cartRows.map((row) => [Number(row.ct_id), row]));
+
+        const profilePayload = {
+          mb_id: mbId,
+          od_id: odId,
+          answer1: req.body.answer1,
+          answer2: req.body.answer2,
+          answer3: req.body.answer3,
+          answer4: req.body.answer4,
+          answer5: req.body.answer5,
+          answer6: req.body.answer6,
+          answer7: req.body.answer7,
+          answer8: req.body.answer8,
+          answer9: req.body.answer9,
+          answer10: req.body.answer10,
+          answer11: req.body.answer11,
+          answer12: req.body.answer12,
+          answer13: req.body.answer13,
+          answer13Period: req.body.answer13Period,
+          answer13Dosage: req.body.answer13Dosage,
+          answer13Medicine: req.body.answer13Medicine,
+          answer71: req.body.answer71,
+          answer13Sideeffect: req.body.answer13Sideeffect,
+          reservationDate,
+          reservationTime,
+          reservationEndTime,
+          reservationName: req.body.reservationName,
+          reservationTel: req.body.reservationTel,
+          doctorName: req.body.doctorName,
+          hpMemo: req.body.pfMemo || '',
+          hp_ip: '127.0.0.1',
+        };
+
+        const now = new Date();
         for (const ctId of cartCtIds) {
-          const cart = await cartRepository.findById(ctId);
+          const cart = cartById.get(Number(ctId));
           if (!cart) {
             failedItems.push({ ct_id: ctId, message: '장바구니 항목을 찾을 수 없습니다.' });
             continue;
@@ -715,62 +797,36 @@ class CartController {
             failedItems.push({ ct_id: ctId, message: '권한이 없습니다.' });
             continue;
           }
-
-          const itId = this.bufferToString(cart.it_id).trim();
-          const product = await cartRepository.findProductById(itId);
-          if (!product) {
+          if (!this.bufferToString(cart.product_it_kind || '').trim()) {
             failedItems.push({ ct_id: ctId, message: '제품을 찾을 수 없습니다.' });
             continue;
           }
-
-          // od_id + it_id 당 health_profiles_cart 1행만
-          if (!profileItIdsDone.has(itId)) {
-            await healthProfileCartRepository.upsertByOdIdAndItId({
-              mb_id: mbId,
-              it_id: itId,
-              od_id: odId,
-              answer1: req.body.answer1,
-              answer2: req.body.answer2,
-              answer3: req.body.answer3,
-              answer4: req.body.answer4,
-              answer5: req.body.answer5,
-              answer6: req.body.answer6,
-              answer7: req.body.answer7,
-              answer8: req.body.answer8,
-              answer9: req.body.answer9,
-              answer10: req.body.answer10,
-              answer11: req.body.answer11,
-              answer12: req.body.answer12,
-              answer13: req.body.answer13,
-              answer13Period: req.body.answer13Period,
-              answer13Dosage: req.body.answer13Dosage,
-              answer13Medicine: req.body.answer13Medicine,
-              answer71: req.body.answer71,
-              answer13Sideeffect: req.body.answer13Sideeffect,
-              reservationDate,
-              reservationTime,
-              reservationEndTime,
-              reservationName: req.body.reservationName,
-              reservationTel: req.body.reservationTel,
-              doctorName: req.body.doctorName,
-              hpMemo: req.body.pfMemo || '',
-              hp_ip: '127.0.0.1'
-            });
-            profileItIdsDone.add(itId);
-          }
-
-          await cartRepository.updateCart(ctId, {
-            od_id: odId,
-            ct_time: new Date(),
-            ct_select: 1,
-            ct_select_time: new Date()
-          });
-
           cartIds.push(ctId);
-          if (firstItKind == null) firstItKind = this.bufferToString(product.it_kind);
+          if (firstItKind == null) {
+            firstItKind = this.bufferToString(cart.product_it_kind);
+          }
           if (firstCtKind == null) firstCtKind = this.bufferToString(cart.ct_kind);
         }
 
+        const profileItIds = [...new Set(
+          cartIds
+            .map((ctId) => String(this.bufferToString(cartById.get(ctId)?.it_id) || '').trim())
+            .filter(Boolean)
+        )];
+        await Promise.all([
+          Promise.all(
+            profileItIds.map((itId) =>
+              healthProfileCartRepository.upsertByOdIdAndItId({
+                ...profilePayload,
+                it_id: itId,
+              })
+            )
+          ),
+          cartRepository.markReservedByIds(cartIds, mbId, odId, now),
+        ]);
+
+        this.invalidateCartListCache(mbId, ctStatus);
+        this.warmCartListCache(mbId, ctStatus);
         if (!cartIds.length) {
           return res.status(404).json({
             success: false,

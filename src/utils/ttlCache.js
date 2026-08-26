@@ -46,6 +46,11 @@ class TtlCache {
     this.inFlight.set(key, promise);
     return promise;
   }
+
+  remove(key) {
+    this.store.delete(key);
+    this.inFlight.delete(key);
+  }
 }
 
 module.exports = { TtlCache };

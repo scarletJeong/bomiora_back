@@ -51,10 +51,12 @@ class HealthGoalRepository {
     dailyStepGoal,
     measuredAt
   }) {
-    const heightCm = await this.findHeightCmByMbId(mbId);
+    const [heightCm, connection] = await Promise.all([
+      this.findHeightCmByMbId(mbId),
+      pool.getConnection()
+    ]);
     const bmi = Weight.calculateBMI(currentWeight, heightCm);
 
-    const connection = await pool.getConnection();
     try {
       await connection.beginTransaction();
 
@@ -66,11 +68,12 @@ class HealthGoalRepository {
       );
       const weightRecordId = wResult.insertId;
 
-      await connection.query(
+      const [goalResult] = await connection.query(
         `INSERT INTO bm_health_goal_records
         (mb_id, current_weight, target_weight, daily_step_goal, weight_record_id, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, NOW(), NOW())
         ON DUPLICATE KEY UPDATE
+          goal_record_id = LAST_INSERT_ID(goal_record_id),
           current_weight = VALUES(current_weight),
           target_weight = VALUES(target_weight),
           daily_step_goal = VALUES(daily_step_goal),
@@ -79,15 +82,18 @@ class HealthGoalRepository {
         [mbId, currentWeight, targetWeight, dailyStepGoal, weightRecordId]
       );
 
-      const [goalRows] = await connection.query(
-        'SELECT * FROM bm_health_goal_records WHERE mb_id = ? LIMIT 1',
-        [mbId]
-      );
-
       await connection.commit();
 
       return {
-        goal: goalRows.length ? new HealthGoalRecord(goalRows[0]) : null,
+        goal: new HealthGoalRecord({
+          goal_record_id: goalResult.insertId,
+          mb_id: mbId,
+          current_weight: currentWeight,
+          target_weight: targetWeight,
+          daily_step_goal: dailyStepGoal,
+          weight_record_id: weightRecordId,
+          updated_at: new Date()
+        }),
         weightRecordId
       };
     } catch (err) {

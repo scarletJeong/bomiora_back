@@ -187,6 +187,8 @@ class ContentController {
           message: '이미 추천한 글입니다.',
         });
       }
+      contentListCache.remove(`detail:${id}`);
+      contentListCache.remove(`rec:${id}:${mbId}:${pfNo}`);
       return res.json({
         success: true,
         recommend_count: count,

@@ -21,7 +21,20 @@ class WeightRepository {
       [mbId, measuredAt, weight, height, bmi, notes, frontImagePath, sideImagePath]
     );
 
-    return this.findById(result.insertId);
+    const now = new Date();
+    return new Weight({
+      record_id: result.insertId,
+      mb_id: mbId,
+      measured_at: measuredAt,
+      weight,
+      height,
+      bmi,
+      notes,
+      front_image_path: frontImagePath,
+      side_image_path: sideImagePath,
+      created_at: now,
+      updated_at: now
+    });
   }
 
   async findById(recordId) {
@@ -73,14 +86,19 @@ class WeightRepository {
     updateFields.push('updated_at = NOW()');
     updateValues.push(recordId);
 
-    await pool.query(
+    const [result] = await pool.query(
       `UPDATE bm_weight_records
        SET ${updateFields.join(', ')}
        WHERE record_id = ?`,
       updateValues
     );
 
-    return this.findById(recordId);
+    if (result.affectedRows < 1) return null;
+    return new Weight({
+      record_id: recordId,
+      ...fields,
+      updated_at: new Date()
+    });
   }
 
   async deleteById(recordId) {
@@ -101,7 +119,11 @@ class WeightRepository {
 
   async findByMbIdOrderByMeasuredAtDesc(mbId) {
     const [rows] = await pool.query(
-      `SELECT record_id, CAST(mb_id AS CHAR) AS mb_id, measured_at, weight, height, bmi
+      `SELECT record_id, CAST(mb_id AS CHAR) AS mb_id, measured_at, weight,
+              height, bmi, notes,
+              CAST(front_image_path AS CHAR) AS front_image_path,
+              CAST(side_image_path AS CHAR) AS side_image_path,
+              created_at, updated_at
        FROM bm_weight_records
        WHERE mb_id = ?
        ORDER BY measured_at DESC

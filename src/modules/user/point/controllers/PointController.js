@@ -1,23 +1,18 @@
 const pointRepository = require('../repositories/PointRepository');
-const { TtlCache } = require('../../../../utils/ttlCache');
-
-const pointBalanceCache = new TtlCache(60_000);
 
 class PointController {
   async getUserPoint(req, res) {
     try {
       const userId = String(req.query.mb_id || '').trim();
-      const payload = await pointBalanceCache.getOrSet(`pt:${userId}`, async () => {
-        const point = await pointRepository.findLatestMbPointByUserId(userId);
-        const value = point == null ? 0 : point;
-        return {
-          success: true,
-          data: {
-            po_mb_point: value,
-            point: value,
-          },
-        };
-      });
+      const point = await pointRepository.findLatestMbPointByUserId(userId);
+      const value = point == null ? 0 : point;
+      const payload = {
+        success: true,
+        data: {
+          po_mb_point: value,
+          point: value,
+        },
+      };
       res.set('Cache-Control', 'private, max-age=30');
       return res.json(payload);
     } catch (error) {

@@ -25,6 +25,32 @@ class RecentViewRepository {
     );
   }
 
+  async upsertRecentViews(mbId, items, rvIp) {
+    const rows = (Array.isArray(items) ? items : [])
+      .slice(0, MAX_PER_MEMBER)
+      .map((item) => [
+        mbId,
+        String(item.it_id || '').trim(),
+        String(item.it_kind || '').trim(),
+        new Date(),
+        rvIp || '127.0.0.1',
+      ])
+      .filter((row) => row[1] && row[2]);
+    if (!rows.length) return 0;
+
+    const [result] = await pool.query(
+      `INSERT INTO bomiora_shop_recent_view
+         (mb_id, it_id, it_kind, rv_time, rv_ip)
+       VALUES ?
+       ON DUPLICATE KEY UPDATE
+         rv_time = NOW(),
+         it_kind = VALUES(it_kind),
+         rv_ip = VALUES(rv_ip)`,
+      [rows]
+    );
+    return result.affectedRows;
+  }
+
   async findProductKindByItId(itId) {
     const [rows] = await pool.query(
       `SELECT it_kind FROM bomiora_shop_item_new WHERE it_id = ? LIMIT 1`,
@@ -36,8 +62,7 @@ class RecentViewRepository {
   async findByMbIdOrderByTimeDesc(mbId, limit) {
     const safeLimit = Math.min(Math.max(Number(limit) || 20, 1), MAX_PER_MEMBER);
     const [rows] = await pool.query(
-      `SELECT rv_id,
-              CAST(rv.mb_id AS CHAR) AS mb_id,
+      `SELECT rv.rv_id,
               CAST(rv.it_id AS CHAR) AS it_id,
               CAST(rv.it_kind AS CHAR) AS it_kind,
               rv.rv_time,
@@ -46,9 +71,10 @@ class RecentViewRepository {
               CAST(p.it_kind AS CHAR) AS product_it_kind,
               CAST(p.it_img1 AS CHAR) AS it_img1,
               CAST(p.it_flutter_image_url AS CHAR) AS it_flutter_image_url,
-              CAST(LEFT(IFNULL(p.it_basic, ''), 120) AS CHAR) AS it_basic
+              CAST(LEFT(IFNULL(p.it_basic, ''), 80) AS CHAR) AS it_basic
          FROM bomiora_shop_recent_view rv
-         LEFT JOIN bomiora_shop_item_new p ON p.it_id = rv.it_id
+         INNER JOIN bomiora_shop_item_new p
+           ON p.it_id = rv.it_id AND p.it_use = 1
         WHERE rv.mb_id = ?
         ORDER BY rv.rv_time DESC
         LIMIT ?`,

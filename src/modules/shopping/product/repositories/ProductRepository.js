@@ -1,25 +1,19 @@
 const pool = require('../../../../config/database');
 
-/** 목록/카드용 — LONGTEXT·여분 이미지 제외 */
+/** 목록/카드용 — LONGTEXT·여분 이미지·옵션 메타 제외 */
 const LIST_COLUMNS = `
   CAST(it_id AS CHAR) AS it_id,
   CAST(it_name AS CHAR) AS it_name,
-  CAST(LEFT(IFNULL(it_basic, ''), 200) AS CHAR) AS it_basic,
+  CAST(LEFT(IFNULL(it_basic, ''), 120) AS CHAR) AS it_basic,
   CAST(it_subject AS CHAR) AS it_subject,
   it_price, it_cust_price,
   CAST(ca_id AS CHAR) AS ca_id,
   CAST(it_kind AS CHAR) AS it_kind,
-  it_type3, it_type4, it_type5, it_stock_qty,
+  it_type3, it_type4, it_stock_qty,
   it_use_avg, it_use_cnt,
   CAST(it_flutter_image_url AS CHAR) AS it_flutter_image_url,
   CAST(it_img1 AS CHAR) AS it_img1,
-  it_sc_type, it_sc_price, it_sc_minimum,
-  CAST(it_depopt1_subject AS CHAR) AS it_depopt1_subject,
-  CAST(it_depopt1_label AS CHAR) AS it_depopt1_label,
-  CAST(it_depopt2_subject AS CHAR) AS it_depopt2_subject,
-  CAST(it_depopt2_label AS CHAR) AS it_depopt2_label,
-  CAST(LEFT(IFNULL(it_supply_items, ''), 400) AS CHAR) AS it_supply_items,
-  it_order
+  it_sc_type, it_sc_price, it_sc_minimum
 `;
 
 /** 상세용 — 본문 HTML은 필요 필드만, 이미지 1~5만 */

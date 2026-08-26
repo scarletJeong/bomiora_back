@@ -5,6 +5,7 @@ const heartRateRepository = require('../../heart_rate/repositories/HeartRateRepo
 const menstrualCycleRepository = require('../../menstrual_cycle/repositories/MenstrualCycleRepository');
 const healthGoalRepository = require('../../health_goal/repositories/HealthGoalRepository');
 const stepsDailyTotalService = require('../../steps/services/StepsDailyTotalService');
+const { utcRangeForKstCalendarDay } = require('../../../../utils/healthDateTime');
 
 class HealthDashboardService {
   async loadDashboard(mbId, date) {
@@ -13,6 +14,7 @@ class HealthDashboardService {
     if (!id || !dateStr) {
       throw new Error('mb_id, date(YYYY-MM-DD)는 필수입니다.');
     }
+    const { start, end } = utcRangeForKstCalendarDay(dateStr);
 
     const [
       weightRows,
@@ -23,10 +25,10 @@ class HealthDashboardService {
       stepsData,
       goalRow,
     ] = await Promise.all([
-      weightRepository.findByMbIdOrderByMeasuredAtDesc(id),
-      bloodPressureRepository.findByMbIdOrderByMeasuredAtDesc(id),
-      bloodSugarRepository.findByMbIdOrderByMeasuredAtDesc(id),
-      heartRateRepository.findByMbIdOrderByMeasuredAtDesc(id),
+      weightRepository.findByMbIdAndDateRange(id, start, end),
+      bloodPressureRepository.findByMbIdAndMeasuredAtBetween(id, start, end),
+      bloodSugarRepository.findByMbIdAndMeasuredAtBetween(id, start, end),
+      heartRateRepository.findByMbIdAndMeasuredAtBetween(id, start, end),
       menstrualCycleRepository.findFirstByMbIdOrderByCreatedAtDesc(id),
       stepsDailyTotalService.buildDailyTotal(id, dateStr),
       healthGoalRepository.findLatestByMbId(id),

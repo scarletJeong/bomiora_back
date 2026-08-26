@@ -41,7 +41,51 @@ app.get('/api/users', (req, res) => userController.getAllUsers(req, res));
 app.use('/api/auth', require('./src/modules/auth/routes/authRoutes'));
 app.use('/api/user', require('./src/modules/auth/routes/userRoutes'));
 app.use('/api/user', require('./src/modules/user/notification/routes/notificationRoutes'));
-app.use('/api/health/dashboard', require('./src/modules/health/dashboard/routes/healthDashboardRoutes'));
+
+// 건강 대시보드 — app.get 직접 등록 (router mount 누락/배포 누락 진단용)
+let healthDashboardMounted = false;
+const healthDashboardRoutePath = path.join(
+  __dirname,
+  'src/modules/health/dashboard/routes/healthDashboardRoutes.js'
+);
+const healthDashboardFileExists = require('fs').existsSync(healthDashboardRoutePath);
+try {
+  const healthDashboardController = require('./src/modules/health/dashboard/controllers/HealthDashboardController');
+  // exact path (trailing slash 유무 모두)
+  app.get('/api/health/dashboard', (req, res) => healthDashboardController.getDashboard(req, res));
+  app.get('/api/health/dashboard/', (req, res) => healthDashboardController.getDashboard(req, res));
+  // 배포 확인용 ping (DB 없음)
+  app.get('/api/health/dashboard/ping', (req, res) => {
+    res.json({
+      success: true,
+      route: '/api/health/dashboard',
+      mounted: true,
+      fileExists: healthDashboardFileExists,
+      cwd: process.cwd(),
+      __dirname,
+      pid: process.pid,
+      time: new Date().toISOString(),
+    });
+  });
+  healthDashboardMounted = true;
+  console.log('[Boot] /api/health/dashboard mounted', {
+    fileExists: healthDashboardFileExists,
+    path: healthDashboardRoutePath,
+  });
+} catch (e) {
+  console.error('[Boot] /api/health/dashboard MOUNT FAILED:', e?.message || e);
+  console.error(e?.stack || e);
+  app.get('/api/health/dashboard', (req, res) => {
+    res.status(503).json({
+      success: false,
+      message: 'dashboard 라우트 로드 실패',
+      error: String(e?.message || e),
+      fileExists: healthDashboardFileExists,
+      path: healthDashboardRoutePath,
+    });
+  });
+}
+
 app.use('/api/health/weight', require('./src/modules/health/weight/routes/weightRoutes'));
 app.use('/api/health/health-goal', require('./src/modules/health/health_goal/routes/healthGoalRoutes'));
 app.use('/api/health/blood-sugar', require('./src/modules/health/blood_sugar/routes/bloodSugarRoutes'));
@@ -88,9 +132,30 @@ app.get('/favicon.ico', (req, res) => {
 
 // 404 핸들러
 app.use((req, res) => {
-  res.status(404).json({ 
+  const url = req.originalUrl || req.url || '';
+  if (url.includes('/api/health/dashboard') || url.includes('/api/health/')) {
+    console.error('[404-DEBUG]', {
+      method: req.method,
+      url,
+      path: req.path,
+      dashboardMounted: healthDashboardMounted,
+      dashboardFileExists: healthDashboardFileExists,
+      cwd: process.cwd(),
+      __dirname,
+      pid: process.pid,
+    });
+  }
+  res.status(404).json({
     error: 'Not Found',
-    message: '요청하신 리소스를 찾을 수 없습니다.'
+    message: '요청하신 리소스를 찾을 수 없습니다.',
+    debug:
+      url.includes('dashboard')
+        ? {
+            dashboardMounted: healthDashboardMounted,
+            dashboardFileExists: healthDashboardFileExists,
+            pid: process.pid,
+          }
+        : undefined,
   });
 });
 
@@ -114,6 +179,16 @@ try {
 app.listen(PORT, () => {
   console.log(`🚀 Server is running on port ${PORT}`);
   console.log(`📝 Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(
+    `[Boot] healthDashboardMounted=${healthDashboardMounted} fileExists=${healthDashboardFileExists} pid=${process.pid}`
+  );
+
+  // 상품 목록 배송비 라벨용 shopDefault 선로드
+  try {
+    require('./src/modules/shopping/product/controllers/ProductController').warmShopDefault();
+  } catch (e) {
+    console.warn('[ProductController] shopDefault warm 스킵:', e.message);
+  }
 
   // 쿠폰 만료 하루 전 푸시 (매일 KST 08:00)
   try {
