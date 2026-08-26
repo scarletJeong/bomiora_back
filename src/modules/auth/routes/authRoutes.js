@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const userController = require('../controllers/UserController');
 const socialAuthController = require('../../user/social/controllers/SocialAuthController');
+const naverOAuthController = require('../controllers/NaverOAuthController');
 const kcpRoutes = require('./kcpRoutes');
 const otpRoutes = require('./otpRoutes');
 
@@ -13,6 +14,9 @@ const otpRoutes = require('./otpRoutes');
 router.post('/login', (req, res) => userController.login(req, res));
 router.post('/kakao/login', (req, res) => socialAuthController.loginKakao(req, res));
 router.post('/naver/login', (req, res) => socialAuthController.loginNaver(req, res));
+router.get('/naver/authorize', (req, res) => naverOAuthController.authorize(req, res));
+router.get('/naver/callback', (req, res) => naverOAuthController.callback(req, res));
+router.get('/naver/result/:token', (req, res) => naverOAuthController.result(req, res));
 router.post('/social/login', (req, res) => socialAuthController.login(req, res));
 router.post('/social/register', (req, res) => socialAuthController.register(req, res));
 router.post('/check-email', (req, res) => userController.checkEmail(req, res));

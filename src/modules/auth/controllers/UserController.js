@@ -139,20 +139,17 @@ class UserController {
         const clientIp = getClientIp(req);
         const today = getKstDateString();
         const lastLoginYmd = String(user.lastLoginAt || '').slice(0, 10);
-        let firstLoginPoint = { granted: false, code: lastLoginYmd === today ? 'ALREADY' : null };
-
         if (lastLoginYmd === today) {
           userRepository.touchLastLogin(user.mbId, clientIp).catch(() => {});
         } else {
-          try {
-            firstLoginPoint = await pointRepository.grantDailyFirstLoginPoint({
+          pointRepository.grantDailyFirstLoginPoint({
               mbId: user.mbId,
               ip: clientIp,
-            });
-          } catch (e) {
+            })
+            .catch((e) => {
             console.error('[LOGIN] 첫로그인 포인트 지급 실패(로그인은 계속):', e?.message || e);
             userRepository.touchLastLogin(user.mbId, clientIp).catch(() => {});
-          }
+            });
         }
 
         return res.json({
@@ -160,9 +157,10 @@ class UserController {
           user: user.toResponse(),
           token: 'token_' + Date.now(),
           message: '로그인 성공',
-          firstLoginPoint: firstLoginPoint?.granted
-            ? { granted: true, point: firstLoginPoint.poPoint || 100 }
-            : { granted: false, code: firstLoginPoint?.code || null },
+          firstLoginPoint: {
+            granted: false,
+            code: lastLoginYmd === today ? 'ALREADY' : 'PENDING',
+          },
         });
       }
 
