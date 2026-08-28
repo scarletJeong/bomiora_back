@@ -6,47 +6,35 @@ class BloodPressureRepository {
   async create(bloodPressureData) {
     const { mbId, systolic, diastolic, pulse, measuredAt } = bloodPressureData;
     const status = BloodPressure.determineStatus(systolic, diastolic);
-    const connection = await pool.getConnection();
-
-    try {
-      await connection.beginTransaction();
-
-      const [result] = await connection.query(
-        `INSERT INTO bm_blood_pressure
+    const [result] = await pool.query(
+      `INSERT INTO bm_blood_pressure
         (mb_id, systolic, diastolic, pulse, status, measured_at, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())`,
-        [mbId, systolic, diastolic, pulse, status, measuredAt]
-      );
+       VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+      [mbId, systolic, diastolic, pulse, status, measuredAt]
+    );
 
-      await heartRateRepository.createOrUpdateFromBloodPressure(
-        {
-          mbId,
-          heartRate: pulse,
-          measuredAt,
-          bloodPressureId: result.insertId
-        },
-        connection
-      );
+    // 심박 파생 기록은 혈압 저장 응답을 막지 않도록 후속 처리한다.
+    heartRateRepository.createOrUpdateFromBloodPressure({
+      mbId,
+      heartRate: pulse,
+      measuredAt,
+      bloodPressureId: result.insertId
+    }).catch((error) => {
+      console.error('[BloodPressure] 심박 파생 기록 저장 실패:', error?.message || error);
+    });
 
-      await connection.commit();
-      const now = new Date();
-      return new BloodPressure({
-        id: result.insertId,
-        mb_id: mbId,
-        systolic,
-        diastolic,
-        pulse,
-        status,
-        measured_at: measuredAt,
-        created_at: now,
-        updated_at: now
-      });
-    } catch (error) {
-      await connection.rollback();
-      throw error;
-    } finally {
-      connection.release();
-    }
+    const now = new Date();
+    return new BloodPressure({
+      id: result.insertId,
+      mb_id: mbId,
+      systolic,
+      diastolic,
+      pulse,
+      status,
+      measured_at: measuredAt,
+      created_at: now,
+      updated_at: now
+    });
   }
 
   async findById(id) {
@@ -83,12 +71,12 @@ class BloodPressureRepository {
       return this.findById(id);
     }
 
-    // 상태 재계산
-    const current = await this.findById(id);
-    if (current) {
-      const newSystolic = fields.systolic ?? current.systolic;
-      const newDiastolic = fields.diastolic ?? current.diastolic;
-      const newStatus = BloodPressure.determineStatus(newSystolic, newDiastolic);
+    let newStatus = fields.status;
+    if (fields.systolic != null && fields.diastolic != null) {
+      newStatus = BloodPressure.determineStatus(
+        fields.systolic,
+        fields.diastolic
+      );
       updateFields.push('status = ?');
       updateValues.push(newStatus);
     }
@@ -96,14 +84,24 @@ class BloodPressureRepository {
     updateFields.push('updated_at = NOW()');
     updateValues.push(id);
 
-    await pool.query(
+    const [result] = await pool.query(
       `UPDATE bm_blood_pressure
        SET ${updateFields.join(', ')}
        WHERE id = ?`,
       updateValues
     );
 
-    return this.findById(id);
+    if (result.affectedRows < 1) return null;
+    return new BloodPressure({
+      id,
+      mb_id: fields.mbId,
+      systolic: fields.systolic,
+      diastolic: fields.diastolic,
+      pulse: fields.pulse,
+      status: newStatus,
+      measured_at: fields.measuredAt,
+      updated_at: new Date()
+    });
   }
 
   async deleteById(id) {

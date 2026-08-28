@@ -49,21 +49,21 @@ class BloodPressureController {
       const id = Number(req.params.id);
       const { systolic, diastolic, pulse, measured_at } = req.body;
 
-      const exists = await bloodPressureRepository.existsById(id);
-      if (!exists) {
-        return res.status(404).json({
-          success: false,
-          message: '혈압 기록을 찾을 수 없습니다. ID: ' + id
-        });
-      }
-
-      const updateFields = {};
+      const updateFields = {
+        mbId: req.body.mb_id == null ? null : String(req.body.mb_id),
+      };
       if (systolic != null) updateFields.systolic = Number(systolic);
       if (diastolic != null) updateFields.diastolic = Number(diastolic);
       if (pulse != null) updateFields.pulse = Number(pulse);
       if (measured_at != null) updateFields.measuredAt = this.parseMeasuredAt(measured_at);
 
       const updated = await bloodPressureRepository.update(id, updateFields);
+      if (!updated) {
+        return res.status(404).json({
+          success: false,
+          message: '혈압 기록을 찾을 수 없습니다. ID: ' + id
+        });
+      }
       invalidateHealthMember(req.body.mb_id);
 
       return res.json({

@@ -188,6 +188,8 @@ class ContentController {
         });
       }
       contentListCache.remove(`detail:${id}`);
+      contentListCache.remove(`detailFull:${id}`);
+      contentListCache.remove(`adj:${id}`);
       contentListCache.remove(`rec:${id}:${mbId}:${pfNo}`);
       return res.json({
         success: true,
@@ -211,29 +213,32 @@ class ContentController {
           .json({ success: false, message: '유효한 콘텐츠 ID가 아닙니다.' });
       }
 
-      const row = await contentListCache.getOrSet(`detail:${id}`, () =>
-        contentRepository.findById(id)
-      );
-      if (!row) {
-        return res
-          .status(404)
-          .json({ success: false, message: '콘텐츠를 찾을 수 없습니다.' });
-      }
-
-      contentRepository.increaseHit(id).catch(() => {});
-
       const mbIdQ = String(req.query.mb_id || '').trim();
       const pfNoQ = this.parsePfNo(req.query.pf_no);
-      const category = this.normalizeText(row.category) || '';
 
-      const [adjacent, userRecommended] = await Promise.all([
-        contentListCache.getOrSet(`adj:${id}`, () =>
-          contentRepository.findAdjacentById(id, {
-            category,
-            isNotice: Number(row.is_notice || 0),
-            sortOrder: Number(row.sort_order || 0),
-          })
-        ),
+      const [payload, userRecommended] = await Promise.all([
+        contentListCache.getOrSet(`detailFull:${id}`, async () => {
+          const [row, adjacent] = await Promise.all([
+            contentRepository.findById(id),
+            contentRepository.findAdjacentById(id),
+          ]);
+          if (!row) return null;
+          return {
+            data: this.toMap(row),
+            prev: adjacent.prev
+              ? {
+                  id: adjacent.prev.id,
+                  title: this.normalizeText(adjacent.prev.title),
+                }
+              : null,
+            next: adjacent.next
+              ? {
+                  id: adjacent.next.id,
+                  title: this.normalizeText(adjacent.next.title),
+                }
+              : null,
+          };
+        }),
         mbIdQ
           ? contentListCache.getOrSet(
               `rec:${id}:${mbIdQ}:${pfNoQ}`,
@@ -243,28 +248,26 @@ class ContentController {
           : Promise.resolve(undefined),
       ]);
 
-      const baseData = this.toMap(row);
-      baseData.view_count = Number(row.view_count || 0) + 1;
+      if (!payload) {
+        return res
+          .status(404)
+          .json({ success: false, message: '콘텐츠를 찾을 수 없습니다.' });
+      }
+
+      contentRepository.increaseHit(id).catch(() => {});
+
+      const data = { ...payload.data };
+      data.view_count = Number(data.view_count || 0) + 1;
       if (mbIdQ) {
-        baseData.user_recommended = userRecommended;
+        data.user_recommended = userRecommended;
       }
 
       res.set('Cache-Control', 'public, max-age=30');
       return res.json({
         success: true,
-        data: baseData,
-        prev: adjacent.prev
-          ? {
-              id: adjacent.prev.id,
-              title: this.normalizeText(adjacent.prev.title),
-            }
-          : null,
-        next: adjacent.next
-          ? {
-              id: adjacent.next.id,
-              title: this.normalizeText(adjacent.next.title),
-            }
-          : null,
+        data,
+        prev: payload.prev,
+        next: payload.next,
       });
     } catch (error) {
       return res.status(500).json({

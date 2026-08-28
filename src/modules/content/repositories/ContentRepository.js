@@ -87,19 +87,19 @@ class ContentRepository {
     const [rows] = await pool.query(
       `SELECT
           id,
-          category,
-          title,
-          thumbnail AS thumbnail_url,
+          CAST(category AS CHAR) AS category,
+          CAST(title AS CHAR) AS title,
+          CAST(thumbnail AS CHAR) AS thumbnail_url,
           content AS content_html,
           is_notice,
           is_published,
           view_count,
           recommend_count,
           sort_order,
-          writer_name,
-          created_by,
+          CAST(writer_name AS CHAR) AS writer_name,
+          CAST(created_by AS CHAR) AS created_by,
           created_at,
-          updated_by,
+          CAST(updated_by AS CHAR) AS updated_by,
           updated_at,
           NULL AS published_at
        FROM bm_content
@@ -204,62 +204,51 @@ class ContentRepository {
   }
 
   /**
-   * 이전/다음 글 — 목록과 동일 정렬(is_notice DESC, sort_order ASC, id DESC).
-   * category가 있으면 해당 카테고리 안에서만 탐색.
+   * 이전/다음 글 — 현재 행을 JOIN 해 id만으로 조회 (상세 findById와 병렬 가능).
+   * 목록과 동일 정렬(is_notice DESC, sort_order ASC, id DESC).
    */
-  async findAdjacentById(id, { category, isNotice, sortOrder } = {}) {
-    const cat = String(category || '').trim();
-    const useCategory = cat.length > 0 && cat !== '전체';
-    const catClause = useCategory
-      ? "AND REPLACE(category, ' ', '') = REPLACE(?, ' ', '')"
-      : '';
-    const catParams = useCategory ? [cat] : [];
-    const notice = Number(isNotice || 0);
-    const order = Number(sortOrder || 0);
+  async findAdjacentById(id) {
     const curId = Number(id);
-
-    const adjParams = [
-      ...catParams,
-      notice,
-      notice,
-      order,
-      notice,
-      order,
-      curId,
-    ];
-
     const [[prevRows], [nextRows]] = await Promise.all([
-      // 목록에서 현재보다 앞(이전 글)
       pool.query(
-        `SELECT id, title
-           FROM bm_content
-          WHERE is_deleted = 0
-            AND is_published = 1
-            ${catClause}
+        `SELECT p.id, CAST(p.title AS CHAR) AS title
+           FROM bm_content p
+           INNER JOIN bm_content c ON c.id = ?
+          WHERE p.is_deleted = 0
+            AND p.is_published = 1
             AND (
-              is_notice > ?
-              OR (is_notice = ? AND sort_order < ?)
-              OR (is_notice = ? AND sort_order = ? AND id > ?)
+              TRIM(IFNULL(c.category, '')) = ''
+              OR TRIM(IFNULL(c.category, '')) = '전체'
+              OR REPLACE(p.category, ' ', '') = REPLACE(c.category, ' ', '')
             )
-          ORDER BY is_notice ASC, sort_order DESC, id ASC
+            AND (
+              p.is_notice > c.is_notice
+              OR (p.is_notice = c.is_notice AND p.sort_order < c.sort_order)
+              OR (p.is_notice = c.is_notice AND p.sort_order = c.sort_order AND p.id > c.id)
+            )
+          ORDER BY p.is_notice ASC, p.sort_order DESC, p.id ASC
           LIMIT 1`,
-        adjParams
+        [curId]
       ),
-      // 목록에서 현재보다 뒤(다음 글)
       pool.query(
-        `SELECT id, title
-           FROM bm_content
-          WHERE is_deleted = 0
-            AND is_published = 1
-            ${catClause}
+        `SELECT p.id, CAST(p.title AS CHAR) AS title
+           FROM bm_content p
+           INNER JOIN bm_content c ON c.id = ?
+          WHERE p.is_deleted = 0
+            AND p.is_published = 1
             AND (
-              is_notice < ?
-              OR (is_notice = ? AND sort_order > ?)
-              OR (is_notice = ? AND sort_order = ? AND id < ?)
+              TRIM(IFNULL(c.category, '')) = ''
+              OR TRIM(IFNULL(c.category, '')) = '전체'
+              OR REPLACE(p.category, ' ', '') = REPLACE(c.category, ' ', '')
             )
-          ORDER BY is_notice DESC, sort_order ASC, id DESC
+            AND (
+              p.is_notice < c.is_notice
+              OR (p.is_notice = c.is_notice AND p.sort_order > c.sort_order)
+              OR (p.is_notice = c.is_notice AND p.sort_order = c.sort_order AND p.id < c.id)
+            )
+          ORDER BY p.is_notice DESC, p.sort_order ASC, p.id DESC
           LIMIT 1`,
-        adjParams
+        [curId]
       ),
     ]);
 
