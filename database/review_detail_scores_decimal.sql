@@ -1,0 +1,9 @@
+/**
+ * 세부 평점(효과·가성비·향/맛·편리함) 0.1 단위 저장
+ * 기존 INT 컬럼을 DECIMAL(3,1)로 변경
+ */
+ALTER TABLE bomiora_shop_item_use
+  MODIFY COLUMN is_score1 DECIMAL(3,1) NOT NULL DEFAULT 0 COMMENT '효과 0.1~5',
+  MODIFY COLUMN is_score2 DECIMAL(3,1) NOT NULL DEFAULT 0 COMMENT '가성비 0.1~5',
+  MODIFY COLUMN is_score3 DECIMAL(3,1) NOT NULL DEFAULT 0 COMMENT '향/맛 0.1~5',
+  MODIFY COLUMN is_score4 DECIMAL(3,1) NOT NULL DEFAULT 0 COMMENT '편리함 0.1~5';
