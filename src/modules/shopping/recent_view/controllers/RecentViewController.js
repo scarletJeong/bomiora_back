@@ -14,6 +14,13 @@ class RecentViewController {
     return String(value);
   }
 
+  toNumber(value) {
+    if (value == null || value === '') return 0;
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    const n = Number(String(this.bufferToString(value)).replace(/,/g, ''));
+    return Number.isFinite(n) ? n : 0;
+  }
+
   toImage(product) {
     if (product.it_flutter_image_url && String(product.it_flutter_image_url).trim()) {
       const folder = String(product.it_flutter_image_url).trim().replace(/\/+$/, '');
@@ -162,12 +169,21 @@ class RecentViewController {
                 row.it_kind = productKind;
               }
               if (hasProduct) {
+                const salePrice = this.toNumber(v.it_price);
+                const listPrice = this.toNumber(v.it_cust_price);
                 row.product_name = v.it_name;
-                row.product_price = v.it_price;
+                row.it_name = v.it_name;
+                row.price = salePrice;
+                row.it_price = salePrice;
+                row.product_price = salePrice;
+                row.originalPrice = listPrice;
+                row.it_cust_price = listPrice;
                 row.image_url = this.toImage(v);
                 row.it_img = row.image_url;
                 row.it_img1 = row.image_url;
                 row.it_basic = v.it_basic;
+                if (v.it_subject) row.it_subject = v.it_subject;
+                if (v.it_maker) row.it_maker = v.it_maker;
               }
               return row;
             })

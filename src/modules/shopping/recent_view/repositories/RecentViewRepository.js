@@ -68,10 +68,13 @@ class RecentViewRepository {
               rv.rv_time,
               CAST(p.it_name AS CHAR) AS it_name,
               p.it_price,
+              p.it_cust_price,
               CAST(p.it_kind AS CHAR) AS product_it_kind,
               CAST(p.it_img1 AS CHAR) AS it_img1,
               CAST(p.it_flutter_image_url AS CHAR) AS it_flutter_image_url,
-              CAST(LEFT(IFNULL(p.it_basic, ''), 80) AS CHAR) AS it_basic
+              CAST(LEFT(IFNULL(p.it_basic, ''), 80) AS CHAR) AS it_basic,
+              CAST(p.it_subject AS CHAR) AS it_subject,
+              CAST(p.it_maker AS CHAR) AS it_maker
          FROM bomiora_shop_recent_view rv
          INNER JOIN bomiora_shop_item_new p
            ON p.it_id = rv.it_id AND p.it_use = 1
@@ -90,10 +93,13 @@ class RecentViewRepository {
       `SELECT CAST(it_id AS CHAR) AS it_id,
               CAST(it_name AS CHAR) AS it_name,
               it_price,
+              it_cust_price,
               CAST(it_kind AS CHAR) AS it_kind,
               CAST(it_img1 AS CHAR) AS it_img1,
               CAST(it_flutter_image_url AS CHAR) AS it_flutter_image_url,
-              CAST(LEFT(IFNULL(it_basic, ''), 120) AS CHAR) AS it_basic
+              CAST(LEFT(IFNULL(it_basic, ''), 120) AS CHAR) AS it_basic,
+              CAST(it_subject AS CHAR) AS it_subject,
+              CAST(it_maker AS CHAR) AS it_maker
          FROM bomiora_shop_item_new
         WHERE it_id IN (${placeholders})`,
       itIds
