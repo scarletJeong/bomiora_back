@@ -369,6 +369,102 @@ class CouponRepository {
       conn.release();
     }
   }
+
+  parseCheckoutCoupons(body = {}) {
+    const fromList = Array.isArray(body.coupons) ? body.coupons : [];
+    const fromIds = Array.isArray(body.cp_ids)
+      ? body.cp_ids
+      : Array.isArray(body.cpIds)
+        ? body.cpIds
+        : [];
+    const map = new Map();
+    for (const row of fromList) {
+      const cpId = String(row?.cp_id || row?.cpId || '').trim();
+      if (!cpId) continue;
+      const discount = Math.max(0, Number(row?.discount ?? row?.cp_price ?? 0) || 0);
+      map.set(cpId, { cp_id: cpId, discount });
+    }
+    for (const raw of fromIds) {
+      const cpId = String(raw || '').trim();
+      if (!cpId || map.has(cpId)) continue;
+      map.set(cpId, { cp_id: cpId, discount: 0 });
+    }
+    return [...map.values()];
+  }
+
+  async assertUsableCheckoutCoupons(mbId, checkoutCoupons, claimedDiscount) {
+    const list = Array.isArray(checkoutCoupons) ? checkoutCoupons : [];
+    const claimed = Math.max(0, Number(claimedDiscount || 0) || 0);
+    if (claimed > 0 && list.length === 0) {
+      throw new Error('쿠폰 할인 금액이 있으나 쿠폰 ID가 없습니다.');
+    }
+    if (list.length === 0) return [];
+
+    const { coupons, usedMap } = await this.getMemberCouponBundle(mbId);
+    const byId = new Map(coupons.map((c) => [String(c.cp_id || '').trim(), c]));
+    const today = kstTodayYmd();
+    const resolved = [];
+    let sum = 0;
+
+    for (const item of list) {
+      const row = byId.get(item.cp_id);
+      if (!row) throw new Error('사용할 수 없는 쿠폰입니다.');
+      if (String(row.mb_id || '').trim() !== String(mbId).trim()) {
+        throw new Error('본인 쿠폰만 사용할 수 있습니다.');
+      }
+      if (this._isUsedRow(row, usedMap)) {
+        throw new Error('이미 사용한 쿠폰입니다.');
+      }
+      const start = this._ymd(row.cp_start);
+      const end = this._ymd(row.cp_end);
+      if (!start || !end || start > today || end < today) {
+        throw new Error('유효기간이 지난 쿠폰입니다.');
+      }
+      const discount = Math.max(0, Number(item.discount || 0) || 0);
+      sum += discount;
+      resolved.push({ cp_id: item.cp_id, discount });
+    }
+
+    if (claimed > 0 && sum !== claimed) {
+      const allZero = resolved.every((c) => c.discount === 0);
+      if (allZero || resolved.length === 1) {
+        resolved[0].discount = claimed;
+        for (let i = 1; i < resolved.length; i += 1) resolved[i].discount = 0;
+      } else if (sum > claimed) {
+        let extra = sum - claimed;
+        for (let i = resolved.length - 1; i >= 0 && extra > 0; i -= 1) {
+          const cut = Math.min(resolved[i].discount, extra);
+          resolved[i].discount -= cut;
+          extra -= cut;
+        }
+      } else {
+        throw new Error('쿠폰 할인 금액이 일치하지 않습니다.');
+      }
+    }
+
+    return resolved.filter((c) => c.cp_id);
+  }
+
+  async consumeCouponsForOrder(connection, { mbId, odId, coupons }) {
+    const list = Array.isArray(coupons) ? coupons : [];
+    if (!list.length) return;
+    const q = connection || pool;
+    for (const c of list) {
+      const cpId = String(c.cp_id || '').trim();
+      if (!cpId) continue;
+      const discount = Math.max(0, Number(c.discount || 0) || 0);
+      await q.query(
+        `INSERT INTO bomiora_shop_coupon_log (cp_id, mb_id, od_id, cp_price, cl_datetime)
+         VALUES (?, ?, ?, ?, NOW())`,
+        [cpId, mbId, odId, discount]
+      );
+      await q.query(
+        `UPDATE bomiora_shop_coupon SET od_id = ? WHERE cp_id = ? AND mb_id = ?`,
+        [odId, cpId, mbId]
+      );
+    }
+    this.invalidateMemberCoupons(mbId);
+  }
 }
 
 module.exports = new CouponRepository();

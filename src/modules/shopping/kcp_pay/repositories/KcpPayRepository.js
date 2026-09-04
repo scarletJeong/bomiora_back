@@ -1,4 +1,5 @@
 const pool = require('../../../../config/database');
+const couponRepository = require('../../../user/coupon/repositories/CouponRepository');
 
 class KcpPayRepository {
   async getCartItemsByIds(mbId, cartIds) {
@@ -200,6 +201,14 @@ class KcpPayRepository {
            AND h.hp_no <> d.keep_no`,
         [payload.mbId, String(payload.orderId), payload.mbId, String(payload.orderId)]
       );
+
+      if (Array.isArray(payload.coupons) && payload.coupons.length) {
+        await couponRepository.consumeCouponsForOrder(connection, {
+          mbId: payload.mbId,
+          odId: payload.orderId,
+          coupons: payload.coupons,
+        });
+      }
 
       await connection.commit();
       return { success: true };

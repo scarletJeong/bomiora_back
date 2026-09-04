@@ -1,5 +1,6 @@
 const orderRepository = require('../repositories/OrderRepository');
 const orderCartRepository = require('../repositories/OrderCartRepository');
+const userRepository = require('../../../auth/repositories/UserRepository');
 const kcpApprovalService = require('../../../shopping/kcp_pay/services/kcpApprovalService');
 const { TtlCache } = require('../../../../utils/ttlCache');
 
@@ -384,16 +385,79 @@ class OrderController {
     detail.cancelDate = this.extractCancelDate(memo, modHistory);
   }
 
-  /** 주문 취소 메모 한 줄 (parseCancelInfo가 고객 요청으로 인식) */
-  buildCustomerCancelMemo(existingMemo = '') {
+  /** 주문 취소 메모 (parseCancelInfo가 고객 요청으로 인식). 가상계좌는 환불계좌 한 줄 추가 */
+  buildCustomerCancelMemo(existingMemo = '', refund) {
     const now = new Date();
     const pad = (n) => String(n).padStart(2, '0');
     const stamp =
       `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ` +
       `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
-    const line = `(${stamp}) 주문자 본인 직접 취소`;
+    let line = `(${stamp}) 주문자 본인 직접 취소`;
+    if (refund && refund.bank && refund.account && refund.holder) {
+      line += `\n[환불계좌] ${refund.bank} / ${refund.account} / ${refund.holder}`;
+    }
     const prev = this.bufferToString(existingMemo || '').trim();
     return prev ? `${prev}\n${line}` : line;
+  }
+
+  /** 앱 은행명 → 토스/주문폼 institution numeric_code */
+  toTossBankCode(bankName) {
+    const n = String(bankName || '').replace(/\s+/g, '');
+    const pairs = [
+      ['국민', '04'],
+      ['신한', '88'],
+      ['우리', '20'],
+      ['하나', '81'],
+      ['농협', '11'],
+      ['기업', '03'],
+      ['카카오', '90'],
+      ['케이뱅크', '89'],
+      ['토스', '92'],
+      ['부산', '32'],
+      ['대구', '31'],
+      ['광주', '34'],
+      ['경남', '39'],
+      ['전북', '37'],
+      ['제주', '35'],
+      ['수협', '07'],
+      ['우체국', '71'],
+      ['SC', '23'],
+      ['씨티', '27'],
+    ];
+    for (const [key, code] of pairs) {
+      if (n.includes(key)) return code;
+    }
+    return '';
+  }
+
+  parseRefundAccountFromRequest(body = {}) {
+    const bank = String(body.refundBank || body.refund_bank || '').trim();
+    const account = String(body.refundAccount || body.refund_account || '').replace(/[^0-9]/g, '');
+    const holder = String(body.refundHolder || body.refund_holder || '').trim();
+    return { bank, account, holder };
+  }
+
+  isVirtualAccountSettle(order) {
+    return this.bufferToString(order?.od_settle_case || '').includes('가상');
+  }
+
+  async saveOrderRefundAccount(odId, refund) {
+    if (!refund || !refund.account) return;
+    const fields = {
+      refund_account: refund.account,
+      refund_name: refund.holder || '',
+    };
+    const bankcode = this.toTossBankCode(refund.bank);
+    if (bankcode) fields.refund_bankcode = bankcode;
+    try {
+      await orderRepository.updateOrder(odId, fields);
+    } catch (err) {
+      if (err && err.code === 'ER_BAD_FIELD_ERROR') {
+        console.warn('[OrderController] shop_order 환불계좌 컬럼 없음 — 메모만 저장', odId);
+        return;
+      }
+      throw err;
+    }
   }
 
   async getOrderList(req, res) {
@@ -680,6 +744,26 @@ class OrderController {
       }
       if (this.toInt(order.od_cancel_price) > 0) throw new Error('이미 취소된 주문입니다.');
 
+      const refund = this.parseRefundAccountFromRequest(req.body);
+      const isVbank = this.isVirtualAccountSettle(order);
+      const receiptPrice = this.toInt(order.od_receipt_price);
+      const needsRefundAccount = isVbank && receiptPrice > 0;
+
+      if (needsRefundAccount) {
+        if (!refund.bank || refund.account.length < 10 || !refund.holder) {
+          throw new Error('가상계좌 환불을 위해 환불계좌(은행·계좌번호·예금주)를 입력해 주세요.');
+        }
+      }
+
+      const hasRefund = Boolean(refund.bank && refund.account.length >= 10 && refund.holder);
+      if (hasRefund) {
+        try {
+          await userRepository.updateRefundAccountByMbId(String(mbId).trim(), refund);
+        } catch (saveErr) {
+          console.warn('[OrderController] 회원 환불계좌 저장 실패', { odId, message: saveErr.message });
+        }
+      }
+
       if (this.isKcpCardNetworkCancelTarget(order)) {
         const tno = this.bufferToString(order.od_tno || '').trim();
         const modType = this.resolveKcpCancelModTypeForOrder(order);
@@ -711,14 +795,25 @@ class OrderController {
         }
       }
 
-      const cancelMemo = this.buildCustomerCancelMemo(order.od_shop_memo);
+      const cancelMemo = this.buildCustomerCancelMemo(order.od_shop_memo, hasRefund ? refund : null);
       await orderRepository.updateOrder(odId, {
         od_status: '취소',
         status_changed_at: new Date(),
         od_shop_memo: cancelMemo,
       });
+      if (hasRefund) {
+        await this.saveOrderRefundAccount(odId, refund);
+      }
       this.invalidateOrderDetailCache(mbId, odId);
-      return res.json({ success: true, message: '주문이 취소되었습니다.' });
+
+      if (needsRefundAccount) {
+        return res.json({
+          success: true,
+          cancelRequested: true,
+          message: '취소 요청이 접수되었습니다. 환불은 관리자 확인 후 처리됩니다.',
+        });
+      }
+      return res.json({ success: true, cancelRequested: false, message: '주문이 취소되었습니다.' });
     } catch (error) {
       return res.status(400).json({ error: error.message });
     }
@@ -767,6 +862,21 @@ class OrderController {
         result.point?.granted && Number(result.point.poPoint) > 0
           ? Number(result.point.poPoint)
           : 0;
+
+      if (result.already) {
+        this.invalidateOrderDetailCache(mbId, odId);
+        return res.json({
+          success: true,
+          already: true,
+          message: '이미 수령확인이 완료된 주문입니다.',
+          odId: String(odId),
+          odStatus: '완료',
+          deliveryCompleted: 1,
+          displayStatus: '배송완료',
+          autoConfirmed: false,
+          earnedPoint: 0,
+        });
+      }
 
       if (result.auto) {
         // 웹: alert 후 중단 — 앱은 상태 갱신을 위해 200 + 안내 메시지

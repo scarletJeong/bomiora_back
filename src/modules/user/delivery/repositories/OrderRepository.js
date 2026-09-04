@@ -433,15 +433,22 @@ class OrderRepository {
       const odStatus = this.bufferToString(order.od_status).trim();
       const deliveryCompleted = Number(order.delivery_completed || 0) === 1;
 
-      if (deliveryCompleted) {
-        const err = new Error('이미 수령확인이 완료된 주문입니다.');
-        err.statusCode = 400;
-        err.code = 'ALREADY_COMPLETED';
-        throw err;
+      if (deliveryCompleted || odStatus === '완료') {
+        await conn.commit();
+        return {
+          already: true,
+          auto: false,
+          order,
+          point: null,
+        };
       }
 
-      if (!['배송', '완료'].includes(odStatus)) {
-        const err = new Error('수령확인할 수 없는 주문 상태입니다.');
+      // 앱 수령확인 버튼은 배송중일 때만 노출. DB 표기는 '배송' 또는 '배송중'
+      const confirmableStatuses = ['배송', '배송중'];
+      if (!confirmableStatuses.includes(odStatus)) {
+        const err = new Error(
+          `수령확인할 수 없는 주문 상태입니다. (현재: ${odStatus || '알 수 없음'})`
+        );
         err.statusCode = 400;
         err.code = 'INVALID_STATUS';
         throw err;

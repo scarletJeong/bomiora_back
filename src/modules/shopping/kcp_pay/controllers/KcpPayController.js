@@ -2,6 +2,8 @@ const kcpPayService = require('../services/kcpPayService');
 const kcpPayStore = require('../services/kcpPayStore');
 const kcpPayRepository = require('../repositories/KcpPayRepository');
 const kcpApprovalService = require('../services/kcpApprovalService');
+const cartController = require('../../cart/controllers/CartController');
+const couponRepository = require('../../user/coupon/repositories/CouponRepository');
 
 const KCP_ERROR_MESSAGE_MAP = {
   '3001': '결제 요청 정보가 올바르지 않습니다.',
@@ -76,6 +78,15 @@ class KcpPayController {
         });
       }
 
+      const stockCheck = await cartController.validateCheckoutItems(mbId, cartIds);
+      if (!stockCheck.ok) {
+        return res.status(400).json({
+          success: false,
+          message: stockCheck.message,
+          issues: stockCheck.issues,
+        });
+      }
+
       const cartPrice = carts.reduce((sum, row) => sum + Number(row.ct_price || 0), 0);
       const safeShippingCost = Number(shippingCost || 0);
       const safeCouponDiscount = Number(couponDiscount || 0);
@@ -92,6 +103,20 @@ class KcpPayController {
           message: '결제 금액 검증에 실패했습니다.',
           expected: computedFinalAmount,
           received: requestFinalAmount,
+        });
+      }
+
+      let checkoutCoupons = [];
+      try {
+        checkoutCoupons = await couponRepository.assertUsableCheckoutCoupons(
+          mbId,
+          couponRepository.parseCheckoutCoupons(req.body || {}),
+          safeCouponDiscount
+        );
+      } catch (couponErr) {
+        return res.status(400).json({
+          success: false,
+          message: couponErr.message || '쿠폰 검증에 실패했습니다.',
         });
       }
 
@@ -125,6 +150,7 @@ class KcpPayController {
         shippingCost: safeShippingCost,
         couponDiscount: safeCouponDiscount,
         usedPoint: safeUsedPoint,
+        coupons: checkoutCoupons,
       });
 
       const callbackUrl = this.resolveCallbackUrl(req, config.callbackUrl);
@@ -425,6 +451,7 @@ class KcpPayController {
           ipAddress: req.ip,
           settleCase: settleInfo.settleCase,
           otherPayType: settleInfo.otherPayType,
+          coupons: pending.request.coupons || [],
         });
       } catch (dbError) {
         const cancel = await this.tryAutoCancel({

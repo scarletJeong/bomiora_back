@@ -22,7 +22,9 @@ const CART_LIST_SELECT = `
          CAST(p.it_kind AS CHAR) AS product_it_kind,
          CAST(LEFT(IFNULL(p.it_supply_items, ''), 500) AS CHAR) AS product_it_supply_items,
          CAST(p.it_flutter_image_url AS CHAR) AS it_flutter_image_url,
-         CAST(p.it_img1 AS CHAR) AS it_img1
+         CAST(p.it_img1 AS CHAR) AS it_img1,
+         CAST(p.it_soldout AS CHAR) AS product_it_soldout,
+         CAST(p.it_use AS CHAR) AS product_it_use
 `;
 
 class CartRepository {
@@ -31,7 +33,8 @@ class CartRepository {
       `SELECT it_id, it_name, it_subject, it_kind, it_brand, it_maker,
               it_img1, it_flutter_image_url, it_mb_inf, it_inf_price,
               it_sc_type, it_sc_method, it_sc_price, it_sc_minimum, it_sc_qty,
-              it_price, it_point_type, it_point, it_supply_point
+              it_price, it_point_type, it_point, it_supply_point,
+              it_soldout, it_use
        FROM bomiora_shop_item_new WHERE it_id = ? LIMIT 1`,
       [itId]
     );
@@ -98,7 +101,8 @@ class CartRepository {
       `SELECT it_id, it_name, it_subject, it_kind, it_brand, it_maker,
               it_img1, it_flutter_image_url, it_mb_inf, it_inf_price,
               it_sc_type, it_sc_method, it_sc_price, it_sc_minimum, it_sc_qty,
-              it_price, it_point_type, it_point, it_supply_point
+              it_price, it_point_type, it_point, it_supply_point,
+              it_soldout, it_use, it_stock_qty
        FROM bomiora_shop_item_new
        WHERE it_id IN (?)`,
       [ids]
@@ -259,6 +263,69 @@ class CartRepository {
     } finally {
       connection.release();
     }
+  }
+
+  async findCheckoutCarts(mbId, ctIds = []) {
+    const ids = [...new Set(
+      (Array.isArray(ctIds) ? ctIds : [])
+        .map((id) => Number(id))
+        .filter((id) => Number.isFinite(id) && id > 0)
+    )];
+    if (!ids.length) return [];
+
+    const [rows] = await pool.query(
+      `SELECT
+         c.ct_id,
+         CAST(c.mb_id AS CHAR) AS mb_id,
+         CAST(c.it_id AS CHAR) AS it_id,
+         CAST(c.it_name AS CHAR) AS it_name,
+         c.ct_qty, c.ct_price, c.io_type, c.io_price,
+         CAST(c.io_id AS CHAR) AS io_id,
+         CAST(c.parent AS CHAR) AS parent,
+         CAST(c.ct_status AS CHAR) AS ct_status,
+         p.it_price,
+         CAST(p.it_soldout AS CHAR) AS it_soldout,
+         CAST(p.it_use AS CHAR) AS it_use,
+         p.it_stock_qty,
+         CAST(p.it_name AS CHAR) AS product_name
+       FROM bomiora_shop_cart c
+       LEFT JOIN bomiora_shop_item_new p ON p.it_id = c.it_id
+       WHERE c.mb_id = ? AND c.ct_id IN (?)`,
+      [mbId, ids]
+    );
+    return rows;
+  }
+
+  async findOptionsByKeys(pairs = []) {
+    const unique = [];
+    const seen = new Set();
+    for (const pair of pairs) {
+      const itId = String(pair.itId || '').trim();
+      const ioId = String(pair.ioId || '').trim();
+      if (!itId || !ioId) continue;
+      const key = `${itId}\t${ioId}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      unique.push({ itId, ioId });
+    }
+    if (!unique.length) return new Map();
+
+    const placeholders = unique.map(() => '(?, ?)').join(', ');
+    const params = unique.flatMap((p) => [p.itId, p.ioId]);
+    const [rows] = await pool.query(
+      `SELECT
+         CAST(it_id AS CHAR) AS it_id,
+         CAST(io_id AS CHAR) AS io_id,
+         io_type, io_price, io_stock_qty, io_use
+       FROM bomiora_shop_item_option
+       WHERE (it_id, io_id) IN (${placeholders})`,
+      params
+    );
+    const map = new Map();
+    for (const row of rows) {
+      map.set(`${String(row.it_id).trim()}\t${String(row.io_id).trim()}`, row);
+    }
+    return map;
   }
 }
 

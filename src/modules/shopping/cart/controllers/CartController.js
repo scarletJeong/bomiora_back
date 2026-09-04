@@ -268,8 +268,26 @@ class CartController {
       hp_doc_name: attachReservation ? hpDocName : null,
       doctor_name: attachReservation ? hpDocName : null,
       reservation_date: attachReservation ? hpRsvtDate : null,
-      reservation_time: attachReservation ? reservationTimeRange : null
+      reservation_time: attachReservation ? reservationTimeRange : null,
+      ...this.buildAvailabilityFields(cart, product),
     };
+  }
+
+  buildAvailabilityFields(cart, product) {
+    const soldout = this.bufferToString(
+      cart.product_it_soldout ?? product?.it_soldout
+    );
+    const use = this.bufferToString(cart.product_it_use ?? product?.it_use);
+    if (soldout === '1') {
+      return { is_available: false, unavailable_reason: '품절' };
+    }
+    if (use && use !== '1') {
+      return { is_available: false, unavailable_reason: '판매중지' };
+    }
+    if (!cart.it_id && !product) {
+      return { is_available: false, unavailable_reason: '판매중지' };
+    }
+    return { is_available: true, unavailable_reason: null };
   }
 
   normalizeParent(value) {
@@ -647,6 +665,45 @@ class CartController {
     } catch (error) {
       console.error('[getCart]', error);
       return res.status(500).json({ success: false, message: '장바구니 조회 중 오류가 발생했습니다.', error: error.message });
+    }
+  }
+
+  parseCtIds(raw) {
+    const source = Array.isArray(raw) ? raw : String(raw || '').split(',');
+    return [...new Set(
+      source
+        .map((id) => Number(String(id).trim()))
+        .filter((id) => Number.isFinite(id) && id > 0)
+    )];
+  }
+
+  async getShippingCost(req, res) {
+    try {
+      const mbId = String(req.query.mb_id || req.body?.mb_id || '').trim();
+      if (!mbId) {
+        return res.status(400).json({ success: false, message: 'mb_id가 필요합니다.' });
+      }
+      const ctStatus = this.normalizeCartStatus(
+        req.query.ct_status || req.body?.ct_status
+      );
+      const ctIds = this.parseCtIds(req.query.ct_ids || req.body?.ct_ids);
+      if (!ctIds.length) {
+        return res.json({ success: true, shipping_cost: 0 });
+      }
+
+      const carts = await cartRepository.findByMbIdAndStatus(mbId, ctStatus);
+      const selected = carts.filter((c) => ctIds.includes(Number(c.ct_id)));
+      return res.json({
+        success: true,
+        shipping_cost: this.calculateShippingCost(selected),
+      });
+    } catch (error) {
+      console.error('[getShippingCost]', error);
+      return res.status(500).json({
+        success: false,
+        message: '배송비 계산 중 오류가 발생했습니다.',
+        error: error.message,
+      });
     }
   }
 
@@ -1169,6 +1226,185 @@ class CartController {
         message: '장바구니 추천 상품 조회 중 오류가 발생했습니다.',
         error: error.message,
         data: []
+      });
+    }
+  }
+
+  isUnlimitedStock(qty) {
+    return qty >= 99999;
+  }
+
+  expectedCheckoutLineAmount(cart, option) {
+    const qty = Math.max(this.toInt(cart.ct_qty, 1), 1);
+    const productPrice = this.toInt(cart.it_price, 0);
+    const ioPrice = option != null
+      ? this.toInt(option.io_price, this.toInt(cart.io_price, 0))
+      : this.toInt(cart.io_price, 0);
+    const ioType = this.toInt(cart.io_type, 0);
+    const isSupply = Boolean(String(this.bufferToString(cart.parent) || '').trim());
+
+    if (ioType === 1 || ioType === 2 || ioType === 3) {
+      const base = isSupply ? productPrice * qty : 0;
+      return base + ioPrice * qty;
+    }
+    return (productPrice + ioPrice) * qty;
+  }
+
+  async validateCheckoutItems(mbId, ctIds = []) {
+    const id = String(mbId || '').trim();
+    const ids = this.parseCtIds(ctIds);
+    if (!id) {
+      return { ok: false, message: 'mb_id가 필요합니다.', issues: [], goods_amount: 0 };
+    }
+    if (!ids.length) {
+      return { ok: false, message: '결제할 상품이 없습니다.', issues: [], goods_amount: 0 };
+    }
+
+    const carts = await cartRepository.findCheckoutCarts(id, ids);
+    if (carts.length !== ids.length) {
+      return {
+        ok: false,
+        message: '장바구니에 없는 상품이 포함되어 있습니다. 다시 확인해 주세요.',
+        issues: [],
+        goods_amount: 0,
+      };
+    }
+
+    const optionKeys = carts
+      .map((c) => ({
+        itId: this.bufferToString(c.it_id),
+        ioId: this.bufferToString(c.io_id),
+      }))
+      .filter((p) => p.itId && p.ioId);
+    const optionMap = await cartRepository.findOptionsByKeys(optionKeys);
+
+    const qtyByStockKey = new Map();
+    for (const cart of carts) {
+      const itId = String(this.bufferToString(cart.it_id) || '').trim();
+      const ioId = String(this.bufferToString(cart.io_id) || '').trim();
+      const key = `${itId}\t${ioId}`;
+      qtyByStockKey.set(key, (qtyByStockKey.get(key) || 0) + this.toInt(cart.ct_qty, 1));
+    }
+
+    const issues = [];
+    let goodsAmount = 0;
+
+    for (const cart of carts) {
+      const itId = String(this.bufferToString(cart.it_id) || '').trim();
+      const ioId = String(this.bufferToString(cart.io_id) || '').trim();
+      const name = String(
+        this.bufferToString(cart.it_name) ||
+          this.bufferToString(cart.product_name) ||
+          '상품'
+      ).trim();
+      const option = ioId ? optionMap.get(`${itId}\t${ioId}`) || null : null;
+      const soldout = String(this.bufferToString(cart.it_soldout) || '').trim();
+      const use = String(this.bufferToString(cart.it_use) || '').trim();
+
+      if (!itId || cart.it_price == null) {
+        issues.push({ ct_id: cart.ct_id, it_id: itId, reason: 'unavailable', message: `${name}은(는) 판매할 수 없습니다.` });
+        continue;
+      }
+      if (soldout === '1') {
+        issues.push({ ct_id: cart.ct_id, it_id: itId, reason: 'soldout', message: `${name}은(는) 품절되었습니다.` });
+        continue;
+      }
+      if (use && use !== '1') {
+        issues.push({ ct_id: cart.ct_id, it_id: itId, reason: 'unavailable', message: `${name}은(는) 판매중지되었습니다.` });
+        continue;
+      }
+      if (ioId && (!option || String(option.io_use) === '0')) {
+        issues.push({ ct_id: cart.ct_id, it_id: itId, reason: 'soldout', message: `${name} 옵션은 구매할 수 없습니다.` });
+        continue;
+      }
+
+      const needQty = qtyByStockKey.get(`${itId}\t${ioId}`) || this.toInt(cart.ct_qty, 1);
+      const rawStock = ioId ? option?.io_stock_qty : cart.it_stock_qty;
+      if (rawStock != null && String(rawStock).trim() !== '') {
+        const stock = this.toInt(rawStock, 0);
+        if (!this.isUnlimitedStock(stock) && needQty > stock) {
+          issues.push({
+            ct_id: cart.ct_id,
+            it_id: itId,
+            reason: 'stock',
+            message: `${name}의 재고가 부족합니다. (현재고 ${stock}개)`,
+          });
+          continue;
+        }
+      }
+
+      const expected = this.expectedCheckoutLineAmount(cart, option);
+      const stored = this.cartLineAmount(cart);
+      if (expected !== stored) {
+        issues.push({
+          ct_id: cart.ct_id,
+          it_id: itId,
+          reason: 'price',
+          message: `${name}의 가격이 변경되었습니다. 장바구니를 다시 확인해 주세요.`,
+          expected,
+          stored,
+        });
+        continue;
+      }
+      goodsAmount += stored;
+    }
+
+    if (issues.length) {
+      return {
+        ok: false,
+        message: issues[0].message,
+        issues,
+        goods_amount: goodsAmount,
+      };
+    }
+
+    return { ok: true, message: 'ok', issues: [], goods_amount: goodsAmount };
+  }
+
+  async validateCheckout(req, res) {
+    try {
+      const mbId = String(req.body?.mb_id || req.query?.mb_id || '').trim();
+      const ctIds = this.parseCtIds(req.body?.ct_ids || req.body?.cart_ids || req.query?.ct_ids);
+      const expectedGoods = req.body?.expected_goods_amount;
+      const result = await this.validateCheckoutItems(mbId, ctIds);
+
+      if (result.ok && expectedGoods != null && expectedGoods !== '') {
+        const clientAmount = this.toInt(expectedGoods, -1);
+        if (clientAmount !== result.goods_amount) {
+          return res.status(400).json({
+            success: false,
+            message: '상품 금액이 변경되었습니다. 장바구니를 다시 확인해 주세요.',
+            issues: [{
+              reason: 'price',
+              message: '상품 금액이 변경되었습니다. 장바구니를 다시 확인해 주세요.',
+              expected: result.goods_amount,
+              stored: clientAmount,
+            }],
+            goods_amount: result.goods_amount,
+          });
+        }
+      }
+
+      if (!result.ok) {
+        return res.status(400).json({
+          success: false,
+          message: result.message,
+          issues: result.issues,
+          goods_amount: result.goods_amount,
+        });
+      }
+
+      return res.json({
+        success: true,
+        message: '결제 가능한 상품입니다.',
+        goods_amount: result.goods_amount,
+      });
+    } catch (error) {
+      console.error('[validateCheckout]', error);
+      return res.status(500).json({
+        success: false,
+        message: '결제 전 상품 확인 중 오류가 발생했습니다.',
+        error: error.message,
       });
     }
   }
