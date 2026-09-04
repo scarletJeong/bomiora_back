@@ -39,8 +39,6 @@ router.get('/reviewed-by-orders', (req, res) =>
 );
 router.get('/main/best', (req, res) => reviewController.getMainReviewsBest(req, res));
 router.get('/main', (req, res) => reviewController.getMainReviews(req, res));
-router.get('/:isId/helpful/check', (req, res) => reviewController.checkUserHelpful(req, res));
-router.post('/:isId/helpful', (req, res) => reviewController.incrementReviewHelpful(req, res));
 router.get('/:isId', (req, res) => reviewController.getReviewById(req, res));
 router.put('/:isId', (req, res) => reviewController.updateReview(req, res));
 router.delete('/:isId', (req, res) => reviewController.deleteReview(req, res));

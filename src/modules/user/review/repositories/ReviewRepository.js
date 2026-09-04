@@ -449,20 +449,6 @@ ${JOIN_SHOP_ITEM_NEW_SELECT}
     await Promise.all([...toRefresh].map((id) => this.refreshItemReviewAggregates(id)));
   }
 
-  async hasHelpful(itId, reviewId, mbId) {
-    const [rows] = await pool.query(
-      'SELECT COUNT(*) AS count FROM bomiora_shop_item_use_good WHERE it_id = ? AND is_id = ? AND mb_id = ?',
-      [itId, reviewId, mbId]
-    );
-    return rows[0].count > 0;
-  }
-
-  async addHelpful(itId, reviewId, mbId) {
-    await pool.query(
-      'INSERT INTO bomiora_shop_item_use_good (it_id, is_id, mb_id, bg_flag, bg_datetime) VALUES (?, ?, ?, ?, NOW())',
-      [itId, reviewId, mbId, 'good']
-    );
-  }
 }
 
 module.exports = new ReviewRepository();

@@ -807,34 +807,6 @@ class ReviewController {
     }
   }
 
-  async incrementReviewHelpful(req, res) {
-    try {
-      const isId = Number(req.params.isId);
-      const mbId = req.body.mbId;
-      if (!mbId || !String(mbId).trim()) return res.json({ success: false, message: '회원 ID가 필요합니다.' });
-
-      const row = await reviewRepository.findById(isId);
-      if (!row) return res.json({ success: false, message: '리뷰를 찾을 수 없습니다.' });
-
-      const already = await reviewRepository.hasHelpful(row.it_id, isId, mbId);
-      if (already) {
-        return res.json({ success: false, message: '이미 추천 하신 리뷰 입니다.', isGood: row.is_good });
-      }
-
-      await reviewRepository.addHelpful(row.it_id, isId, mbId);
-      const nextGood = Number(row.is_good || 0) + 1;
-      await reviewRepository.updateById(isId, { is_good: nextGood });
-      return res.json({ success: true, message: '도움이 돼요가 증가했습니다.', isGood: nextGood });
-    } catch (error) {
-      return res.json({ success: false, message: `처리 중 오류가 발생했습니다: ${error.message}` });
-    }
-  }
-
-  async checkUserHelpful(req, res) {
-    const hasHelpful = await reviewRepository.hasHelpful(req.query.itId, Number(req.params.isId), req.query.mbId);
-    return res.json({ hasHelpful });
-  }
-
   async checkReviewExists(req, res) {
     try {
       const mbId = String(req.query.mbId || '').trim();
