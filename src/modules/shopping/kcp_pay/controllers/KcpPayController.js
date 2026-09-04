@@ -3,7 +3,7 @@ const kcpPayStore = require('../services/kcpPayStore');
 const kcpPayRepository = require('../repositories/KcpPayRepository');
 const kcpApprovalService = require('../services/kcpApprovalService');
 const cartController = require('../../cart/controllers/CartController');
-const couponRepository = require('../../user/coupon/repositories/CouponRepository');
+const couponRepository = require('../../../user/coupon/repositories/CouponRepository');
 
 const KCP_ERROR_MESSAGE_MAP = {
   '3001': '결제 요청 정보가 올바르지 않습니다.',
