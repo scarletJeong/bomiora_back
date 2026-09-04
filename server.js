@@ -92,6 +92,7 @@ app.use('/api/health/blood-sugar', require('./src/modules/health/blood_sugar/rou
 app.use('/api/health/blood-pressure', require('./src/modules/health/blood_pressure/routes/bloodPressureRoutes'));
 app.use('/api/health/heart-rate', require('./src/modules/health/heart_rate/routes/heartRateRoutes'));
 app.use('/api/health/menstrual-cycle', require('./src/modules/health/menstrual_cycle/routes/menstrualCycleRoutes'));
+app.use('/api/health/sync', require('./src/modules/health/sync/routes/healthSyncRoutes'));
 app.use('/api/steps', require('./src/modules/health/steps/routes/stepsRoutes'));
 app.use('/api/health/food', require('./src/modules/health/food/routes/foodRoutes'));
 app.use('/api/qa', require('./src/modules/user/qa/routes/qaRoutes'));
