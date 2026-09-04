@@ -326,6 +326,46 @@ class StepsRepository {
     return arr;
   }
 
+  /**
+   * 건강앱 구간 걸음 UPSERT.
+   * UNIQUE(mb_id, provider, interval_start, interval_end)
+   */
+  async upsertBmStepsWindow({
+    mbId,
+    steps,
+    intervalStart,
+    intervalEnd,
+    provider,
+    externalUid = null
+  }) {
+    const [result] = await pool.query(
+      `INSERT INTO bm_steps
+        (mb_id, steps, interval_start, interval_end, provider, external_uid, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())
+       ON DUPLICATE KEY UPDATE
+         steps = VALUES(steps),
+         external_uid = COALESCE(VALUES(external_uid), external_uid),
+         updated_at = NOW()`,
+      [mbId, steps, intervalStart, intervalEnd, provider, externalUid]
+    );
+    return {
+      inserted: result.affectedRows === 1,
+      updated: result.affectedRows === 2
+    };
+  }
+
+  async deleteBmStepsForCalendarDay(mbId, provider, dayStart, dayEndExclusive) {
+    const [result] = await pool.query(
+      `DELETE FROM bm_steps
+       WHERE mb_id = ?
+         AND provider = ?
+         AND interval_start >= ?
+         AND interval_start < ?`,
+      [mbId, provider, dayStart, dayEndExclusive]
+    );
+    return result.affectedRows || 0;
+  }
+
   async findTopByUserIdOrderByRecordDateDesc(userId) {
     const [rows] = await pool.query(
       'SELECT * FROM steps_records WHERE user_id = ? ORDER BY record_date DESC LIMIT 1',
