@@ -67,9 +67,7 @@ function parseTargetIds(raw) {
   return s
     .split(/[/|,\s]+/)
     .map((x) => x.trim())
-    .filter((x) => x.length > 0)
-    .map((x) => parseInt(x, 10))
-    .filter((n) => !Number.isNaN(n) && n > 0);
+    .filter((x) => x.length > 0);
 }
 
 class CouponRepository {
@@ -121,8 +119,7 @@ class CouponRepository {
       const cpId = String(row.cp_id || '').trim();
       if (cpId) usedMap.set(cpId, { cl_datetime: row.cl_datetime || null, od_id: row.od_id });
     }
-    // 이름 조인 없이 라벨만 (추가 SELECT 제거 — 마이페이지 가용 쿠폰 병목)
-    this.attachAppliedProductLabelsFast(coupons);
+    await this.attachAppliedProductLabels(coupons);
     return { coupons, usedMap };
   }
 
@@ -185,14 +182,16 @@ class CouponRepository {
     const m = Number(c.cp_method);
     const ids = parseTargetIds(c.cp_target);
     if (m === 0) {
-      const names = ids.map((id) => itemMap[id]).filter(Boolean);
-      const body = names.length ? names.join(', ') : String(c.cp_target || '').trim() || '지정 상품';
-      return `적용상품: ${body} 상품할인`;
+      const names = ids.map((id) => itemMap[String(id)]).filter(Boolean);
+      const body = names.length ? names.join(', ') : '지정 상품';
+      return `적용상품: ${body}`;
     }
     if (m === 1) {
-      const names = ids.map((id) => catMap[id]).filter(Boolean);
-      const body = names.length ? names.join(', ') : String(c.cp_target || '').trim() || '지정 카테고리';
-      return `적용상품: ${body} 상품할인`;
+      const names = ids.map((id) => catMap[String(id)]).filter(Boolean);
+      const body = names.length
+        ? names.map((name) => `${name} 상품 전체`).join(', ')
+        : '지정 카테고리 상품 전체';
+      return `적용상품: ${body}`;
     }
     if (m === 2) {
       return '적용상품: 주문 금액 할인';
@@ -227,7 +226,7 @@ class CouponRepository {
         caIds
       );
       cats.forEach((row) => {
-        catMap[row.ca_id] = row.ca_name;
+        catMap[String(row.ca_id)] = String(row.ca_name || '').trim();
       });
     }
     if (itIds.length) {
@@ -237,7 +236,7 @@ class CouponRepository {
         itIds
       );
       items.forEach((row) => {
-        itemMap[row.it_id] = row.it_name;
+        itemMap[String(row.it_id)] = String(row.it_name || '').trim();
       });
     }
     for (const r of rows) {
