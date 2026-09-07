@@ -4,19 +4,13 @@ const { TtlCache } = require('../../../../utils/ttlCache');
 const bannerCache = new TtlCache(90_000);
 
 class BannerController {
-  toMap(row, platform) {
-    const usePc = platform === 'pc';
-    const imagePath = usePc ? row.pc_image : row.mo_image;
-    const fallbackPath = usePc ? row.mo_image : row.pc_image;
-    const image = String(imagePath || '').trim() || String(fallbackPath || '').trim();
-
+  toMap(row) {
     return {
       id: row.id,
       title: String(row.title || '').trim(),
       linkUrl: String(row.link_url || '').trim(),
-      imageUrl: image,
-      pcImage: String(row.pc_image || '').trim(),
-      moImage: String(row.mo_image || '').trim(),
+      imageUrl: String(row.image_path || '').trim(),
+      imagePath: String(row.image_path || '').trim(),
       placement: String(row.placement || 'main').trim(),
       targetKind: String(row.target_kind || 'all').trim(),
       sortOrder: Number(row.sort_order || 0),
@@ -37,23 +31,20 @@ class BannerController {
 
   async getActiveList(req, res) {
     try {
-      const platform = String(req.query.platform || 'mobile').toLowerCase() === 'pc'
-        ? 'pc'
-        : 'mobile';
       const placement = this.resolvePlacement(req.query.placement);
       const targetKind = this.resolveTargetKind(
         req.query.target_kind ?? req.query.targetKind,
         placement
       );
 
-      const cacheKey = `banner:${platform}:${placement}:${targetKind || ''}`;
+      const cacheKey = `banner:${placement}:${targetKind || ''}`;
       const payload = await bannerCache.getOrSet(cacheKey, async () => {
         const rows = await bannerRepository.findActiveList({
           placement,
           targetKind,
         });
         const data = rows
-          .map((row) => this.toMap(row, platform))
+          .map((row) => this.toMap(row))
           .filter((row) => row.imageUrl.length > 0);
         return { success: true, data };
       });

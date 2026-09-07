@@ -20,8 +20,7 @@ class BannerRepository {
           id,
           title,
           link_url,
-          pc_image,
-          mo_image,
+          image_path,
           placement,
           target_kind,
           sort_order
