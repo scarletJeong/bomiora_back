@@ -69,16 +69,20 @@ class AnnouncementController {
       }
 
       const payload = await announcementDetailCache.getOrSet(`detail:${id}`, async () => {
-        // 상세 본문 1쿼리만 — prev/next는 목록에서 이동 (Cafe24 RTT 절약)
         const row = await announcementRepository.findById(id);
         if (!row) {
           return { success: false, status: 404, message: '공지사항을 찾을 수 없습니다.' };
         }
+        const adjacent = await announcementRepository.findAdjacentByIdFast(id, row);
         return {
           success: true,
           data: this.toMap(row),
-          prev: null,
-          next: null,
+          prev: adjacent.prev
+            ? { id: adjacent.prev.id, title: this.normalizeText(adjacent.prev.title) }
+            : null,
+          next: adjacent.next
+            ? { id: adjacent.next.id, title: this.normalizeText(adjacent.next.title) }
+            : null,
         };
       });
 
