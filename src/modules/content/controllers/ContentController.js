@@ -1,4 +1,5 @@
 const contentRepository = require('../repositories/ContentRepository');
+const wishRepository = require('../../shopping/wish/repositories/WishRepository');
 const { TtlCache } = require('../../../utils/ttlCache');
 
 const contentListCache = new TtlCache(180_000);
@@ -216,7 +217,7 @@ class ContentController {
       const mbIdQ = String(req.query.mb_id || '').trim();
       const pfNoQ = this.parsePfNo(req.query.pf_no);
 
-      const [payload, userRecommended] = await Promise.all([
+      const [payload, userRecommended, isWished] = await Promise.all([
         contentListCache.getOrSet(`detailFull:${id}`, async () => {
           const [row, adjacent] = await Promise.all([
             contentRepository.findById(id),
@@ -246,6 +247,9 @@ class ContentController {
               30_000
             )
           : Promise.resolve(undefined),
+        mbIdQ
+          ? wishRepository.existsByMbIdAndItId(mbIdQ, String(id))
+          : Promise.resolve(undefined),
       ]);
 
       if (!payload) {
@@ -260,6 +264,7 @@ class ContentController {
       data.view_count = Number(data.view_count || 0) + 1;
       if (mbIdQ) {
         data.user_recommended = userRecommended;
+        data.is_wished = !!isWished;
       }
 
       res.set('Cache-Control', 'public, max-age=30');
