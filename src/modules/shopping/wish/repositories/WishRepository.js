@@ -9,6 +9,30 @@ class WishRepository {
     return rows.length ? rows[0] : null;
   }
 
+  async toggleByMbIdAndItId({
+    mbId,
+    itId,
+    wiIp,
+    wiItKind,
+    infCode,
+  }) {
+    const [del] = await pool.query(
+      'DELETE FROM bomiora_shop_wish WHERE mb_id = ? AND it_id = ? LIMIT 1',
+      [mbId, itId]
+    );
+    if (del.affectedRows > 0) {
+      return { isWished: false };
+    }
+    const kind = wiItKind != null ? String(wiItKind).trim() : '';
+    const code = infCode != null ? String(infCode).trim() : '';
+    await pool.query(
+      `INSERT INTO bomiora_shop_wish (mb_id, it_id, wi_it_kind, inf_code, wi_time, wi_ip)
+       VALUES (?, ?, ?, ?, NOW(), ?)`,
+      [mbId, itId, kind, code, wiIp || '127.0.0.1']
+    );
+    return { isWished: true };
+  }
+
   async insertWish({ mbId, itId, wiIp, wiItKind, infCode }) {
     const kind = wiItKind != null ? String(wiItKind).trim() : '';
     const code = infCode != null ? String(infCode).trim() : '';

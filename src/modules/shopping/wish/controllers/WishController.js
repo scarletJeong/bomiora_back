@@ -41,36 +41,24 @@ class WishController {
         return res.status(400).json({ success: false, message: 'mb_id와 it_id가 필요합니다.' });
       }
 
-      const existing = await wishRepository.findByMbIdAndItId(mbId, itId);
-      if (existing) {
-        await wishRepository.deleteById(existing.wi_id);
-        this.invalidateList(mbId);
-        return res.json({
-          success: true,
-          is_wished: false,
-          message: '찜하기가 제거되었습니다.'
-        });
-      }
-
-      /** 찜 유형: prescription | general | content (콘텐츠는 body로 명시) */
       const explicit = String(
         req.body.wi_it_kind || req.body.item_kind || req.body.wish_kind || ''
       )
         .trim()
         .toLowerCase();
       let wiItKind = '';
-      if (explicit === 'content') {
-        wiItKind = 'content';
-      } else if (explicit === 'prescription' || explicit === 'general') {
+      if (explicit === 'content' || explicit === 'prescription' || explicit === 'general') {
         wiItKind = explicit;
       } else {
         try {
           const pRow = await wishRepository.findProductKindByItId(itId);
           if (pRow) {
             const k = this.bufferToString(pRow.it_kind || '').trim().toLowerCase();
-            if (k === 'prescription') wiItKind = 'prescription';
-            else if (k === 'general') wiItKind = 'general';
-            else wiItKind = k || 'general';
+            if (k === 'prescription' || k === 'general' || k === 'content') {
+              wiItKind = k;
+            } else {
+              wiItKind = k || 'general';
+            }
           } else {
             wiItKind = 'general';
           }
@@ -78,18 +66,19 @@ class WishController {
           wiItKind = 'general';
         }
       }
-      await wishRepository.insertWish({
+
+      const result = await wishRepository.toggleByMbIdAndItId({
         mbId,
         itId,
         wiIp: req.ip,
         wiItKind,
-        infCode: String(req.body.inf_code || req.body.infcode || req.body.in_id || '').trim()
+        infCode: String(req.body.inf_code || req.body.infcode || req.body.in_id || '').trim(),
       });
       this.invalidateList(mbId);
       return res.json({
         success: true,
-        is_wished: true,
-        message: '찜하기가 추가되었습니다.'
+        is_wished: result.isWished,
+        message: result.isWished ? '찜하기가 추가되었습니다.' : '찜하기가 제거되었습니다.',
       });
     } catch (error) {
       return res.status(500).json({ success: false, message: '찜하기 처리 중 오류가 발생했습니다.' });
@@ -122,7 +111,10 @@ class WishController {
             const itIdKey = this.bufferToString(w.it_id || '').trim();
             const kindFromWish = this.bufferToString(w.wi_it_kind || '').trim();
             const kindFromProduct = this.bufferToString(w.it_kind || '').trim();
-            const productKind = kindFromWish || kindFromProduct || '';
+            const wishIsContent = kindFromWish.toLowerCase() === 'content';
+            const productKind = wishIsContent
+              ? 'content'
+              : (kindFromProduct || kindFromWish || '');
             const hasProduct = !!(w.it_name || w.it_img1 || w.it_flutter_image_url);
 
             const row = {
