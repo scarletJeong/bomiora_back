@@ -480,7 +480,7 @@ class ProductController {
         }
       );
 
-      res.set('Cache-Control', 'public, max-age=30');
+      res.set('Cache-Control', 'public, max-age=120');
       return res.json(payload);
     } catch (error) {
       return res.status(500).json({

@@ -152,8 +152,10 @@ class ReviewController {
     return s;
   }
 
-  /** bomiora_shop_item_new 조인 it_img1~9 중 첫 유효값 → 앱 productImage */
+  /** bomiora_shop_item_new 조인 썸네일 → 앱 productImage */
   _firstShopItemImage(row) {
+    const flutter = this.trimSqlText(row.it_flutter_image_url);
+    if (flutter) return flutter;
     for (let i = 1; i <= 9; i += 1) {
       const t = this.trimSqlText(row[`it_img${i}`]);
       if (t) return t;
@@ -195,11 +197,23 @@ class ReviewController {
     return `other:${k}`;
   }
 
+  _storedImageToUrl(v) {
+    let s = this.trimSqlText(v);
+    if (!s) return '';
+    if (s.includes('{type:') || s.includes('"type":"Buffer"')) return '';
+    const img = /<img[^>]+src\s*=\s*["']([^"']+)["']/i.exec(s);
+    if (img && img[1]) s = String(img[1]).trim();
+    s = s.replace(/&amp;/gi, '&').trim();
+    return s;
+  }
+
   toReviewResponse(row) {
     const images = [
       row.is_img1, row.is_img2, row.is_img3, row.is_img4, row.is_img5,
       row.is_img6, row.is_img7, row.is_img8, row.is_img9, row.is_img10
-    ].filter((x) => x);
+    ]
+      .map((x) => this._storedImageToUrl(x))
+      .filter(Boolean);
 
     /** total_is_score 가 null 일 때만 효과~편리함 평균 사용 (is_score1~4 는 응답에 그대로) */
     const totalNum = this._parseStoredTotal(row);

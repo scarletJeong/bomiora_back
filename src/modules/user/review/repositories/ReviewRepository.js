@@ -5,19 +5,32 @@ const pool = require('../../../../config/database');
  */
 
 /** bomiora_shop_item_use r LEFT JOIN bomiora_shop_item_new n 시 상품 메타·썸네일 */
-/** 상품 쪽 썸네일(it_img1~9). DB에 it_img10 컬럼이 있으면 아래 한 줄 추가하면 됨. */
+/** 상품 쪽 썸네일. 목록에 is_img BLOB 은 넣지 않는다. */
 const JOIN_SHOP_ITEM_NEW_SELECT = `
               COALESCE(n.it_name, n.it_subject) AS it_name,
               n.it_kind AS it_kind,
+              n.it_flutter_image_url AS it_flutter_image_url,
               n.it_img1 AS it_img1,
               n.it_img2 AS it_img2,
-              n.it_img3 AS it_img3,
-              n.it_img4 AS it_img4,
-              n.it_img5 AS it_img5,
-              n.it_img6 AS it_img6,
-              n.it_img7 AS it_img7,
-              n.it_img8 AS it_img8,
-              n.it_img9 AS it_img9`;
+              n.it_img3 AS it_img3`;
+
+const PRODUCT_REVIEW_LIST_COLUMNS = `
+           r.is_id,
+           CAST(r.it_id AS CHAR) AS it_id,
+           CAST(r.mb_id AS CHAR) AS mb_id,
+           CAST(r.is_name AS CHAR) AS is_name,
+           r.is_time,
+           r.is_confirm,
+           r.is_score1, r.is_score2, r.is_score3, r.is_score4, r.total_is_score,
+           CAST(r.is_rvkind AS CHAR) AS is_rvkind,
+           r.is_recommend, r.is_good, r.cz_download,
+           CAST(LEFT(IFNULL(r.is_positive_review_text, ''), 800) AS CHAR) AS is_positive_review_text,
+           CAST(LEFT(IFNULL(r.is_negative_review_text, ''), 800) AS CHAR) AS is_negative_review_text,
+           CAST(LEFT(IFNULL(r.is_more_review_text, ''), 400) AS CHAR) AS is_more_review_text,
+           CAST(r.is_img1 AS CHAR) AS is_img1,
+           CAST(r.is_img2 AS CHAR) AS is_img2,
+           CAST(r.is_img3 AS CHAR) AS is_img3,
+           CAST(r.od_id AS CHAR) AS od_id`;
 
 class ReviewRepository {
   async existsByMbIdAndOdId(mbId, odId) {
@@ -277,7 +290,8 @@ ${JOIN_SHOP_ITEM_NEW_SELECT}
         params
       ),
       pool.query(
-        `SELECT r.*,
+        `SELECT
+${PRODUCT_REVIEW_LIST_COLUMNS},
 ${JOIN_SHOP_ITEM_NEW_SELECT}
          FROM bomiora_shop_item_use r
          LEFT JOIN bomiora_shop_item_new n ON n.it_id = r.it_id

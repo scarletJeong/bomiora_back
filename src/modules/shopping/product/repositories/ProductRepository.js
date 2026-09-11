@@ -183,20 +183,29 @@ class ProductRepository {
     if (!kind) return [];
 
     const [rows] = await pool.query(
-      `SELECT DISTINCT c.ca_id, c.ca_name, c.ca_order
+      `SELECT c.ca_id, c.ca_name, c.ca_order
          FROM bomiora_shop_category c
-         INNER JOIN bomiora_shop_item_new i ON (
-           i.ca_id LIKE CONCAT(c.ca_id, '%')
-           OR i.ca_id2 LIKE CONCAT(c.ca_id, '%')
-           OR i.ca_id3 LIKE CONCAT(c.ca_id, '%')
-         )
+         INNER JOIN (
+           SELECT DISTINCT LEFT(ca_id, 2) AS ca2
+             FROM bomiora_shop_item_new
+            WHERE it_kind = ? AND it_use = '1'
+              AND ca_id IS NOT NULL AND ca_id <> ''
+           UNION
+           SELECT DISTINCT LEFT(ca_id2, 2)
+             FROM bomiora_shop_item_new
+            WHERE it_kind = ? AND it_use = '1'
+              AND ca_id2 IS NOT NULL AND ca_id2 <> ''
+           UNION
+           SELECT DISTINCT LEFT(ca_id3, 2)
+             FROM bomiora_shop_item_new
+            WHERE it_kind = ? AND it_use = '1'
+              AND ca_id3 IS NOT NULL AND ca_id3 <> ''
+         ) x ON x.ca2 = c.ca_id
         WHERE c.ca_use = '1'
           AND c.ca_menu_show = '1'
-          AND i.it_kind = ?
-          AND i.it_use = '1'
           AND CHAR_LENGTH(c.ca_id) = 2
         ORDER BY c.ca_order, c.ca_id`,
-      [kind]
+      [kind, kind, kind]
     );
     return rows;
   }
