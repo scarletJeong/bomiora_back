@@ -176,7 +176,7 @@ class HealthProfileCartRepository {
     if (!mbId || !itId || odId == null || odId === '') return null;
 
     const [rows] = await pool.query(
-      `SELECT hp_doc_name, hp_rsvt_date, hp_rsvt_stime, hp_rsvt_etime
+      `SELECT hp_doc_name, DATE_FORMAT(hp_rsvt_date, '%Y-%m-%d') AS hp_rsvt_date, hp_rsvt_stime, hp_rsvt_etime
        FROM bomiora_shop_health_profiles_cart
        WHERE mb_id = ? AND REPLACE(od_id, ',', '') = ? AND it_id = ?
        ORDER BY hp_no DESC
@@ -195,7 +195,7 @@ class HealthProfileCartRepository {
          CAST(it_id AS CHAR) AS it_id,
          REPLACE(REPLACE(CAST(od_id AS CHAR), ',', ''), ' ', '') AS od_id,
          CAST(hp_doc_name AS CHAR) AS hp_doc_name,
-         hp_rsvt_date,
+         DATE_FORMAT(hp_rsvt_date, '%Y-%m-%d') AS hp_rsvt_date,
          CAST(hp_rsvt_stime AS CHAR) AS hp_rsvt_stime,
          CAST(hp_rsvt_etime AS CHAR) AS hp_rsvt_etime
        FROM bomiora_shop_health_profiles_cart

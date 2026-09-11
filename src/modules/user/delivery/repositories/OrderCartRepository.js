@@ -54,6 +54,14 @@ class OrderCartRepository {
     );
     return rows;
   }
+
+  async markCancelledByOdId(odId) {
+    const [result] = await pool.query(
+      `UPDATE bomiora_shop_cart SET ct_status = '취소' WHERE od_id = ?`,
+      [odId]
+    );
+    return result.affectedRows;
+  }
 }
 
 module.exports = new OrderCartRepository();

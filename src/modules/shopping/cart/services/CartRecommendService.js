@@ -4,6 +4,24 @@ const MAX_PRODUCTS = 4;
 /** 상품 상세 / 바텀시트 추천 최대 개수 */
 const DETAIL_MAX_PRODUCTS = 3;
 
+/** 추천 카드용 — LONGTEXT 본문 제외 */
+const RECOMMEND_COLUMNS = `
+  CAST(it_id AS CHAR) AS it_id,
+  CAST(it_name AS CHAR) AS it_name,
+  CAST(LEFT(IFNULL(it_basic, ''), 120) AS CHAR) AS it_basic,
+  CAST(it_subject AS CHAR) AS it_subject,
+  it_price, it_cust_price,
+  CAST(ca_id AS CHAR) AS ca_id,
+  CAST(it_kind AS CHAR) AS it_kind,
+  it_type3, it_type4, it_type5, it_stock_qty,
+  it_use_avg, it_use_cnt,
+  CAST(it_flutter_image_url AS CHAR) AS it_flutter_image_url,
+  CAST(it_img1 AS CHAR) AS it_img1,
+  it_sc_type, it_sc_price, it_sc_minimum,
+  CAST(it_mb_inf AS CHAR) AS it_mb_inf,
+  CAST(it_related_products AS CHAR) AS it_related_products
+`;
+
 function bufferToString(value) {
   if (value == null) return '';
   if (typeof value === 'string') return value;
@@ -159,7 +177,7 @@ class CartRecommendService {
       : '';
     const params = ids.length ? [influencerId, ...ids] : [influencerId];
     const [rows] = await pool.query(
-      `SELECT *
+      `SELECT ${RECOMMEND_COLUMNS}
        FROM bomiora_shop_item_new
        WHERE it_mb_inf = ?
          AND it_stock_qty > 0
@@ -191,7 +209,7 @@ class CartRecommendService {
     if (ids.length) params.push(...ids);
 
     const [rows] = await pool.query(
-      `SELECT *
+      `SELECT ${RECOMMEND_COLUMNS}
        FROM bomiora_shop_item_new
        WHERE ${whereSql}
          ${excludeSql}
@@ -211,7 +229,7 @@ class CartRecommendService {
     }
     params.push(Number(limit));
     const [rows] = await pool.query(
-      `SELECT *
+      `SELECT ${RECOMMEND_COLUMNS}
        FROM bomiora_shop_item_new
        WHERE it_use = '1'
          AND (it_soldout IS NULL OR it_soldout != '1')
@@ -348,7 +366,7 @@ class CartRecommendService {
           const relatedPlaceholders = relatedIds.map(() => '?').join(', ');
           const firstId = bufferToString(firstProduct.it_id).trim();
           infRows = await this.queryInfluencerRecommendRows(
-            `SELECT *
+            `SELECT ${RECOMMEND_COLUMNS}
              FROM bomiora_shop_item_new
              WHERE it_mb_inf = ?
                AND it_stock_qty > 0
@@ -361,7 +379,7 @@ class CartRecommendService {
           );
         } else {
           infRows = await this.queryInfluencerRecommendRows(
-            `SELECT *
+            `SELECT ${RECOMMEND_COLUMNS}
              FROM bomiora_shop_item_new
              WHERE it_mb_inf = ?
                AND it_stock_qty > 0
@@ -484,7 +502,7 @@ class CartRecommendService {
     }
 
     const [rows] = await pool.query(
-      `SELECT *
+      `SELECT ${RECOMMEND_COLUMNS}
        FROM bomiora_shop_item_new
        WHERE ${where}
        ORDER BY it_order ASC, it_id DESC
@@ -774,18 +792,21 @@ class CartRecommendService {
       currentSlot,
       { proteinFirstIfEmpty: isGeneral }
     );
-    for (const slotId of slotOrder) {
-      if (results.length >= maxItems) break;
-      if (shouldSkip(slotId)) continue;
-      const query = this.prescriptionSlotQuery(slotId);
-      if (!query) continue;
-      pushRow(
-        await this.findFirstRecommendCandidate({
-          excludeItIds: excludeNow(),
+    const neededSlots = slotOrder.filter((slotId) => !shouldSkip(slotId));
+    const slotRows = await Promise.all(
+      neededSlots.map(async (slotId) => {
+        const query = this.prescriptionSlotQuery(slotId);
+        if (!query) return null;
+        return this.findFirstRecommendCandidate({
+          excludeItIds: excludedProductIds,
           ...query
-        }),
-        Boolean(query.mdPick)
-      );
+        });
+      })
+    );
+    for (let i = 0; i < neededSlots.length; i += 1) {
+      if (results.length >= maxItems) break;
+      const query = this.prescriptionSlotQuery(neededSlots[i]);
+      pushRow(slotRows[i], Boolean(query && query.mdPick));
     }
 
     return results.filter(notExcluded);

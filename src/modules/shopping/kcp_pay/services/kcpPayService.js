@@ -506,8 +506,26 @@ class KcpPayService {
         form.method = 'post';
         form.submit();
       } else {
-        alert('[' + (resCd || 'NO_CODE') + '] ' + (resMsg || '결제 결과를 수신하지 못했습니다.'));
-        if (typeof closeEvent === 'function') closeEvent();
+        // 사용자 취소(3001) 등도 콜백으로 전달해야 앱이 결제 페이지로 복귀함
+        try {
+          function ensureField(name, value) {
+            if (!form || !value) return;
+            if (!form[name]) {
+              var input = document.createElement('input');
+              input.type = 'hidden';
+              input.name = name;
+              form.appendChild(input);
+            }
+            form[name].value = value;
+          }
+          ensureField('res_cd', resCd || '3001');
+          ensureField('res_msg', resMsg || '사용자가 결제를 취소했습니다.');
+          form.action = '${this.escape(callbackUrl)}';
+          form.method = 'post';
+          form.submit();
+        } catch (submitErr) {
+          if (typeof closeEvent === 'function') closeEvent();
+        }
       }
     }
 

@@ -172,7 +172,7 @@ class OrderRepository {
 
   async getReservation(mbId, odId) {
     const [rows] = await pool.query(
-      `SELECT hp_rsvt_date, hp_rsvt_stime, hp_rsvt_etime
+      `SELECT DATE_FORMAT(hp_rsvt_date, '%Y-%m-%d') AS hp_rsvt_date, hp_rsvt_stime, hp_rsvt_etime
        FROM bomiora_shop_health_profiles_cart
        WHERE mb_id = ? AND od_id = ?
        ORDER BY hp_no DESC
@@ -189,7 +189,8 @@ class OrderRepository {
   async getHealthAndReservation(mbId, odId) {
     const odIdStr = String(odId ?? '').replace(/[^0-9]/g, '').trim();
     let [rows] = await pool.query(
-      `SELECT hp_no, hp_9, hp_10, hp_mdatetime, hp_rsvt_date, hp_rsvt_stime, hp_rsvt_etime
+      `SELECT hp_no, hp_9, hp_10, hp_mdatetime,
+              DATE_FORMAT(hp_rsvt_date, '%Y-%m-%d') AS hp_rsvt_date, hp_rsvt_stime, hp_rsvt_etime
          FROM bomiora_shop_health_profiles_cart
         WHERE mb_id = ?
           AND REPLACE(REPLACE(CAST(od_id AS CHAR), ',', ''), ' ', '') = ?
@@ -213,7 +214,8 @@ class OrderRepository {
       if (itIds.length) {
         const placeholders = itIds.map(() => '?').join(', ');
         const [orphans] = await pool.query(
-          `SELECT hp_no, hp_9, hp_10, hp_mdatetime, hp_rsvt_date, hp_rsvt_stime, hp_rsvt_etime
+          `SELECT hp_no, hp_9, hp_10, hp_mdatetime,
+              DATE_FORMAT(hp_rsvt_date, '%Y-%m-%d') AS hp_rsvt_date, hp_rsvt_stime, hp_rsvt_etime
              FROM bomiora_shop_health_profiles_cart
             WHERE mb_id = ?
               AND it_id IN (${placeholders})
@@ -293,7 +295,22 @@ class OrderRepository {
                      AND hp_mdatetime IS NOT NULL
                      AND hp_mdatetime <> '0000-00-00 00:00:00'
                     THEN 1 ELSE 0
-                  END) AS is_consultation_done
+                  END) AS is_consultation_done,
+              SUBSTRING_INDEX(GROUP_CONCAT(
+                CASE
+                  WHEN hp_rsvt_date IS NULL OR CAST(hp_rsvt_date AS CHAR) IN ('', '0000-00-00') THEN NULL
+                  ELSE DATE_FORMAT(hp_rsvt_date, '%Y-%m-%d')
+                END
+                ORDER BY hp_no DESC
+              ), ',', 1) AS hp_rsvt_date,
+              SUBSTRING_INDEX(GROUP_CONCAT(
+                NULLIF(CAST(hp_rsvt_stime AS CHAR), '')
+                ORDER BY hp_no DESC
+              ), ',', 1) AS hp_rsvt_stime,
+              SUBSTRING_INDEX(GROUP_CONCAT(
+                NULLIF(CAST(hp_rsvt_etime AS CHAR), '')
+                ORDER BY hp_no DESC
+              ), ',', 1) AS hp_rsvt_etime
        FROM bomiora_shop_health_profiles_cart
        WHERE mb_id = ? AND od_id IN (${placeholders})
        GROUP BY od_id`,
@@ -304,6 +321,9 @@ class OrderRepository {
       map[String(row.od_id)] = {
         isPrescriptionOrder: Number(row.is_telemedicine || 0) === 1,
         isConsultationDone: Number(row.is_consultation_done || 0) === 1,
+        hp_rsvt_date: row.hp_rsvt_date || null,
+        hp_rsvt_stime: row.hp_rsvt_stime || null,
+        hp_rsvt_etime: row.hp_rsvt_etime || null,
       };
     });
     return map;
@@ -394,11 +414,25 @@ class OrderRepository {
   }
 
   async updateReservation(mbId, odId, date, time) {
+    const odIdStr = String(odId ?? '').replace(/[^0-9]/g, '').trim();
+    const start = String(time || '').trim();
+    let endTime = start;
+    const m = start.match(/^(\d{1,2}):(\d{2})/);
+    if (m) {
+      let hour = Number(m[1]);
+      let minute = Number(m[2]) + 20;
+      if (minute >= 60) {
+        hour += Math.floor(minute / 60);
+        minute %= 60;
+      }
+      endTime = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+    }
     const [result] = await pool.query(
       `UPDATE bomiora_shop_health_profiles_cart
-       SET hp_rsvt_date = ?, hp_rsvt_stime = ?, hp_mdatetime = NOW()
-       WHERE mb_id = ? AND od_id = ?`,
-      [date, time, mbId, odId]
+       SET hp_rsvt_date = ?, hp_rsvt_stime = ?, hp_rsvt_etime = ?, hp_mdatetime = NOW()
+       WHERE mb_id = ?
+         AND REPLACE(REPLACE(CAST(od_id AS CHAR), ',', ''), ' ', '') = ?`,
+      [date, start, endTime, mbId, odIdStr]
     );
     return result.affectedRows > 0;
   }
