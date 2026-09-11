@@ -156,6 +156,13 @@ class EventController {
         });
       }
 
+      if (payload.data && payload.data.is_active === false) {
+        return res.status(404).json({
+          success: false,
+          message: '종료된 이벤트입니다.',
+        });
+      }
+
       // 조회수는 응답을 막지 않음
       eventRepository.increaseViewCount(id).catch(() => {});
       const data = {
