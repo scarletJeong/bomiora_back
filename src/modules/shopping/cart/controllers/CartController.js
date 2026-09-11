@@ -3,6 +3,7 @@ const healthProfileCartRepository = require('../repositories/HealthProfileCartRe
 const cartRecommendService = require('../services/CartRecommendService');
 const productController = require('../../product/controllers/ProductController');
 const { TtlCache } = require('../../../../utils/ttlCache');
+const { formatSqlDateOnlyForApi } = require('../../../../utils/healthDateTime');
 
 const cartRecommendCache = new TtlCache(60_000);
 const cartListCache = new TtlCache(30_000);
@@ -111,28 +112,10 @@ class CartController {
   }
 
   /**
-   * MySQL DATE/DATETIME이 mysql2에서 Date 객체로 올 때 String().substring(0,10) 하면
-   * "Mon Apr 21" 처럼 잘려 Dart DateTime.tryParse 실패 → 항상 YYYY-MM-DD로 정규화.
+   * MySQL DATE → YYYY-MM-DD (KST 달력). Node TZ/mysql2 Date 변환으로 하루 빠지지 않게 한다.
    */
   formatSqlDateForApi(value) {
-    if (value == null || value === '') return null;
-    if (value instanceof Date) {
-      if (Number.isNaN(value.getTime())) return null;
-      const y = value.getFullYear();
-      const m = String(value.getMonth() + 1).padStart(2, '0');
-      const d = String(value.getDate()).padStart(2, '0');
-      return `${y}-${m}-${d}`;
-    }
-    const s = String(value).trim();
-    if (!s) return null;
-    const iso = s.match(/^(\d{4}-\d{2}-\d{2})/);
-    if (iso) return iso[1];
-    const parsed = new Date(s);
-    if (Number.isNaN(parsed.getTime())) return null;
-    const y = parsed.getFullYear();
-    const m = String(parsed.getMonth() + 1).padStart(2, '0');
-    const d = String(parsed.getDate()).padStart(2, '0');
-    return `${y}-${m}-${d}`;
+    return formatSqlDateOnlyForApi(value);
   }
 
   async convertCartToMap(cart, opts = {}) {
@@ -1175,11 +1158,6 @@ class CartController {
         let cartList = [];
 
         if (itId) {
-          const product = await cartRepository.findProductById(itId);
-          if (!product) {
-            return { success: true, data: [], count: 0 };
-          }
-
           let cartItIds = [];
           if (mbId) {
             const carts = await cartRepository.findByMbIdAndStatusAsc(mbId, ctStatus);

@@ -154,6 +154,31 @@ function addDaysToYmdDateString(ymd, deltaDays) {
   return dt.toISOString().slice(0, 10);
 }
 
+/**
+ * MySQL DATE / 예약일 등 **달력 날짜** → `YYYY-MM-DD`.
+ * mysql2 `timezone: +09:00` 이면 DATE `YYYY-MM-DD` 가 KST 00:00 instant(UTC 전날 15:00)가 되고,
+ * Node TZ가 UTC일 때 `getDate()` 는 하루 빨라진다. 목록 `DATE_FORMAT` 과 맞추려면 KST 달력을 쓴다.
+ */
+function formatSqlDateOnlyForApi(value) {
+  if (value == null || value === '') return null;
+
+  if (typeof value === 'string') {
+    const s = value.trim();
+    if (!s) return null;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+    if (/^\d{4}-\d{2}-\d{2} /.test(s) && !s.includes('T')) return s.slice(0, 10);
+  }
+
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return null;
+
+  const kst = new Date(d.getTime() + 9 * 60 * 60 * 1000);
+  const y = kst.getUTCFullYear();
+  const m = String(kst.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(kst.getUTCDate()).padStart(2, '0');
+  return `${y}-${m}-${dd}`;
+}
+
 function utcRangeForKstCalendarDay(dateStr) {
   const raw = String(dateStr).trim();
   if (!DATE_ONLY.test(raw)) {
@@ -170,5 +195,6 @@ module.exports = {
   parseHealthDateTimeOptional,
   toIsoUtcString,
   utcRangeForKstCalendarDay,
-  addDaysToYmdDateString
+  addDaysToYmdDateString,
+  formatSqlDateOnlyForApi
 };

@@ -3,6 +3,7 @@ const orderCartRepository = require('../repositories/OrderCartRepository');
 const userRepository = require('../../../auth/repositories/UserRepository');
 const kcpApprovalService = require('../../../shopping/kcp_pay/services/kcpApprovalService');
 const { TtlCache } = require('../../../../utils/ttlCache');
+const { formatSqlDateOnlyForApi } = require('../../../../utils/healthDateTime');
 
 const orderDetailCache = new TtlCache(10_000);
 const orderListCache = new TtlCache(45_000);
@@ -55,28 +56,10 @@ class OrderController {
     }
 
   /**
-   * MySQL DATE가 mysql2에서 Date 객체로 올 때 String().substring(0,10) → "Mon Apr 21" 등으로 잘림.
-   * CartController.formatSqlDateForApi 와 동일하게 YYYY-MM-DD 로 정규화.
+   * MySQL DATE → YYYY-MM-DD (KST 달력). Node TZ/mysql2 Date 변환으로 하루 빠지지 않게 한다.
    */
   formatSqlDateForApi(value) {
-    if (value == null || value === '') return null;
-    if (value instanceof Date) {
-      if (Number.isNaN(value.getTime())) return null;
-      const y = value.getFullYear();
-      const m = String(value.getMonth() + 1).padStart(2, '0');
-      const d = String(value.getDate()).padStart(2, '0');
-      return `${y}-${m}-${d}`;
-    }
-    const s = String(value).trim();
-    if (!s) return null;
-    const iso = s.match(/^(\d{4}-\d{2}-\d{2})/);
-    if (iso) return iso[1];
-    const parsed = new Date(s);
-    if (Number.isNaN(parsed.getTime())) return null;
-    const y = parsed.getFullYear();
-    const m = String(parsed.getMonth() + 1).padStart(2, '0');
-    const d = String(parsed.getDate()).padStart(2, '0');
-    return `${y}-${m}-${d}`;
+    return formatSqlDateOnlyForApi(value);
   }
 
   /** 라인아이템 상품유형 (`prescription` | `general` | '') — ct_kind 우선 */
@@ -531,6 +514,9 @@ class OrderController {
             isPrescriptionOrder,
             isConsultationDone,
             canConfirmReceipt: this.canConfirmReceipt(row.od_status, row.delivery_completed),
+            reservationDate: this.formatSqlDateForApi(flags.hp_rsvt_date),
+            reservationTime: this.bufferToString(flags.hp_rsvt_stime) || null,
+            reservationEndTime: this.bufferToString(flags.hp_rsvt_etime) || null,
             items,
             firstProductName: items[0]?.itName || null,
             firstProductOption: items[0]?.ctOption || null,
@@ -550,7 +536,7 @@ class OrderController {
         };
       });
 
-      res.set('Cache-Control', 'private, max-age=30');
+      res.set('Cache-Control', 'private, no-store, no-cache, must-revalidate');
       return res.json(payload);
     } catch (error) {
       return res.json({
@@ -719,7 +705,7 @@ class OrderController {
       }
 
       orderDetailCache.set(cacheKey, detail);
-      res.set('Cache-Control', 'private, max-age=5');
+      res.set('Cache-Control', 'private, no-store, no-cache, must-revalidate');
       return res.json(detail);
     } catch (error) {
       return res.status(404).json({ error: '주문 정보를 불러올 수 없습니다.' });
@@ -796,11 +782,18 @@ class OrderController {
       }
 
       const cancelMemo = this.buildCustomerCancelMemo(order.od_shop_memo, hasRefund ? refund : null);
+      const cancelPrice = Math.max(receiptPrice, this.computeOrderTotal(order));
       await orderRepository.updateOrder(odId, {
         od_status: '취소',
+        od_cancel_price: cancelPrice,
         status_changed_at: new Date(),
         od_shop_memo: cancelMemo,
       });
+      try {
+        await orderCartRepository.markCancelledByOdId(odId);
+      } catch (cartErr) {
+        console.warn('[OrderController] 장바구니 취소 상태 갱신 실패', { odId, message: cartErr.message });
+      }
       if (hasRefund) {
         await this.saveOrderRefundAccount(odId, refund);
       }
