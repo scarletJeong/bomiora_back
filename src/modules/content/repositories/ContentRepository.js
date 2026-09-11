@@ -133,40 +133,48 @@ class ContentRepository {
   }
 
   /**
-   * 콘텐츠 추천 이력 — 회원(mb_id) + 문진 프로필(pf_no, 없으면 0)당 글당 1회
-   * @returns {Promise<boolean>} true: 신규 반영(카운트 증가), false: 이미 추천함
+   * 추천 토글. 본문 HTML을 읽지 않는다.
+   * @returns {Promise<{ recommended: boolean, count: number } | null>}
    */
-  async tryRecordRecommendAndIncrement(contentId, mbId, pfNo) {
+  async toggleRecommend(contentId, mbId, pfNo) {
     const connection = await pool.getConnection();
     try {
       await connection.beginTransaction();
-      const [ins] = await connection.query(
-        `INSERT INTO bm_content_recommend_log (content_id, mb_id, pf_no)
-         VALUES (?, ?, ?)`,
+      const [del] = await connection.query(
+        `DELETE FROM bm_content_recommend_log
+          WHERE content_id = ? AND mb_id = ? AND pf_no = ?
+          LIMIT 1`,
         [contentId, mbId, pfNo]
       );
-      if (ins.affectedRows !== 1) {
-        await connection.rollback();
-        return false;
+      const turningOn = del.affectedRows === 0;
+      if (turningOn) {
+        await connection.query(
+          `INSERT INTO bm_content_recommend_log (content_id, mb_id, pf_no)
+           VALUES (?, ?, ?)`,
+          [contentId, mbId, pfNo]
+        );
       }
+      const delta = turningOn ? 1 : -1;
       const [up] = await connection.query(
         `UPDATE bm_content
-            SET recommend_count = recommend_count + 1
+            SET recommend_count = LAST_INSERT_ID(GREATEST(IFNULL(recommend_count, 0) + ?, 0))
           WHERE id = ?
-            AND is_deleted = 0`,
-        [contentId]
+            AND is_deleted = 0
+            AND is_published = 1`,
+        [delta, contentId]
       );
       if (up.affectedRows !== 1) {
         await connection.rollback();
-        return false;
+        return null;
       }
+      const [lid] = await connection.query('SELECT LAST_INSERT_ID() AS c');
       await connection.commit();
-      return true;
+      return {
+        recommended: turningOn,
+        count: Number(lid?.[0]?.c || 0),
+      };
     } catch (e) {
       await connection.rollback();
-      if (e && (e.code === 'ER_DUP_ENTRY' || e.errno === 1062)) {
-        return false;
-      }
       throw e;
     } finally {
       connection.release();

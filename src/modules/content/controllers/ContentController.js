@@ -157,35 +157,11 @@ class ContentController {
         });
       }
       const pfNo = this.parsePfNo(req.body?.pf_no);
-      const row = await contentRepository.findById(id);
-      if (!row) {
+      const toggled = await contentRepository.toggleRecommend(id, mbId, pfNo);
+      if (!toggled) {
         return res.status(404).json({
           success: false,
           message: '콘텐츠를 찾을 수 없습니다.',
-        });
-      }
-      if (pfNo > 0) {
-        const ok = await contentRepository.isProfileOwnedByMember(pfNo, mbId);
-        if (!ok) {
-          return res.status(403).json({
-            success: false,
-            message: '문진(프로필) 정보가 올바르지 않습니다.',
-          });
-        }
-      }
-      const inserted = await contentRepository.tryRecordRecommendAndIncrement(
-        id,
-        mbId,
-        pfNo
-      );
-      const updated = await contentRepository.findById(id);
-      const count = Number(updated?.recommend_count ?? row.recommend_count ?? 0);
-      if (!inserted) {
-        return res.json({
-          success: false,
-          recommend_count: count,
-          already_recommended: true,
-          message: '이미 추천한 글입니다.',
         });
       }
       contentListCache.remove(`detail:${id}`);
@@ -194,8 +170,11 @@ class ContentController {
       contentListCache.remove(`rec:${id}:${mbId}:${pfNo}`);
       return res.json({
         success: true,
-        recommend_count: count,
-        message: '추천해 주셔서 감사합니다.',
+        recommended: toggled.recommended,
+        recommend_count: toggled.count,
+        message: toggled.recommended
+          ? '추천해 주셔서 감사합니다.'
+          : '추천이 해제되었습니다.',
       });
     } catch (error) {
       return res.status(500).json({
