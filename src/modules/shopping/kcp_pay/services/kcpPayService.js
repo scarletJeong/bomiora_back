@@ -425,6 +425,9 @@ class KcpPayService {
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>KCP 결제</title>
+  <link rel="preconnect" href="https://pay.kcp.co.kr" />
+  <link rel="preconnect" href="https://testpay.kcp.co.kr" />
+  <link rel="preload" href="${this.escape(jsUrl)}" as="script" />
   <style>html,body{margin:0;padding:0;background:transparent;overflow:hidden;}</style>
   <script>
     function m_Completepayment(FormOrJson, closeEvent) {
@@ -576,35 +579,48 @@ class KcpPayService {
 </html>`;
   }
 
-  buildCallbackHtml({ token, success, message }) {
+  buildCallbackHtml({ token, success, message, orderId, errorCode }) {
+    const safeMessage = this.escape(message || '');
+    const safeToken = this.escape(token || '');
+    const safeOrderId = this.escape(orderId || '');
+    const safeError = this.escape(errorCode || '');
     return `<!doctype html>
 <html lang="ko">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>KCP 결제 결과</title>
+  <style>html,body{margin:0;padding:0;background:#6B6B6B;}</style>
 </head>
-<body data-kcp-token="${this.escape(token || '')}" data-kcp-success="${success ? 'true' : 'false'}">
-  <div style="padding:20px;font-family:sans-serif;">
-    <h3>${success ? '결제가 완료되었습니다.' : '결제가 완료되지 않았습니다.'}</h3>
-    <p>${this.escape(message || '')}</p>
-  </div>
+<body data-kcp-token="${safeToken}" data-kcp-success="${success ? 'true' : 'false'}">
   <script>
     (function() {
       var payload = {
         source: 'kcp-pay-callback',
-        token: '${this.escape(token || '')}',
+        token: '${safeToken}',
         success: ${success ? 'true' : 'false'},
-        message: '${this.escape(message || '')}'
+        message: '${safeMessage}',
+        order_id: '${safeOrderId}',
+        error_code: '${safeError}'
       };
+      try {
+        if (window.parent && window.parent !== window) {
+          window.parent.postMessage(payload, '*');
+        }
+      } catch (e) {}
       try {
         if (window.opener && !window.opener.closed) {
           window.opener.postMessage(payload, '*');
         }
-      } catch (e) {}
+      } catch (e2) {}
+      try {
+        if (window.flutter_inappwebview && window.flutter_inappwebview.callHandler) {
+          window.flutter_inappwebview.callHandler('kcpCallback', payload);
+        }
+      } catch (e3) {}
       setTimeout(function() {
-        try { window.close(); } catch (e) {}
-      }, 700);
+        try { window.close(); } catch (e4) {}
+      }, 200);
     })();
   </script>
 </body>

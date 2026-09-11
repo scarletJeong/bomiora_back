@@ -70,7 +70,20 @@ class KcpPayController {
         return res.status(400).json({ success: false, message: 'cart_ids가 비어 있습니다.' });
       }
 
-      const carts = await kcpPayRepository.getCartItemsByIds(mbId, cartIds);
+      const parsedCoupons = couponRepository.parseCheckoutCoupons(req.body || {});
+      const safeCouponDiscount = Number(couponDiscount || 0);
+      const [carts, stockCheck, couponResult] = await Promise.all([
+        kcpPayRepository.getCartItemsByIds(mbId, cartIds),
+        cartController.validateCheckoutItems(mbId, cartIds),
+        couponRepository
+          .assertUsableCheckoutCoupons(mbId, parsedCoupons, safeCouponDiscount)
+          .then((rows) => ({ ok: true, rows }))
+          .catch((couponErr) => ({
+            ok: false,
+            message: couponErr.message || '쿠폰 검증에 실패했습니다.',
+          })),
+      ]);
+
       if (carts.length !== cartIds.length) {
         return res.status(400).json({
           success: false,
@@ -78,18 +91,25 @@ class KcpPayController {
         });
       }
 
-      const stockCheck = await cartController.validateCheckoutItems(mbId, cartIds);
       if (!stockCheck.ok) {
         return res.status(400).json({
           success: false,
+          error_code: 'STOCK',
           message: stockCheck.message,
           issues: stockCheck.issues,
         });
       }
 
+      if (!couponResult.ok) {
+        return res.status(400).json({
+          success: false,
+          message: couponResult.message,
+        });
+      }
+      const checkoutCoupons = couponResult.rows || [];
+
       const cartPrice = carts.reduce((sum, row) => sum + Number(row.ct_price || 0), 0);
       const safeShippingCost = Number(shippingCost || 0);
-      const safeCouponDiscount = Number(couponDiscount || 0);
       const safeUsedPoint = Number(usedPoint || 0);
       const computedFinalAmount = Math.max(
         0,
@@ -103,20 +123,6 @@ class KcpPayController {
           message: '결제 금액 검증에 실패했습니다.',
           expected: computedFinalAmount,
           received: requestFinalAmount,
-        });
-      }
-
-      let checkoutCoupons = [];
-      try {
-        checkoutCoupons = await couponRepository.assertUsableCheckoutCoupons(
-          mbId,
-          couponRepository.parseCheckoutCoupons(req.body || {}),
-          safeCouponDiscount
-        );
-      } catch (couponErr) {
-        return res.status(400).json({
-          success: false,
-          message: couponErr.message || '쿠폰 검증에 실패했습니다.',
         });
       }
 
@@ -309,6 +315,7 @@ class KcpPayController {
           token,
           success: false,
           message: '결제 세션이 만료되었습니다. 다시 시도해 주세요.',
+          errorCode: 'EXPIRED',
         }));
     }
 
@@ -332,6 +339,7 @@ class KcpPayController {
             token,
             success: false,
             message: failed.message,
+            errorCode: resCd || '3001',
           }));
       }
 
@@ -504,6 +512,7 @@ class KcpPayController {
           token,
           success: true,
           message: done.message,
+          orderId: String(pending.request.orderId),
         }));
     } catch (error) {
       console.error('❌ [KcpPayController] callback 오류:', error);
@@ -532,6 +541,7 @@ class KcpPayController {
           token,
           success: false,
           message: this.resolveClientErrorMessage(error),
+          errorCode: this.resolveClientErrorCode(error),
         }));
     }
   }
