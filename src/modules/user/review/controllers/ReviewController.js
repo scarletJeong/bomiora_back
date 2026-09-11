@@ -197,6 +197,24 @@ class ReviewController {
     return `other:${k}`;
   }
 
+  _looksLikeReviewImageRef(s) {
+    const t = String(s || '').trim();
+    if (!t) return false;
+    const lower = t.toLowerCase();
+    if (lower === 'null' || lower === 'undefined' || lower === '0') return false;
+    if (t.length > 400) return false;
+    if (/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/.test(t)) return false;
+    if (/^https?:\/\//i.test(t) || t.startsWith('//')) return true;
+    if (lower.includes('/api/user/reviews/images/') ||
+        lower.includes('/data/review_images/') ||
+        lower.includes('data/itemuse')) {
+      return true;
+    }
+    if (/\.(jpe?g|png|gif|webp|bmp)(\?.*)?$/i.test(t)) return true;
+    if (/^\d+\/[^/]+/.test(t)) return true;
+    return false;
+  }
+
   _storedImageToUrl(v) {
     let s = this.trimSqlText(v);
     if (!s) return '';
@@ -204,7 +222,7 @@ class ReviewController {
     const img = /<img[^>]+src\s*=\s*["']([^"']+)["']/i.exec(s);
     if (img && img[1]) s = String(img[1]).trim();
     s = s.replace(/&amp;/gi, '&').trim();
-    return s;
+    return this._looksLikeReviewImageRef(s) ? s : '';
   }
 
   toReviewResponse(row) {
