@@ -88,6 +88,7 @@ class WishRepository {
          w.wi_time,
          CAST(w.wi_it_kind AS CHAR) AS wi_it_kind,
          CAST(p.it_name AS CHAR) AS it_name,
+         CAST(p.it_subject AS CHAR) AS it_subject,
          p.it_price,
          CAST(p.it_kind AS CHAR) AS it_kind,
          CAST(p.it_img1 AS CHAR) AS it_img1,

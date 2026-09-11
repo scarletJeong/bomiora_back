@@ -130,6 +130,7 @@ class WishController {
             if (hasProduct) {
               row.product_name = w.it_name;
               row.product_price = w.it_price;
+              if (w.it_subject) row.it_subject = this.bufferToString(w.it_subject);
               if (!productKind) {
                 row.product_kind = kindFromProduct || null;
                 row.it_kind = row.product_kind;
