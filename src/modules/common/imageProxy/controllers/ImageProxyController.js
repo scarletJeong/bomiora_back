@@ -2,18 +2,30 @@ const fs = require('fs/promises');
 const path = require('path');
 
 class ImageProxyController {
-  isAllowedUrl(url) {
+  isAllowedHost(hostname) {
+    const host = String(hostname || '').toLowerCase();
+    if (!host) return false;
     return (
-      url.startsWith('https://bomiora0.mycafe24.com') ||
-      url.startsWith('https://bomiora.kr') ||
-      url.startsWith('https://www.bomiora.kr') ||
-      url.startsWith('http://bomiora.kr') ||
-      url.startsWith('http://www.bomiora.kr') ||
-      url.startsWith('https://localhost/bomiora/www') ||
-      url.startsWith('http://localhost/bomiora/www') ||
-      url.startsWith('https://127.0.0.1/bomiora/www') ||
-      url.startsWith('http://127.0.0.1/bomiora/www')
+      host === 'bomiora0.mycafe24.com' ||
+      host === 'bomiora.kr' ||
+      host === 'www.bomiora.kr' ||
+      host === 'bomiora.net' ||
+      host === 'www.bomiora.net' ||
+      host.endsWith('.mycafe24.com') ||
+      host.endsWith('.godohosting.com') ||
+      host === 'localhost' ||
+      host === '127.0.0.1'
     );
+  }
+
+  isAllowedUrl(url) {
+    try {
+      const parsed = new URL(String(url));
+      if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return false;
+      return this.isAllowedHost(parsed.hostname);
+    } catch (_) {
+      return false;
+    }
   }
 
   detectContentType(url, headerContentType) {
@@ -104,6 +116,8 @@ class ImageProxyController {
 
   setImageCacheHeaders(res) {
     res.setHeader('Cache-Control', 'public, max-age=86400, immutable');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
   }
 
   async proxyImage(req, res) {
@@ -134,10 +148,14 @@ class ImageProxyController {
       }
 
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 5000);
+      const timeout = setTimeout(() => controller.abort(), 20000);
       const response = await fetch(targetUrl, {
         method: 'GET',
-        signal: controller.signal
+        signal: controller.signal,
+        headers: {
+          'User-Agent': 'Mozilla/5.0',
+          Accept: 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
+        },
       });
       clearTimeout(timeout);
 

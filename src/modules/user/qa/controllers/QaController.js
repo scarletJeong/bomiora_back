@@ -4,7 +4,6 @@ const path = require('path');
 const {
   SUBDIRS,
   isMirrorEnabled,
-  getPublicUrl,
   mirrorImageToCafe24,
   mirrorUploadedFile,
 } = require('../../../../utils/cafe24ImageMirror');
@@ -60,23 +59,13 @@ class QaController {
       if (!ext || ext.length > 5) ext = '.jpg';
       const filename = `${Date.now()}_${Math.random().toString(36).slice(2, 10)}${ext}`;
       fs.writeFileSync(path.join(QA_UPLOAD_DIR, filename), buf);
-      // Cafe24 미러 성공 시 공개 URL, 실패 시 data URI (관리자 목록에서 깨짐 방지)
+      // 앱/상세는 Node 즉시 서빙 URL을 씀 (Cafe24 미러 완료를 기다리지 않음)
+      const localUrl = `/api/qa/images/${filename}`;
+      urls.push(localUrl);
       if (isMirrorEnabled()) {
-        const publicUrl = getPublicUrl(SUBDIRS.qa, filename);
-        urls.push(publicUrl);
         mirrorJobs.push(
-          this._mirrorQaImageToCafe24(filename, buf, mime || 'image/jpeg').then((ok) => {
-            if (!ok) {
-              const idx = urls.indexOf(publicUrl);
-              if (idx >= 0) {
-                urls[idx] = `data:${mime || 'image/png'};base64,${buf.toString('base64')}`;
-              }
-            }
-            return ok;
-          })
+          this._mirrorQaImageToCafe24(filename, buf, mime || 'image/jpeg').catch(() => false)
         );
-      } else {
-        urls.push(`data:${mime || 'image/png'};base64,${buf.toString('base64')}`);
       }
     }
     return { urls, mirrorJobs };
@@ -92,18 +81,20 @@ class QaController {
       }
       const filename = req.file.filename;
       const localUrl = `/api/qa/images/${filename}`;
-      const fileUrl = await mirrorUploadedFile({
-        subdir: SUBDIRS.qa,
-        filePath: req.file.path,
-        filename,
-        mime: req.file.mimetype || 'application/octet-stream',
-        localUrl,
-      });
+      if (isMirrorEnabled()) {
+        mirrorUploadedFile({
+          subdir: SUBDIRS.qa,
+          filePath: req.file.path,
+          filename,
+          mime: req.file.mimetype || 'application/octet-stream',
+          localUrl,
+        }).catch(() => false);
+      }
       return res.json({
         success: true,
         filename,
-        url: fileUrl,
-        message: '??? ??',
+        url: localUrl,
+        message: '이미지가 업로드되었습니다.',
       });
     } catch (error) {
       return res.status(400).json({
@@ -189,13 +180,44 @@ class QaController {
     return { caName, wr6 };
   }
 
+  _extractImageUrls(html) {
+    const raw = String(html || '');
+    if (!raw) return [];
+    const decoded = raw
+      .replace(/&lt;/gi, '<')
+      .replace(/&gt;/gi, '>')
+      .replace(/&quot;/gi, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/&amp;/gi, '&');
+    const urls = [];
+    const re = /<img[^>]+src\s*=\s*["']([^"']+)["']/gi;
+    let match;
+    while ((match = re.exec(decoded))) {
+      const src = String(match[1] || '').trim();
+      if (src) urls.push(src);
+    }
+    return urls;
+  }
+
+  _mergeWrOption(existing) {
+    const parts = String(existing || '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (!parts.includes('html1') && !parts.includes('html2')) {
+      parts.push('html1');
+    }
+    return parts.join(',');
+  }
+
   toMap(contact) {
     const wr8 = this._asText(contact.wr_8) ?? '';
     const closed = this._isClosedRow(contact);
+    const wrContent = this._asText(contact.wr_content) ?? '';
     return {
       wr_id: this._asInt(contact.wr_id, 0),
       wr_subject: this._asText(contact.wr_subject) ?? '',
-      wr_content: this._asText(contact.wr_content) ?? '',
+      wr_content: wrContent,
       mb_id: this._asText(contact.mb_id) ?? '',
       wr_name: this._asText(contact.wr_name) ?? '',
       wr_email: this._asText(contact.wr_email) ?? '',
@@ -209,6 +231,7 @@ class QaController {
       wr_6: this._asText(contact.wr_6) ?? '',
       wr_hit: this._asInt(contact.wr_hit, 0),
       wr_option: this._asText(contact.wr_option),
+      image_urls: this._extractImageUrls(wrContent),
       wr_is_comment: this._asInt(contact.wr_is_comment, 0),
       wr_8: wr8,
       is_closed: closed ? 1 : 0,
@@ -248,33 +271,49 @@ class QaController {
     }
   }
 
+  _repliesPayload(contact) {
+    if (!contact) return [];
+    if ((contact.wr_is_comment ?? 0) === 1 && contact.wr_7) {
+      return [
+        {
+          wr_id: this._asInt(contact.wr_id, 0),
+          wr_content: this._asText(contact.wr_7) ?? '',
+          wr_datetime: contact.wr_last || contact.wr_datetime,
+          wr_name: '관리자',
+          wr_option: this._asText(contact.wr_option),
+        },
+      ];
+    }
+    return [];
+  }
+
   async getDetail(req, res) {
     try {
       const wrId = Number(req.params.wrId);
       const contact = await qaRepository.findById(wrId);
       if (!contact) {
-        return res.status(404).json({ success: false, message: '???? ?? ? ????.' });
+        return res.status(404).json({ success: false, message: '문의를 찾을 수 없습니다.' });
       }
 
-      await qaRepository.update(wrId, { wr_hit: (contact.wr_hit || 0) + 1 });
-      const rootId = await qaRepository.findRootIdByWrId(wrId);
-      if (rootId) {
-        await qaRepository.autoCloseThreadIfExpired(rootId);
-      }
-      const updated = await qaRepository.findById(wrId);
-      // ?? Q&A: ??? ?? 1?? ???? ??? (??? ????? ?????? ??)
-      const root = rootId ? await qaRepository.findById(rootId) : updated;
-      const thread = root ? [root] : [];
+      const rootId = Number(contact.wr_parent || wrId) || wrId;
+      const mapped = this.toMap(contact);
+      const replies = this._repliesPayload(contact);
+
+      qaRepository
+        .update(wrId, { wr_hit: (contact.wr_hit || 0) + 1 })
+        .catch(() => {});
+      qaRepository.autoCloseThreadIfExpired(rootId).catch(() => {});
+
       return res.json({
         success: true,
-        data: this.toMap(updated),
-        thread: thread.map((c) => this.toMap(c)),
+        data: { ...mapped, replies },
+        thread: [mapped],
         root_wr_id: rootId,
       });
     } catch (error) {
       return res.status(500).json({
         success: false,
-        message: `?? ?? ?? ??: ${error.message}`,
+        message: `문의 상세 조회 오류: ${error.message}`,
       });
     }
   }
@@ -289,16 +328,21 @@ class QaController {
         });
       }
 
-      const nextWrId = (await qaRepository.findMaxWrId()) + 1;
-      const nextWrNum = (await qaRepository.findMaxWrNum()) + 1;
+      const [maxWrId, maxWrNum] = await Promise.all([
+        qaRepository.findMaxWrId(),
+        qaRepository.findMaxWrNum(),
+      ]);
+      const nextWrId = maxWrId + 1;
+      const nextWrNum = maxWrNum + 1;
       const now = new Date();
       const { caName, wr6 } = this._normalizeInquiryFields(req.body);
 
       let content = String(req.body.wr_content ?? '');
       const imageSaved = this._saveBase64Images(req.body.images);
       const imageUrls = imageSaved.urls || [];
+      // Cafe24 미러는 백그라운드 — 문의 접수 응답을 막지 않음
       if (imageSaved.mirrorJobs && imageSaved.mirrorJobs.length) {
-        await Promise.all(imageSaved.mirrorJobs);
+        Promise.all(imageSaved.mirrorJobs).catch(() => {});
       }
       if (imageUrls.length > 0) {
         const imgs = imageUrls.map((u) => `<img src="${u}">`).join('\n');
@@ -314,7 +358,7 @@ class QaController {
         wr_comment_reply: '',
         wr_is_comment: 0,
         ca_name: caName,
-        wr_option: req.body.wr_option || '',
+        wr_option: this._mergeWrOption(req.body.wr_option || ''),
         wr_subject: req.body.wr_subject,
         wr_content: content,
         wr_hit: 0,
@@ -509,30 +553,17 @@ class QaController {
       const wrId = Number(req.params.wrId);
       const contact = await qaRepository.findById(wrId);
       if (!contact) {
-        return res.json({ success: false, message: '???? ?? ? ????.' });
+        return res.json({ success: false, message: '문의를 찾을 수 없습니다.' });
       }
 
-      // ?? 1? ? ?? 1? (wr_7)
-      if ((contact.wr_is_comment ?? 0) === 1 && contact.wr_7) {
-        return res.json({
-          success: true,
-          data: [
-            {
-              wr_id: contact.wr_id,
-              wr_content: contact.wr_7,
-              wr_datetime: contact.wr_last || contact.wr_datetime,
-              wr_name: '???',
-              wr_option: contact.wr_option,
-            },
-          ],
-        });
-      }
-
-      return res.json({ success: true, data: [] });
+      return res.json({
+        success: true,
+        data: this._repliesPayload(contact),
+      });
     } catch (error) {
       return res.status(500).json({
         success: false,
-        message: `?? ?? ??: ${error.message}`,
+        message: `답변 조회 오류: ${error.message}`,
       });
     }
   }

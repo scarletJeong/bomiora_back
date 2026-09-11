@@ -157,7 +157,7 @@ class QaRepository {
       ]
     );
 
-    return this.findById(contact.wr_id);
+    return contact;
   }
 
   async update(wrId, fields) {
