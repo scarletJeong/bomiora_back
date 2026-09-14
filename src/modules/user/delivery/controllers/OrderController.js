@@ -8,7 +8,7 @@ const { TtlCache } = require('../../../../utils/ttlCache');
 const { formatSqlDateOnlyForApi } = require('../../../../utils/healthDateTime');
 
 const orderDetailCache = new TtlCache(60_000);
-const orderListCache = new TtlCache(45_000);
+const orderListCache = new TtlCache(120_000);
 
 class OrderController {
   invalidateOrderDetailCache(mbId, odId) {
@@ -460,10 +460,13 @@ class OrderController {
       const status = req.query.status || 'all';
       const page = Number(req.query.page || 0);
       const size = Number(req.query.size || 10);
-      const cacheKey = `list:${mbId}:${period}:${status}:${page}:${size}`;
+      const lite =
+        String(req.query.lite || '') === '1' ||
+        String(req.query.lite || '') === 'true';
+      const cacheKey = `list:${mbId}:${period}:${status}:${page}:${size}:${lite ? 'lite' : 'full'}`;
 
       const payload = await orderListCache.getOrSet(cacheKey, async () => {
-        const { rows, total } = await orderRepository.getOrders(
+        const { rows, total, hasMore } = await orderRepository.getOrders(
           mbId,
           period,
           status,
@@ -480,10 +483,10 @@ class OrderController {
 
         const [allCarts, healthFlags, reviewedByOrder] = await Promise.all([
           orderCartRepository.findByOdIds(odIds),
-          size <= 1
+          lite || size <= 1
             ? Promise.resolve({})
             : orderRepository.getHealthProfileFlagsByOdIds(mbId, odIds),
-          completedOdIds.length
+          !lite && completedOdIds.length
             ? reviewRepository.findReviewedItIdsByOdIds(mbId, completedOdIds)
             : Promise.resolve({}),
         ]);
@@ -544,7 +547,7 @@ class OrderController {
           };
         });
 
-        const totalPages = Math.ceil(total / size) || 0;
+        const totalPages = hasMore ? page + 2 : page + 1;
         return {
           orders,
           reviewedByOrder,
@@ -552,11 +555,11 @@ class OrderController {
           totalPages,
           totalElements: total,
           totalItems: total,
-          hasNext: page + 1 < totalPages,
+          hasNext: !!hasMore,
         };
       });
 
-      res.set('Cache-Control', 'private, no-store, no-cache, must-revalidate');
+      res.set('Cache-Control', 'private, max-age=20');
       return res.json(payload);
     } catch (error) {
       return res.json({

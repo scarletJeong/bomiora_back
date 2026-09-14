@@ -82,15 +82,14 @@ class OrderRepository {
        FROM bomiora_shop_order
        WHERE ${whereSql}
        ORDER BY od_id DESC
-       LIMIT ${safeSize} OFFSET ${Number(offset) || 0}`,
+       LIMIT ${safeSize + 1} OFFSET ${Number(offset) || 0}`,
       whereParams
     );
-    const total =
-      rows.length < safeSize && offset === 0
-        ? rows.length
-        : await this._countOrders(whereSql, whereParams);
+    const hasMore = rows.length > safeSize;
+    const pageRows = hasMore ? rows.slice(0, safeSize) : rows;
+    const total = offset + pageRows.length + (hasMore ? 1 : 0);
 
-    return { rows, total };
+    return { rows: pageRows, total, hasMore };
   }
 
   async _countOrders(whereSql, whereParams) {

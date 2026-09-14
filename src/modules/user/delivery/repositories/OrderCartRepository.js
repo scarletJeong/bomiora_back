@@ -27,7 +27,7 @@ class OrderCartRepository {
               c.ct_status, c.ct_qty, c.ct_price, c.io_price, c.io_id, c.io_type,
               c.ct_option, c.ct_kind, c.parent,
               i.it_kind AS it_kind,
-              i.it_img1 AS it_img1,
+              LEFT(IFNULL(i.it_flutter_image_url, i.it_img1), 200) AS it_img1,
               i.it_flutter_image_url AS it_flutter_image_url,
               COALESCE(NULLIF(TRIM(c.it_name), ''), i.it_name) AS item_name
        FROM bomiora_shop_cart c
