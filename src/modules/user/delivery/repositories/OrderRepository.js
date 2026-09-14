@@ -66,33 +66,39 @@ class OrderRepository {
   async getOrders(mbId, period, status, page, size) {
     const statusFilter = this.buildStatusFilter(status);
     const periodFilter = this.buildPeriodFilter(period);
-    const offset = Number(page) * Number(size);
+    const safeSize = Math.min(Math.max(Number(size) || 10, 1), 200);
+    const offset = Number(page) * safeSize;
 
     const whereSql = `mb_id = ? AND ${periodFilter.sql} AND ${statusFilter.sql}`;
     const whereParams = [mbId, ...periodFilter.params, ...statusFilter.params];
+    const [rows] = await pool.query(
+      `SELECT od_id, mb_id, od_name, od_hp,
+              od_addr1, od_addr2, od_addr3, od_status,
+              od_cart_count, od_cart_price, od_send_cost, od_send_cost2,
+              od_receipt_price, od_settle_case,
+              NULLIF(od_time, '0000-00-00 00:00:00') AS od_time,
+              delivery_completed, admin_completed,
+              NULLIF(auto_confirm_at, '0000-00-00 00:00:00') AS auto_confirm_at
+       FROM bomiora_shop_order
+       WHERE ${whereSql}
+       ORDER BY od_id DESC
+       LIMIT ${safeSize} OFFSET ${Number(offset) || 0}`,
+      whereParams
+    );
+    const total =
+      rows.length < safeSize && offset === 0
+        ? rows.length
+        : await this._countOrders(whereSql, whereParams);
 
-    const [[countRows], [rows]] = await Promise.all([
-      pool.query(
-        `SELECT COUNT(*) AS total FROM bomiora_shop_order WHERE ${whereSql}`,
-        whereParams
-      ),
-      pool.query(
-        `SELECT od_id, mb_id, od_name, od_hp,
-                od_addr1, od_addr2, od_addr3, od_status,
-                od_cart_count, od_cart_price, od_send_cost, od_send_cost2,
-                od_receipt_price, od_settle_case,
-                NULLIF(od_time, '0000-00-00 00:00:00') AS od_time,
-                delivery_completed, admin_completed,
-                NULLIF(auto_confirm_at, '0000-00-00 00:00:00') AS auto_confirm_at
-         FROM bomiora_shop_order
-         WHERE ${whereSql}
-         ORDER BY od_id DESC
-         LIMIT ? OFFSET ?`,
-        [...whereParams, Number(size), offset]
-      ),
-    ]);
+    return { rows, total };
+  }
 
-    return { rows, total: Number(countRows[0]?.total || 0) };
+  async _countOrders(whereSql, whereParams) {
+    const [countRows] = await pool.query(
+      `SELECT COUNT(*) AS total FROM bomiora_shop_order WHERE ${whereSql}`,
+      whereParams
+    );
+    return Number(countRows[0]?.total || 0);
   }
 
   async hasPrescriptionShippedOrCompleted(mbId) {
@@ -192,9 +198,9 @@ class OrderRepository {
       `SELECT hp_no, hp_9, hp_10, hp_mdatetime,
               DATE_FORMAT(hp_rsvt_date, '%Y-%m-%d') AS hp_rsvt_date, hp_rsvt_stime, hp_rsvt_etime
          FROM bomiora_shop_health_profiles_cart
-        WHERE mb_id = ?
-          AND REPLACE(REPLACE(CAST(od_id AS CHAR), ',', ''), ' ', '') = ?
-        ORDER BY hp_no DESC`,
+        WHERE mb_id = ? AND od_id = ?
+        ORDER BY hp_no DESC
+        LIMIT 8`,
       [mbId, odIdStr]
     );
 
@@ -203,8 +209,7 @@ class OrderRepository {
       const [cartItems] = await pool.query(
         `SELECT DISTINCT it_id
            FROM bomiora_shop_cart
-          WHERE mb_id = ?
-            AND REPLACE(REPLACE(CAST(od_id AS CHAR), ',', ''), ' ', '') = ?`,
+          WHERE mb_id = ? AND od_id = ?`,
         [mbId, odIdStr]
       );
       const itIds = (Array.isArray(cartItems) ? cartItems : [])
@@ -287,33 +292,21 @@ class OrderRepository {
     if (!odIds.length) return {};
     const placeholders = odIds.map(() => '?').join(', ');
     const [rows] = await pool.query(
-      `SELECT od_id,
+      `SELECT h.od_id,
               1 AS is_telemedicine,
               MAX(CASE
-                    WHEN hp_9 = 'prescription'
-                     AND hp_10 = 'completion'
-                     AND hp_mdatetime IS NOT NULL
-                     AND hp_mdatetime <> '0000-00-00 00:00:00'
+                    WHEN h.hp_9 = 'prescription'
+                     AND h.hp_10 = 'completion'
+                     AND h.hp_mdatetime IS NOT NULL
+                     AND h.hp_mdatetime <> '0000-00-00 00:00:00'
                     THEN 1 ELSE 0
                   END) AS is_consultation_done,
-              SUBSTRING_INDEX(GROUP_CONCAT(
-                CASE
-                  WHEN hp_rsvt_date IS NULL OR CAST(hp_rsvt_date AS CHAR) IN ('', '0000-00-00') THEN NULL
-                  ELSE DATE_FORMAT(hp_rsvt_date, '%Y-%m-%d')
-                END
-                ORDER BY hp_no DESC
-              ), ',', 1) AS hp_rsvt_date,
-              SUBSTRING_INDEX(GROUP_CONCAT(
-                NULLIF(CAST(hp_rsvt_stime AS CHAR), '')
-                ORDER BY hp_no DESC
-              ), ',', 1) AS hp_rsvt_stime,
-              SUBSTRING_INDEX(GROUP_CONCAT(
-                NULLIF(CAST(hp_rsvt_etime AS CHAR), '')
-                ORDER BY hp_no DESC
-              ), ',', 1) AS hp_rsvt_etime
-       FROM bomiora_shop_health_profiles_cart
-       WHERE mb_id = ? AND od_id IN (${placeholders})
-       GROUP BY od_id`,
+              SUBSTRING_INDEX(GROUP_CONCAT(DATE_FORMAT(h.hp_rsvt_date, '%Y-%m-%d') ORDER BY h.hp_no DESC), ',', 1) AS hp_rsvt_date,
+              SUBSTRING_INDEX(GROUP_CONCAT(h.hp_rsvt_stime ORDER BY h.hp_no DESC), ',', 1) AS hp_rsvt_stime,
+              SUBSTRING_INDEX(GROUP_CONCAT(h.hp_rsvt_etime ORDER BY h.hp_no DESC), ',', 1) AS hp_rsvt_etime
+       FROM bomiora_shop_health_profiles_cart h
+       WHERE h.mb_id = ? AND h.od_id IN (${placeholders})
+       GROUP BY h.od_id`,
       [mbId, ...odIds]
     );
     const map = {};

@@ -1,11 +1,13 @@
 const orderRepository = require('../repositories/OrderRepository');
 const orderCartRepository = require('../repositories/OrderCartRepository');
+const reviewRepository = require('../../review/repositories/ReviewRepository');
 const userRepository = require('../../../auth/repositories/UserRepository');
 const kcpApprovalService = require('../../../shopping/kcp_pay/services/kcpApprovalService');
+const { logKcpPayProblem } = require('../../../shopping/kcp_pay/services/kcpPayLogger');
 const { TtlCache } = require('../../../../utils/ttlCache');
 const { formatSqlDateOnlyForApi } = require('../../../../utils/healthDateTime');
 
-const orderDetailCache = new TtlCache(10_000);
+const orderDetailCache = new TtlCache(60_000);
 const orderListCache = new TtlCache(45_000);
 
 class OrderController {
@@ -190,6 +192,14 @@ class OrderController {
    * KCP 취소(mod_ip)는 "파트너관리자에 등록된 결제서버 IP"가 들어가야 하는 케이스가 있다.
    * 프록시 환경에서는 req.ip가 ::1/127.0.0.1 로 잡히므로 환경변수로 고정 IP를 우선 사용한다.
    */
+  /** KCP가 이미 취소된 거래를 다시 취소할 때 주는 코드 — 우리 DB만 맞추면 됨 */
+  isKcpAlreadyCancelled(resCd, resMsg = '') {
+    const code = String(resCd || '').trim();
+    if (code === '8133') return true;
+    const msg = String(resMsg || '');
+    return msg.includes('기취소');
+  }
+
   resolveKcpModIp(req) {
     const fromEnv = String(
       process.env.KCP_PAY_MOD_IP ||
@@ -463,11 +473,19 @@ class OrderController {
         const odIds = rows.map((r) => this.toOdId(r.od_id)).filter(Boolean);
 
         // size=1(마이페이지 미리보기)은 헬스플래그 생략 → RTT 1회 절약
-        const [allCarts, healthFlags] = await Promise.all([
+        const completedOdIds = rows
+          .filter((r) => Number(r.delivery_completed || 0) === 1)
+          .map((r) => this.toOdId(r.od_id))
+          .filter(Boolean);
+
+        const [allCarts, healthFlags, reviewedByOrder] = await Promise.all([
           orderCartRepository.findByOdIds(odIds),
           size <= 1
             ? Promise.resolve({})
             : orderRepository.getHealthProfileFlagsByOdIds(mbId, odIds),
+          completedOdIds.length
+            ? reviewRepository.findReviewedItIdsByOdIds(mbId, completedOdIds)
+            : Promise.resolve({}),
         ]);
 
         const cartsByOrder = {};
@@ -522,12 +540,14 @@ class OrderController {
             firstProductOption: items[0]?.ctOption || null,
             firstProductQty: items[0]?.ctQty || null,
             firstProductPrice: items[0]?.totalPrice || null,
+            reviewedItIds: reviewedByOrder[odId] || [],
           };
         });
 
         const totalPages = Math.ceil(total / size) || 0;
         return {
           orders,
+          reviewedByOrder,
           currentPage: page,
           totalPages,
           totalElements: total,
@@ -765,6 +785,26 @@ class OrderController {
           });
         } catch (kcpErr) {
           console.error('[OrderController] KCP 망취소(브리지) 실패', { odId, message: kcpErr.message });
+          logKcpPayProblem({
+            level: 'error',
+            action: '결제취소',
+            who: mbId,
+            what: {
+              odId,
+              tno,
+              amount: receiptPrice,
+              settleCase: this.bufferToString(order.od_settle_case || ''),
+              status: odStatus,
+            },
+            how: {
+              action: '사용자가 주문 취소 요청 → KCP 망취소(PHP 브리지)',
+              modType,
+              modDesc: 'USER_ORDER_CANCEL',
+              ip: clientIp,
+            },
+            why: kcpErr.message || 'KCP 승인 취소 브리지 실행 실패',
+            detail: { stage: 'bridge', message: kcpErr.message },
+          });
           return res.status(400).json({
             error: kcpErr.message || '카드 승인 취소(망취소) 처리에 실패했습니다.',
             kcp: { code: 'BRIDGE', message: kcpErr.message },
@@ -773,11 +813,59 @@ class OrderController {
         if (!kcpResult.success) {
           const resCd = String(kcpResult.res_cd || '');
           const resMsg = String(kcpResult.res_msg || '승인 취소에 실패했습니다.');
-          console.error('[OrderController] KCP 망취소 거절', { odId, res_cd: resCd, res_msg: resMsg, modType });
-          return res.status(400).json({
-            error: `결제 취소에 실패했습니다. (${resCd}) ${resMsg}`,
-            kcp: { code: resCd, message: resMsg, modType },
-          });
+          if (this.isKcpAlreadyCancelled(resCd, resMsg)) {
+            console.warn('[OrderController] KCP 이미 취소된 거래 — 주문만 취소 처리', {
+              odId,
+              res_cd: resCd,
+              res_msg: resMsg,
+            });
+            logKcpPayProblem({
+              level: 'warn',
+              action: '결제취소',
+              who: mbId,
+              what: {
+                odId,
+                tno,
+                amount: receiptPrice,
+                settleCase: this.bufferToString(order.od_settle_case || ''),
+                status: odStatus,
+              },
+              how: {
+                action: '사용자가 주문 취소 요청 → KCP는 이미 취소된 거래',
+                modType,
+                modDesc: 'USER_ORDER_CANCEL',
+                ip: clientIp,
+              },
+              why: `(${resCd}) ${resMsg} — KCP는 이미 취소됨. 우리 주문만 취소 처리함`,
+              detail: { stage: 'already_cancelled', res_cd: resCd, res_msg: resMsg },
+            });
+          } else {
+            console.error('[OrderController] KCP 망취소 거절', { odId, res_cd: resCd, res_msg: resMsg, modType });
+            logKcpPayProblem({
+              level: 'error',
+              action: '결제취소',
+              who: mbId,
+              what: {
+                odId,
+                tno,
+                amount: receiptPrice,
+                settleCase: this.bufferToString(order.od_settle_case || ''),
+                status: odStatus,
+              },
+              how: {
+                action: '사용자가 주문 취소 요청 → KCP 망취소 거절',
+                modType,
+                modDesc: 'USER_ORDER_CANCEL',
+                ip: clientIp,
+              },
+              why: `(${resCd}) ${resMsg}`,
+              detail: { stage: 'kcp_reject', res_cd: resCd, res_msg: resMsg, modType },
+            });
+            return res.status(400).json({
+              error: `결제 취소에 실패했습니다. (${resCd}) ${resMsg}`,
+              kcp: { code: resCd, message: resMsg, modType },
+            });
+          }
         }
       }
 

@@ -62,6 +62,23 @@ class ProductController {
     return this.getShopDefaultCached().catch(() => null);
   }
 
+  /** 홈 신상품 캐시 선적재 — 첫 방문 1초대 대기 방지 */
+  async warmHomeProductCaches() {
+    await this.warmShopDefault();
+    await homeProductCache
+      .getOrSet('new:4', async () => {
+        const [rows, shopDefault] = await Promise.all([
+          productRepository.findNewProducts(4),
+          this.getShopDefaultCached(),
+        ]);
+        return {
+          success: true,
+          data: (rows || []).map((r) => this.toProductSearchDto(r, shopDefault)),
+        };
+      })
+      .catch(() => null);
+  }
+
   _toInt(value, fallback = 0) {
     const n = Number(value);
     return Number.isFinite(n) ? Math.trunc(n) : fallback;
@@ -442,13 +459,17 @@ class ProductController {
   async getNewProducts(req, res) {
     try {
       const limit = Number(req.query.limit || 10);
-      const payload = await homeProductCache.getOrSet(`new:${limit}`, async () => ({
-        success: true,
-        data: await this.mapProductSearchDtos(
-          await productRepository.findNewProducts(limit)
-        ),
-      }));
-      res.set('Cache-Control', 'public, max-age=30');
+      const payload = await homeProductCache.getOrSet(`new:${limit}`, async () => {
+        const [rows, shopDefault] = await Promise.all([
+          productRepository.findNewProducts(limit),
+          this.getShopDefaultCached(),
+        ]);
+        return {
+          success: true,
+          data: (rows || []).map((r) => this.toProductSearchDto(r, shopDefault)),
+        };
+      });
+      res.set('Cache-Control', 'public, max-age=60');
       return res.json(payload);
     } catch (error) {
       return res.status(500).json({ success: false, message: `신상품 조회 실패: ${error.message}`, data: [] });

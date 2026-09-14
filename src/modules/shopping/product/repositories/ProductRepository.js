@@ -1,5 +1,19 @@
 const pool = require('../../../../config/database');
 
+/** 홈 신상품/베스트/MD — 카드에 쓰는 작은 컬럼만 (LONGTEXT·설명 제외) */
+const HOME_CARD_COLUMNS = `
+  CAST(it_id AS CHAR) AS it_id,
+  CAST(it_name AS CHAR) AS it_name,
+  it_price, it_cust_price,
+  CAST(ca_id AS CHAR) AS ca_id,
+  CAST(it_kind AS CHAR) AS it_kind,
+  it_type3, it_type4, it_stock_qty,
+  it_use_avg, it_use_cnt,
+  CAST(it_flutter_image_url AS CHAR) AS it_flutter_image_url,
+  CAST(it_img1 AS CHAR) AS it_img1,
+  it_sc_type, it_sc_price, it_sc_minimum
+`;
+
 /** 목록/카드용 — LONGTEXT·여분 이미지·옵션 메타 제외 */
 const LIST_COLUMNS = `
   CAST(it_id AS CHAR) AS it_id,
@@ -153,23 +167,23 @@ class ProductRepository {
   }
 
   async findBestProducts(limit) {
+    const safeLimit = Math.min(Math.max(Number(limit) || 10, 1), 50);
     const [rows] = await pool.query(
-      `SELECT ${LIST_COLUMNS} FROM bomiora_shop_item_new
-       WHERE it_type4 = 1 AND it_use = 1
+      `SELECT ${HOME_CARD_COLUMNS} FROM bomiora_shop_item_new
+       WHERE it_type4 = '1' AND it_use = '1'
        ORDER BY it_order ASC, it_id DESC
-       LIMIT ?`,
-      [Number(limit)]
+       LIMIT ${safeLimit}`
     );
     return rows;
   }
 
   async findNewProducts(limit) {
+    const safeLimit = Math.min(Math.max(Number(limit) || 10, 1), 50);
     const [rows] = await pool.query(
-      `SELECT ${LIST_COLUMNS} FROM bomiora_shop_item_new
-       WHERE it_type3 = 1 AND it_use = 1
+      `SELECT ${HOME_CARD_COLUMNS} FROM bomiora_shop_item_new
+       WHERE it_type3 = '1' AND it_use = '1'
        ORDER BY it_order ASC, it_id DESC
-       LIMIT ?`,
-      [Number(limit)]
+       LIMIT ${safeLimit}`
     );
     return rows;
   }
@@ -218,18 +232,19 @@ class ProductRepository {
   async findMdPickProducts(limit, productKind = null) {
     const hasKind = productKind != null && String(productKind).trim() !== '';
     const params = [];
-    let where = `it_use = 1 AND it_type5 = 1 AND (it_mb_inf = '' OR it_mb_inf IS NULL)`;
+    const safeLimit = Math.min(Math.max(Number(limit) || 4, 1), 50);
+    let where = `it_use = '1' AND it_type5 = '1' AND (it_mb_inf = '' OR it_mb_inf IS NULL)`;
     if (hasKind) {
       where += ' AND it_kind = ?';
       params.push(productKind);
     }
 
     const [rows] = await pool.query(
-      `SELECT ${LIST_COLUMNS} FROM bomiora_shop_item_new
+      `SELECT ${HOME_CARD_COLUMNS} FROM bomiora_shop_item_new
        WHERE ${where}
        ORDER BY it_order ASC, it_id DESC
-       LIMIT ?`,
-      [...params, Number(limit)]
+       LIMIT ${safeLimit}`,
+      params
     );
     return rows;
   }

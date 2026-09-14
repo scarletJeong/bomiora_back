@@ -2,6 +2,7 @@ const kcpPayService = require('../services/kcpPayService');
 const kcpPayStore = require('../services/kcpPayStore');
 const kcpPayRepository = require('../repositories/KcpPayRepository');
 const kcpApprovalService = require('../services/kcpApprovalService');
+const { logKcpPayProblem } = require('../services/kcpPayLogger');
 const cartController = require('../../cart/controllers/CartController');
 const couponRepository = require('../../../user/coupon/repositories/CouponRepository');
 
@@ -262,6 +263,21 @@ class KcpPayController {
       });
     } catch (error) {
       console.error('❌ [KcpPayController] request 오류:', error);
+      logKcpPayProblem({
+        level: 'error',
+        action: '결제요청',
+        who: String(req.body?.mb_id || req.body?.mbId || '').trim() || '알 수 없음',
+        what: {
+          amount: req.body?.final_amount,
+        },
+        how: {
+          action: '앱에서 KCP 결제 요청 생성',
+          ip: this.resolveClientIp(req),
+          payMethod: String(req.body?.payment_method || req.body?.pay_method || ''),
+        },
+        why: error.message || 'KCP 결제 요청 생성 중 오류',
+        detail: { stage: 'request', message: error.message },
+      });
       return res.status(500).json({
         success: false,
         message: error.message || 'KCP 결제 요청 생성 중 오류가 발생했습니다.',
@@ -308,6 +324,27 @@ class KcpPayController {
         token,
         order_no: String(req.body.order_no || req.body.ordr_idxx || '').trim(),
       });
+      logKcpPayProblem({
+        level: 'warn',
+        action: '결제',
+        who: '알 수 없음',
+        what: {
+          odId: String(req.body.order_no || req.body.ordr_idxx || '').trim(),
+          tno: String(req.body.tno || '').trim(),
+          token,
+        },
+        how: {
+          action: 'KCP 결제 콜백 수신 — 결제 세션 없음/만료',
+          ip: this.resolveClientIp(req),
+          payMethod: String(req.body.use_pay_method || req.body.pay_method || ''),
+        },
+        why: '결제 세션이 만료되었거나 토큰을 찾을 수 없음',
+        detail: {
+          stage: 'callback_expired',
+          res_cd: String(req.body.res_cd || '').trim(),
+          res_msg: String(req.body.res_msg || '').trim(),
+        },
+      });
       return res
         .status(200)
         .type('html')
@@ -325,6 +362,24 @@ class KcpPayController {
 
       if (resCd !== '0000') {
         const mappedMessage = this.mapKcpErrorMessage(resCd, resMsg || '결제가 취소되었거나 실패했습니다.');
+        logKcpPayProblem({
+          level: resCd === '3011' ? 'warn' : 'error',
+          action: '결제',
+          who: pending.request?.mbId || '알 수 없음',
+          what: {
+            odId: pending.request?.orderId,
+            amount: pending.request?.amount,
+            token,
+            settleCase: pending.request?.paymentMethod,
+          },
+          how: {
+            action: 'KCP 창에서 결제 인증 후 콜백 — KCP가 실패/중단 코드 반환',
+            ip: this.resolveClientIp(req),
+            payMethod: String(req.body.use_pay_method || req.body.pay_method || ''),
+          },
+          why: `(${resCd}) ${mappedMessage}${resMsg && resMsg !== mappedMessage ? ` / KCP원문=${resMsg}` : ''}`,
+          detail: { stage: 'callback_res_cd', res_cd: resCd, res_msg: resMsg },
+        });
         const failed = kcpPayStore.saveResult(token, {
           status: 'failed',
           success: false,
@@ -523,6 +578,30 @@ class KcpPayController {
         use_pay_method: String(req.body.use_pay_method || req.body.pay_method || '').trim(),
         order_no: String(req.body.order_no || req.body.ordr_idxx || '').trim(),
       });
+      logKcpPayProblem({
+        level: 'error',
+        action: '결제',
+        who: pending.request?.mbId || '알 수 없음',
+        what: {
+          odId: pending.request?.orderId || String(req.body.order_no || req.body.ordr_idxx || '').trim(),
+          tno: String(error?.raw?.approval?.tno || req.body.tno || '').trim(),
+          amount: pending.request?.amount,
+          token,
+        },
+        how: {
+          action: 'KCP 결제 콜백 처리(서버 승인/주문저장)',
+          ip: this.resolveClientIp(req),
+          payMethod: String(req.body.use_pay_method || req.body.pay_method || ''),
+        },
+        why: this.resolveClientErrorMessage(error),
+        detail: {
+          stage: 'callback',
+          error_code: this.resolveClientErrorCode(error),
+          res_cd: String(req.body.res_cd || error?.raw?.approval?.res_cd || '').trim(),
+          cancel: error?.cancel || null,
+          message: error?.message,
+        },
+      });
       kcpPayStore.saveResult(token, {
         status: 'failed',
         success: false,
@@ -620,9 +699,37 @@ class KcpPayController {
         amount,
         message: updated.message || '',
       });
+      logKcpPayProblem({
+        level: 'error',
+        action: '입금통보',
+        who: 'KCP',
+        what: { odId: orderId, tno, amount },
+        how: {
+          action: 'KCP 가상계좌 입금통보(TX00) 반영 실패',
+          ip: this.resolveClientIp(req),
+        },
+        why: updated.message || '가상계좌 입금 반영에 실패했습니다.',
+        detail: { stage: 'tx00_not_applied', tx_cd: txCd, tx_time: txTime },
+      });
       return res.status(200).type('text/plain').send('9999');
     } catch (error) {
       console.error('❌ [KcpPayController] common 오류:', error);
+      logKcpPayProblem({
+        level: 'error',
+        action: '입금통보',
+        who: 'KCP',
+        what: {
+          odId: String(req.body?.order_no || '').trim(),
+          tno: String(req.body?.tno || '').trim(),
+          amount: req.body?.ipgm_mnyx,
+        },
+        how: {
+          action: 'KCP 가상계좌 입금통보(TX00) 처리 중 예외',
+          ip: this.resolveClientIp(req),
+        },
+        why: error.message || '입금통보 처리 중 오류',
+        detail: { stage: 'common', message: error.message, tx_cd: String(req.body?.tx_cd || '') },
+      });
       return res.status(200).type('text/plain').send('9999');
     }
   }
@@ -761,6 +868,19 @@ class KcpPayController {
   async tryAutoCancel({ orderId, tno, pendingRequest, approval, clientIp, reason }) {
     const txn = String(tno || '').trim();
     if (!txn) {
+      logKcpPayProblem({
+        level: 'error',
+        action: '자동취소',
+        who: pendingRequest?.mbId || '알 수 없음',
+        what: { odId: orderId, amount: pendingRequest?.amount ?? approval?.amount },
+        how: {
+          action: '결제 실패 후 KCP 자동 망취소 시도',
+          modDesc: reason || 'AUTO_CANCEL',
+          ip: clientIp,
+        },
+        why: `거래번호(tno)가 없어 자동취소를 할 수 없음 / 원인=${reason || 'AUTO_CANCEL'}`,
+        detail: { stage: 'auto_cancel_no_tno', reason: reason || 'AUTO_CANCEL' },
+      });
       return { attempted: false, success: false, reason: 'NO_TNO' };
     }
 
@@ -783,6 +903,31 @@ class KcpPayController {
         mod_type: modType,
         res_cd: String(result?.res_cd || ''),
       });
+      if (result.success !== true) {
+        logKcpPayProblem({
+          level: 'error',
+          action: '자동취소',
+          who: pendingRequest?.mbId || '알 수 없음',
+          what: {
+            odId: orderId,
+            tno: txn,
+            amount: pendingRequest?.amount ?? approval?.amount,
+          },
+          how: {
+            action: '결제 실패 후 KCP 자동 망취소',
+            modType,
+            modDesc: reason || 'AUTO_CANCEL',
+            ip: clientIp,
+          },
+          why: `(${result?.res_cd || 'NO_CODE'}) ${result?.res_msg || '자동취소 실패'} / 원인=${reason || 'AUTO_CANCEL'}`,
+          detail: {
+            stage: 'auto_cancel',
+            res_cd: result?.res_cd || null,
+            res_msg: result?.res_msg || null,
+            reason: reason || 'AUTO_CANCEL',
+          },
+        });
+      }
       return {
         attempted: true,
         success: result.success === true,
@@ -796,6 +941,24 @@ class KcpPayController {
         tno: txn,
         mod_type: modType,
         message: cancelError.message,
+      });
+      logKcpPayProblem({
+        level: 'error',
+        action: '자동취소',
+        who: pendingRequest?.mbId || '알 수 없음',
+        what: {
+          odId: orderId,
+          tno: txn,
+          amount: pendingRequest?.amount ?? approval?.amount,
+        },
+        how: {
+          action: '결제 실패 후 KCP 자동 망취소(브리지 예외)',
+          modType,
+          modDesc: reason || 'AUTO_CANCEL',
+          ip: clientIp,
+        },
+        why: `${cancelError.message || '자동취소 브리지 실패'} / 원인=${reason || 'AUTO_CANCEL'}`,
+        detail: { stage: 'auto_cancel_bridge', message: cancelError.message, reason: reason || 'AUTO_CANCEL' },
       });
       return {
         attempted: true,
