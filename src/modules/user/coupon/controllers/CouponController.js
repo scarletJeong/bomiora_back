@@ -1,6 +1,7 @@
 const couponRepository = require('../repositories/CouponRepository');
 const { HelpCouponError } = couponRepository;
 const { TtlCache } = require('../../../../utils/ttlCache');
+const { formatSqlDateOnlyForApi } = require('../../../../utils/healthDateTime');
 
 const couponResponseCache = new TtlCache(180_000);
 
@@ -14,8 +15,8 @@ class CouponController {
       cp_target: c.cp_target,
       mb_id: c.mb_id,
       cz_id: c.cz_id,
-      cp_start: c.cp_start,
-      cp_end: c.cp_end,
+      cp_start: formatSqlDateOnlyForApi(c.cp_start) || c.cp_start,
+      cp_end: formatSqlDateOnlyForApi(c.cp_end) || c.cp_end,
       cp_price: c.cp_price,
       cp_type: c.cp_type,
       cp_trunc: c.cp_trunc,
@@ -89,12 +90,12 @@ class CouponController {
         String(req.query.count || '') === '1' ||
         String(req.query.countOnly || '') === '1';
       if (countOnly) {
-        const count = await couponResponseCache.getOrSet(`avail-count:${mbId}`, async () => {
-          const cnt = await couponRepository.countAvailableCoupons(mbId);
-          return { success: true, count: cnt };
+        const tabs = await this._tabsPayload(mbId);
+        res.set('Cache-Control', 'private, max-age=30');
+        return res.json({
+          success: true,
+          count: Array.isArray(tabs.available) ? tabs.available.length : 0,
         });
-        res.set('Cache-Control', 'private, max-age=20');
-        return res.json(count);
       }
       const tabs = await this._tabsPayload(mbId);
       res.set('Cache-Control', 'private, max-age=30');

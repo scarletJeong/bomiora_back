@@ -1,6 +1,6 @@
 const crypto = require('crypto');
 const pool = require('../../../../config/database');
-const { addDaysToYmdDateString } = require('../../../../utils/healthDateTime');
+const { addDaysToYmdDateString, formatSqlDateOnlyForApi } = require('../../../../utils/healthDateTime');
 const { TtlCache } = require('../../../../utils/ttlCache');
 
 const couponBundleCache = new TtlCache(180_000);
@@ -77,8 +77,7 @@ class CouponRepository {
   }
 
   _ymd(value) {
-    if (value == null) return '';
-    return String(value).trim().slice(0, 10);
+    return formatSqlDateOnlyForApi(value) || '';
   }
 
   _isUsedRow(c, usedMap) {
@@ -114,6 +113,10 @@ class CouponRepository {
       ),
     ]);
     const coupons = couponRows[0] || [];
+    for (const c of coupons) {
+      c.cp_start = this._ymd(c.cp_start);
+      c.cp_end = this._ymd(c.cp_end);
+    }
     const usedMap = new Map();
     for (const row of logRows[0] || []) {
       const cpId = String(row.cp_id || '').trim();
@@ -297,23 +300,8 @@ class CouponRepository {
   }
 
   async countAvailableCoupons(userId) {
-    const id = String(userId || '').trim();
-    if (!id) return 0;
-    const today = kstTodayYmd();
-    const [rows] = await pool.execute(
-      `SELECT COUNT(*) AS cnt
-         FROM bomiora_shop_coupon c
-        WHERE c.mb_id = ?
-          AND (c.od_id IS NULL OR c.od_id = 0 OR c.od_id = '')
-          AND DATE_FORMAT(c.cp_start, '%Y-%m-%d') <= ?
-          AND DATE_FORMAT(c.cp_end, '%Y-%m-%d') >= ?
-          AND NOT EXISTS (
-            SELECT 1 FROM bomiora_shop_coupon_log l
-             WHERE l.mb_id = c.mb_id AND l.cp_id = c.cp_id
-          )`,
-      [id, today, today]
-    );
-    return Number(rows[0]?.cnt || 0);
+    const list = await this.findAvailableCoupons(userId);
+    return list.length;
   }
 
   /**
