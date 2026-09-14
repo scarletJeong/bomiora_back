@@ -2,7 +2,7 @@ const pool = require('../../../../config/database');
 const { notifyPointEarned } = require('../../notification/services/MemberNotifyService');
 const { TtlCache } = require('../../../../utils/ttlCache');
 
-const pointReadCache = new TtlCache(60_000);
+const pointReadCache = new TtlCache(180_000);
 
 class PointRepository {
   invalidateMemberPoint(mbId) {
@@ -31,19 +31,19 @@ class PointRepository {
     });
   }
 
-  async findHistoryByUserId(userId, limit = 100) {
+  async findHistoryByUserId(userId, limit = 50) {
     const id = String(userId || '').trim();
     if (!id) return [];
-    const safeLimit = Math.min(Math.max(Number(limit) || 100, 1), 200);
+    const safeLimit = Math.min(Math.max(Number(limit) || 50, 1), 100);
     return pointReadCache.getOrSet(`history:${id}:${safeLimit}`, async () => {
       const [rows] = await pool.query(
         `SELECT
            po_id,
-           DATE_FORMAT(po_datetime, '%Y-%m-%d %H:%i:%s') AS po_datetime,
-           CAST(LEFT(IFNULL(po_content, ''), 120) AS CHAR) AS po_content,
+           po_datetime,
+           LEFT(IFNULL(po_content, ''), 80) AS po_content,
            po_point,
            po_use_point,
-           DATE_FORMAT(po_expire_date, '%Y-%m-%d') AS po_expire_date
+           po_expire_date
          FROM bomiora_point
          WHERE mb_id = ?
          ORDER BY po_id DESC

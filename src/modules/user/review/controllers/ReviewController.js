@@ -153,12 +153,21 @@ class ReviewController {
   }
 
   /** bomiora_shop_item_new 조인 썸네일 → 앱 productImage */
+  _isReviewAttachPath(s) {
+    const t = String(s || '').toLowerCase();
+    return t.includes('review_images') ||
+      t.includes('itemuse') ||
+      t.includes('/api/user/reviews/images/');
+  }
+
   _firstShopItemImage(row) {
     const flutter = this.trimSqlText(row.it_flutter_image_url);
-    if (flutter) return flutter;
+    if (flutter && !this._isReviewAttachPath(flutter)) return flutter;
+    const shop = this.trimSqlText(row.shop_it_img1);
+    if (shop && !this._isReviewAttachPath(shop)) return shop;
     for (let i = 1; i <= 9; i += 1) {
       const t = this.trimSqlText(row[`it_img${i}`]);
-      if (t) return t;
+      if (t && !this._isReviewAttachPath(t)) return t;
     }
     return null;
   }
@@ -662,16 +671,16 @@ class ReviewController {
       if (!Number.isFinite(page) || page < 0) page = 0;
 
       const mrNoRaw = req.query.mrNo;
+      const pageGiven = req.query.page != null && String(req.query.page).trim() !== '';
       let focusPage = null;
-      if (mrNoRaw != null && String(mrNoRaw).trim() !== '') {
+      if (!pageGiven && mrNoRaw != null && String(mrNoRaw).trim() !== '') {
         const idx = await mainReviewBestCache.getOrSet(
           `idx:${mrNoRaw}`,
           () => mainReviewRepository.findPublishedIndex(mrNoRaw),
-          60_000
+          180_000
         );
         if (idx >= 0) {
           focusPage = Math.floor(idx / size);
-          // mrNo가 있으면 해당 리뷰가 있는 페이지로 이동 (홈 카드 진입용)
           page = focusPage;
         }
       }
@@ -679,26 +688,29 @@ class ReviewController {
       const payload = await mainReviewBestCache.getOrSet(
         `best:${page}:${size}`,
         async () => {
-          const [totalElements, rows, statsRow] = await Promise.all([
-            mainReviewBestCache.getOrSet('stats:count', () =>
-              mainReviewRepository.countPublished()
-            ),
-            mainReviewRepository.findPublishedPage({ page, size }),
-            mainReviewBestCache.getOrSet('stats:agg', () =>
-              mainReviewRepository.getPublishedStats()
+          const [rowsPlus, statsRow] = await Promise.all([
+            mainReviewRepository.findPublishedPage({ page, size: size + 1 }),
+            mainReviewBestCache.getOrSet(
+              'stats:agg',
+              () => mainReviewRepository.getPublishedStats(),
+              300_000
             ),
           ]);
-          const totalPages = totalElements === 0 ? 0 : Math.ceil(totalElements / size);
+          const hasMore = rowsPlus.length > size;
+          const rows = hasMore ? rowsPlus.slice(0, size) : rowsPlus;
+          const totalElements = page * size + rows.length + (hasMore ? 1 : 0);
+          const totalPages = hasMore ? page + 2 : page + 1;
           return {
             success: true,
             reviews: rows.map((r) => this.toMainReviewRow(r)),
             currentPage: page,
             totalPages,
             totalElements,
-            hasNext: page + 1 < totalPages,
+            hasNext: hasMore,
             stats: this.toMainReviewStats(statsRow),
           };
-        }
+        },
+        180_000
       );
 
       res.set('Cache-Control', 'public, max-age=30');
@@ -749,17 +761,18 @@ class ReviewController {
   async updateReview(req, res) {
     try {
       const isId = Number(req.params.isId);
-      const row = await reviewRepository.findById(isId);
-      if (!row) return res.json({ success: false, message: '리뷰를 찾을 수 없습니다.' });
-      if (!this._isSameMember(row.mb_id, req.body.mbId)) {
+      const mbId = req.body.mbId != null ? String(req.body.mbId).trim() : '';
+      if (!mbId) {
         return res.json({ success: false, message: '리뷰를 수정할 권한이 없습니다.' });
       }
 
       const images = req.body.images != null ? this._normalizeReviewImages(req.body.images) : null;
       const fields = {};
-      // 일반 상품 리뷰만 세부점수(is_score1~4) 미갱신. is_rvkind(서포터/일반)와 무관
-      const productKindHint = this._reviewUiHintFromItKind(row.it_kind);
-      const isGeneralProduct = productKindHint === 'general_card';
+      const itKind = req.body.itKind || req.body.it_kind;
+      const productKindHint = this._reviewUiHintFromItKind(itKind);
+      const isGeneralProduct =
+        productKindHint === 'general_card' ||
+        String(req.body.isRvkind || '').toLowerCase() === 'general';
 
       if (!isGeneralProduct) {
         if (req.body.isScore1 != null) {
@@ -774,16 +787,13 @@ class ReviewController {
         if (req.body.isScore4 != null) {
           fields.is_score4 = this._normalizeTenthScore(req.body.isScore4) ?? 0;
         }
-        // 처방: 효과~편리함 평균 → total_is_score (is_score1~4 값은 유지·갱신만)
-        const s1 = fields.is_score1 != null ? fields.is_score1 : row.is_score1;
-        const s2 = fields.is_score2 != null ? fields.is_score2 : row.is_score2;
-        const s3 = fields.is_score3 != null ? fields.is_score3 : row.is_score3;
-        const s4 = fields.is_score4 != null ? fields.is_score4 : row.is_score4;
+        const s1 = fields.is_score1 ?? req.body.isScore1;
+        const s2 = fields.is_score2 ?? req.body.isScore2;
+        const s3 = fields.is_score3 ?? req.body.isScore3;
+        const s4 = fields.is_score4 ?? req.body.isScore4;
         fields.total_is_score = this._avgFourScores(s1, s2, s3, s4);
       } else if (req.body.totalIsScore !== undefined && req.body.totalIsScore !== null) {
         fields.total_is_score = this._normalizeTenthScore(req.body.totalIsScore);
-      } else if (this._parseStoredTotal(row) == null) {
-        fields.total_is_score = this._avgFourFromRow(row);
       }
       if (req.body.isPositiveReviewText != null) {
         fields.is_positive_review_text = String(req.body.isPositiveReviewText);
@@ -791,8 +801,7 @@ class ReviewController {
       if (req.body.isNegativeReviewText != null) {
         fields.is_negative_review_text = String(req.body.isNegativeReviewText);
       } else if (isGeneralProduct) {
-        // 일반 리뷰 수정 시 null 로 덮지 않음 — NOT NULL 컬럼
-        fields.is_negative_review_text = row.is_negative_review_text ?? '';
+        fields.is_negative_review_text = '';
       }
       if (req.body.isMoreReviewText !== undefined) {
         const memo = req.body.isMoreReviewText;
@@ -813,12 +822,39 @@ class ReviewController {
         fields.is_img10 = images[9] || '';
       }
 
-      const updated = await reviewRepository.updateById(isId, fields);
-      this._invalidateMemberReviewList(row.mb_id);
-      if (updated?.it_id != null) this._invalidateProductReviewList(updated.it_id);
-      else if (row.it_id != null) this._invalidateProductReviewList(row.it_id);
-      this._syncAggregatesLater(updated?.it_id ?? row.it_id);
-      return res.json({ success: true, message: '리뷰가 성공적으로 수정되었습니다.', review: this.toReviewResponse(updated) });
+      const affected = await reviewRepository.updateByIdAndMbId(isId, mbId, fields);
+      if (!affected) {
+        return res.json({ success: false, message: '리뷰를 찾을 수 없거나 수정 권한이 없습니다.' });
+      }
+      const itId = req.body.itId != null ? String(req.body.itId).trim() : '';
+      if (itId) this._invalidateProductReviewList(itId);
+      this._syncAggregatesLater(itId);
+      const merged = {
+        is_id: isId,
+        mb_id: mbId,
+        it_id: itId,
+        it_name: req.body.itName,
+        it_kind: itKind,
+        is_score1: fields.is_score1 ?? req.body.isScore1,
+        is_score2: fields.is_score2 ?? req.body.isScore2,
+        is_score3: fields.is_score3 ?? req.body.isScore3,
+        is_score4: fields.is_score4 ?? req.body.isScore4,
+        total_is_score: fields.total_is_score ?? req.body.totalIsScore,
+        is_rvkind: req.body.isRvkind,
+        is_recommend: fields.is_recommend ?? req.body.isRecommend,
+        is_positive_review_text: fields.is_positive_review_text ?? req.body.isPositiveReviewText,
+        is_negative_review_text: fields.is_negative_review_text ?? req.body.isNegativeReviewText,
+        is_more_review_text: fields.is_more_review_text ?? req.body.isMoreReviewText,
+        is_img1: fields.is_img1,
+        is_img2: fields.is_img2,
+        is_img3: fields.is_img3,
+        it_img1: req.body.productImage,
+      };
+      return res.json({
+        success: true,
+        message: '리뷰가 성공적으로 수정되었습니다.',
+        review: this.toReviewResponse(merged),
+      });
     } catch (error) {
       return res.json({ success: false, message: `리뷰 수정 중 오류가 발생했습니다: ${error.message}` });
     }

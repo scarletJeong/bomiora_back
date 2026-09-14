@@ -1,7 +1,7 @@
 const wishRepository = require('../repositories/WishRepository');
 const { TtlCache } = require('../../../../utils/ttlCache');
 
-const wishListCache = new TtlCache(120_000);
+const wishListCache = new TtlCache(180_000);
 
 class WishController {
   bufferToString(value) {
@@ -154,7 +154,7 @@ class WishController {
 
         return { success: true, data, count: data.length };
       });
-      res.set('Cache-Control', 'private, max-age=10');
+      res.set('Cache-Control', 'private, max-age=30');
       return res.json(payload);
     } catch (error) {
       return res.status(500).json({ success: false, message: '찜목록 조회 중 오류가 발생했습니다.' });

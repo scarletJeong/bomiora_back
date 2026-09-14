@@ -846,10 +846,6 @@ class UserController {
       if (!mbId) {
         return res.status(400).json({ success: false, message: 'mbId가 필요합니다.' });
       }
-      const user = await userRepository.findByMbId(mbId);
-      if (!user) {
-        return res.status(404).json({ success: false, message: '사용자를 찾을 수 없습니다.' });
-      }
       if (!bank) {
         return res.status(400).json({ success: false, message: '은행을 선택해 주세요.' });
       }

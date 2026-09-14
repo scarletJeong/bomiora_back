@@ -91,7 +91,7 @@ class WishRepository {
          p.it_subject,
          p.it_price,
          p.it_kind,
-         p.it_img1,
+         LEFT(IFNULL(p.it_flutter_image_url, p.it_img1), 200) AS it_img1,
          p.it_flutter_image_url,
          LEFT(IFNULL(p.it_basic, ''), 80) AS it_basic
        FROM bomiora_shop_wish w

@@ -66,7 +66,7 @@ class PointController {
       if (!userId) {
         return res.status(400).json({ success: false, message: 'mb_id가 필요합니다.' });
       }
-      const limit = Math.min(Math.max(Number(req.query.size) || 100, 1), 200);
+      const limit = Math.min(Math.max(Number(req.query.size) || 50, 1), 100);
       const history = await pointRepository.findHistoryByUserId(userId, limit);
       res.set('Cache-Control', 'private, max-age=30');
       return res.json({ success: true, data: history });

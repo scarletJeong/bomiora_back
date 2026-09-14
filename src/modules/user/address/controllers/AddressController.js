@@ -1,7 +1,7 @@
 const addressRepository = require('../repositories/AddressRepository');
 const { TtlCache } = require('../../../../utils/ttlCache');
 
-const addressListCache = new TtlCache(60_000);
+const addressListCache = new TtlCache(180_000);
 
 class AddressController {
   toText(value) {
@@ -118,10 +118,6 @@ class AddressController {
       const id = Number(req.params.id);
       const dto = req.body;
       const mbId = dto.mb_id || dto.mbId;
-      if (Number(dto.ad_default ?? dto.adDefault ?? 0) === 1) {
-        await addressRepository.clearDefaultByMbId(mbId);
-      }
-
       const updated = await addressRepository.update(id, mbId, {
         ad_subject: dto.ad_subject ?? dto.adSubject ?? '',
         ad_default: Number(dto.ad_default ?? dto.adDefault ?? 0),

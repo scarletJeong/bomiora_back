@@ -3,25 +3,25 @@ const pool = require('../../../../config/database');
 const { addDaysToYmdDateString } = require('../../../../utils/healthDateTime');
 const { TtlCache } = require('../../../../utils/ttlCache');
 
-const couponBundleCache = new TtlCache(60_000);
+const couponBundleCache = new TtlCache(180_000);
 
 const COUPON_LIST_COLUMNS = `
   c.cp_no,
-  CAST(c.cp_id AS CHAR) AS cp_id,
-  CAST(c.cp_subject AS CHAR) AS cp_subject,
+  c.cp_id,
+  c.cp_subject,
   c.cp_method,
-  CAST(c.cp_target AS CHAR) AS cp_target,
-  CAST(c.mb_id AS CHAR) AS mb_id,
+  c.cp_target,
+  c.mb_id,
   c.cz_id,
-  DATE_FORMAT(c.cp_start, '%Y-%m-%d') AS cp_start,
-  DATE_FORMAT(c.cp_end, '%Y-%m-%d') AS cp_end,
+  c.cp_start,
+  c.cp_end,
   c.cp_price,
   c.cp_type,
   c.cp_trunc,
   c.cp_minimum,
   c.cp_maximum,
   c.od_id,
-  DATE_FORMAT(c.cp_datetime, '%Y-%m-%d %H:%i:%s') AS cp_datetime
+  c.cp_datetime
 `;
 
 const COUPON_ID_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ123456789';
@@ -104,8 +104,8 @@ class CouponRepository {
       ),
       pool.query(
         `SELECT
-           CAST(cp_id AS CHAR) AS cp_id,
-           DATE_FORMAT(MAX(cl_datetime), '%Y-%m-%d %H:%i:%s') AS cl_datetime,
+           cp_id,
+           MAX(cl_datetime) AS cl_datetime,
            MAX(od_id) AS od_id
          FROM bomiora_shop_coupon_log
          WHERE mb_id = ?
@@ -119,7 +119,7 @@ class CouponRepository {
       const cpId = String(row.cp_id || '').trim();
       if (cpId) usedMap.set(cpId, { cl_datetime: row.cl_datetime || null, od_id: row.od_id });
     }
-    await this.attachAppliedProductLabels(coupons);
+    this.attachAppliedProductLabelsFast(coupons);
     return { coupons, usedMap };
   }
 

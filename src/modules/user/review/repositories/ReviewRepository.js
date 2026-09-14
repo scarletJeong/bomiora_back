@@ -138,16 +138,25 @@ ${JOIN_SHOP_ITEM_NEW_SELECT}
   }
 
   async updateById(isId, fields) {
+    return this.updateByIdAndMbId(isId, null, fields);
+  }
+
+  async updateByIdAndMbId(isId, mbId, fields) {
     const pairs = [];
     const values = [];
     Object.entries(fields).forEach(([k, v]) => {
       pairs.push(`${k} = ?`);
       values.push(v);
     });
-    if (!pairs.length) return this.findById(isId);
+    if (!pairs.length) return 0;
     values.push(isId);
-    await pool.query(`UPDATE bomiora_shop_item_use SET ${pairs.join(', ')} WHERE is_id = ?`, values);
-    return this.findById(isId);
+    let sql = `UPDATE bomiora_shop_item_use SET ${pairs.join(', ')} WHERE is_id = ?`;
+    if (mbId != null && String(mbId).trim() !== '') {
+      sql += ' AND mb_id = ?';
+      values.push(String(mbId).trim());
+    }
+    const [result] = await pool.query(sql, values);
+    return result.affectedRows;
   }
 
   normalizeItId(v) {
@@ -328,6 +337,7 @@ ${JOIN_SHOP_ITEM_NEW_SELECT}
          COALESCE(n.it_name, n.it_subject) AS it_name,
          n.it_kind,
          n.it_flutter_image_url,
+         LEFT(IFNULL(n.it_img1, ''), 255) AS shop_it_img1,
          LEFT(IFNULL(n.it_img1, ''), 255) AS it_img1
        FROM bomiora_shop_item_use r
        LEFT JOIN bomiora_shop_item_new n ON n.it_id = r.it_id

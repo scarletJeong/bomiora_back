@@ -2,7 +2,7 @@ const couponRepository = require('../repositories/CouponRepository');
 const { HelpCouponError } = couponRepository;
 const { TtlCache } = require('../../../../utils/ttlCache');
 
-const couponResponseCache = new TtlCache(60_000);
+const couponResponseCache = new TtlCache(180_000);
 
 class CouponController {
   toMap(c) {
@@ -41,6 +41,33 @@ class CouponController {
     }
   }
 
+  async _tabsPayload(mbId) {
+    return couponResponseCache.getOrSet(`tabs:${mbId}`, async () => {
+      const [available, used, expired] = await Promise.all([
+        couponRepository.findAvailableCoupons(mbId),
+        couponRepository.findUsedCoupons(mbId),
+        couponRepository.findExpiredCoupons(mbId),
+      ]);
+      return {
+        success: true,
+        available: available.map((r) => this.toMap(r)),
+        used: used.map((r) => this.toMap(r)),
+        expired: expired.map((r) => this.toMap(r)),
+      };
+    });
+  }
+
+  async getCouponTabs(req, res) {
+    try {
+      const mbId = String(req.query.mb_id || '').trim();
+      const payload = await this._tabsPayload(mbId);
+      res.set('Cache-Control', 'private, max-age=30');
+      return res.json(payload);
+    } catch (error) {
+      return res.status(500).json({ success: false, message: `쿠폰 목록 조회 실패: ${error.message}` });
+    }
+  }
+
   async getUserCoupons(req, res) {
     try {
       const mbId = String(req.query.mb_id || '').trim();
@@ -69,12 +96,9 @@ class CouponController {
         res.set('Cache-Control', 'private, max-age=20');
         return res.json(count);
       }
-      const payload = await couponResponseCache.getOrSet(`avail:${mbId}`, async () => {
-        const rows = await couponRepository.findAvailableCoupons(mbId);
-        return { success: true, data: rows.map((r) => this.toMap(r)) };
-      });
-      res.set('Cache-Control', 'private, max-age=20');
-      return res.json(payload);
+      const tabs = await this._tabsPayload(mbId);
+      res.set('Cache-Control', 'private, max-age=30');
+      return res.json({ success: true, data: tabs.available || [] });
     } catch (error) {
       return res.status(500).json({ success: false, message: `사용가능한 쿠폰 조회 실패: ${error.message}` });
     }
@@ -83,12 +107,9 @@ class CouponController {
   async getUsedCoupons(req, res) {
     try {
       const mbId = String(req.query.mb_id || '').trim();
-      const payload = await couponResponseCache.getOrSet(`used:${mbId}`, async () => {
-        const rows = await couponRepository.findUsedCoupons(mbId);
-        return { success: true, data: rows.map((r) => this.toMap(r)) };
-      });
-      res.set('Cache-Control', 'private, max-age=20');
-      return res.json(payload);
+      const tabs = await this._tabsPayload(mbId);
+      res.set('Cache-Control', 'private, max-age=30');
+      return res.json({ success: true, data: tabs.used || [] });
     } catch (error) {
       return res.status(500).json({ success: false, message: `사용한 쿠폰 조회 실패: ${error.message}` });
     }
@@ -97,12 +118,9 @@ class CouponController {
   async getExpiredCoupons(req, res) {
     try {
       const mbId = String(req.query.mb_id || '').trim();
-      const payload = await couponResponseCache.getOrSet(`exp:${mbId}`, async () => {
-        const rows = await couponRepository.findExpiredCoupons(mbId);
-        return { success: true, data: rows.map((r) => this.toMap(r)) };
-      });
-      res.set('Cache-Control', 'private, max-age=20');
-      return res.json(payload);
+      const tabs = await this._tabsPayload(mbId);
+      res.set('Cache-Control', 'private, max-age=30');
+      return res.json({ success: true, data: tabs.expired || [] });
     } catch (error) {
       return res.status(500).json({ success: false, message: `만료된 쿠폰 조회 실패: ${error.message}` });
     }
