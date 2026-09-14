@@ -133,52 +133,79 @@ class ContentRepository {
   }
 
   /**
+   * 클라이언트가 보낸 추천 상태를 반영. 트랜잭션/카운트 SELECT 없이 빠르게 기록.
+   */
+  async applyRecommendState(contentId, mbId, pfNo, wantOn) {
+    if (wantOn) {
+      const [ins] = await pool.query(
+        `INSERT IGNORE INTO bm_content_recommend_log (content_id, mb_id, pf_no)
+         VALUES (?, ?, ?)`,
+        [contentId, mbId, pfNo]
+      );
+      if (ins.affectedRows > 0) {
+        await pool.query(
+          `UPDATE bm_content
+              SET recommend_count = IFNULL(recommend_count, 0) + 1
+            WHERE id = ?
+              AND is_deleted = 0
+              AND is_published = 1`,
+          [contentId]
+        );
+      }
+      return;
+    }
+    const [del] = await pool.query(
+      `DELETE FROM bm_content_recommend_log
+        WHERE content_id = ? AND mb_id = ? AND pf_no = ?
+        LIMIT 1`,
+      [contentId, mbId, pfNo]
+    );
+    if (del.affectedRows > 0) {
+      await pool.query(
+        `UPDATE bm_content
+            SET recommend_count = GREATEST(IFNULL(recommend_count, 0) - 1, 0)
+          WHERE id = ?
+            AND is_deleted = 0`,
+        [contentId]
+      );
+    }
+  }
+
+  /**
    * 추천 토글. 본문 HTML을 읽지 않는다.
    * @returns {Promise<{ recommended: boolean, count: number } | null>}
    */
   async toggleRecommend(contentId, mbId, pfNo) {
-    const connection = await pool.getConnection();
-    try {
-      await connection.beginTransaction();
-      const [del] = await connection.query(
-        `DELETE FROM bm_content_recommend_log
-          WHERE content_id = ? AND mb_id = ? AND pf_no = ?
-          LIMIT 1`,
+    const [del] = await pool.query(
+      `DELETE FROM bm_content_recommend_log
+        WHERE content_id = ? AND mb_id = ? AND pf_no = ?
+        LIMIT 1`,
+      [contentId, mbId, pfNo]
+    );
+    const turningOn = del.affectedRows === 0;
+    if (turningOn) {
+      await pool.query(
+        `INSERT IGNORE INTO bm_content_recommend_log (content_id, mb_id, pf_no)
+         VALUES (?, ?, ?)`,
         [contentId, mbId, pfNo]
       );
-      const turningOn = del.affectedRows === 0;
-      if (turningOn) {
-        await connection.query(
-          `INSERT INTO bm_content_recommend_log (content_id, mb_id, pf_no)
-           VALUES (?, ?, ?)`,
-          [contentId, mbId, pfNo]
-        );
-      }
-      const delta = turningOn ? 1 : -1;
-      const [up] = await connection.query(
-        `UPDATE bm_content
-            SET recommend_count = LAST_INSERT_ID(GREATEST(IFNULL(recommend_count, 0) + ?, 0))
-          WHERE id = ?
-            AND is_deleted = 0
-            AND is_published = 1`,
-        [delta, contentId]
-      );
-      if (up.affectedRows !== 1) {
-        await connection.rollback();
-        return null;
-      }
-      const [lid] = await connection.query('SELECT LAST_INSERT_ID() AS c');
-      await connection.commit();
-      return {
-        recommended: turningOn,
-        count: Number(lid?.[0]?.c || 0),
-      };
-    } catch (e) {
-      await connection.rollback();
-      throw e;
-    } finally {
-      connection.release();
     }
+    const delta = turningOn ? 1 : -1;
+    const [up] = await pool.query(
+      `UPDATE bm_content
+          SET recommend_count = LAST_INSERT_ID(GREATEST(IFNULL(recommend_count, 0) + ?, 0))
+        WHERE id = ?
+          AND is_deleted = 0
+          AND is_published = 1`,
+      [delta, contentId]
+    );
+    if (up.affectedRows !== 1) {
+      return null;
+    }
+    return {
+      recommended: turningOn,
+      count: Number(up.insertId || 0),
+    };
   }
 
   /**
