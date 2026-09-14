@@ -49,7 +49,7 @@ class BannerController {
         return { success: true, data };
       });
 
-      res.set('Cache-Control', 'public, max-age=30');
+      res.set('Cache-Control', 'public, max-age=60');
       return res.json(payload);
     } catch (error) {
       return res.status(500).json({
@@ -57,6 +57,21 @@ class BannerController {
         message: `배너 조회 실패: ${error.message}`,
       });
     }
+  }
+
+  async warmMainBanners() {
+    return bannerCache
+      .getOrSet('banner:main:', async () => {
+        const rows = await bannerRepository.findActiveList({
+          placement: 'main',
+          targetKind: null,
+        });
+        const data = rows
+          .map((row) => this.toMap(row))
+          .filter((row) => row.imageUrl.length > 0);
+        return { success: true, data };
+      })
+      .catch(() => null);
   }
 }
 

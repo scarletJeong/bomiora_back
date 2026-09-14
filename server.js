@@ -184,11 +184,18 @@ app.listen(PORT, () => {
     `[Boot] healthDashboardMounted=${healthDashboardMounted} fileExists=${healthDashboardFileExists} pid=${process.pid}`
   );
 
-  // 상품 목록 배송비 라벨용 shopDefault 선로드
+  // 홈 배너·신상품 캐시 선적재 (첫 요청 1초대 방지)
   try {
-    require('./src/modules/shopping/product/controllers/ProductController').warmShopDefault();
+    const productController = require('./src/modules/shopping/product/controllers/ProductController');
+    const bannerController = require('./src/modules/home/banner/controllers/BannerController');
+    Promise.all([
+      productController.warmHomeProductCaches(),
+      bannerController.warmMainBanners(),
+    ]).catch((e) => {
+      console.warn('[HomeWarm] 스킵:', e.message);
+    });
   } catch (e) {
-    console.warn('[ProductController] shopDefault warm 스킵:', e.message);
+    console.warn('[HomeWarm] 스킵:', e.message);
   }
 
   // 쿠폰 만료 하루 전 푸시 (매일 KST 08:00)

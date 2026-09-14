@@ -25,13 +25,14 @@ class BannerRepository {
           target_kind,
           sort_order
         FROM bm_banner
-        WHERE is_deleted = 0
-          AND is_use = 1
+        WHERE is_deleted = '0'
+          AND is_use = '1'
           AND begin_time <= NOW()
           AND end_time >= NOW()
           AND placement = ?
           ${targetSql}
-        ORDER BY sort_order ASC, id ASC`,
+        ORDER BY sort_order ASC, id ASC
+        LIMIT 20`,
       params
     );
     return rows;
