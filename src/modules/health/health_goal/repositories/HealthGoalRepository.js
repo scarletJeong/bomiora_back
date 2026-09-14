@@ -30,11 +30,12 @@ class HealthGoalRepository {
   }
 
   async findLatestByMbId(mbId) {
-    const [rows] = await pool.query(
-      `SELECT goal_record_id, CAST(mb_id AS CHAR) AS mb_id,
+    const [rows] = await pool.execute(
+      `SELECT goal_record_id, mb_id,
               current_weight, target_weight, daily_step_goal, weight_record_id
        FROM bm_health_goal_records
        WHERE mb_id = ?
+       ORDER BY updated_at DESC, goal_record_id DESC
        LIMIT 1`,
       [mbId]
     );
@@ -42,7 +43,7 @@ class HealthGoalRepository {
   }
 
   /**
-   * 목표설정 저장: bm_weight_records INSERT 후 bm_health_goal_records UPSERT (mb_id당 1행)
+   * 목표설정 저장: 목표는 바로 UPSERT하고, 체중 기록은 응답 후 비동기로 남긴다.
    */
   async createGoalWithWeightRecord({
     mbId,
@@ -51,57 +52,62 @@ class HealthGoalRepository {
     dailyStepGoal,
     measuredAt
   }) {
-    const [heightCm, connection] = await Promise.all([
-      this.findHeightCmByMbId(mbId),
-      pool.getConnection()
-    ]);
-    const bmi = Weight.calculateBMI(currentWeight, heightCm);
-
-    try {
-      await connection.beginTransaction();
-
-      const [wResult] = await connection.query(
-        `INSERT INTO bm_weight_records
-        (mb_id, measured_at, weight, height, bmi, notes, front_image_path, side_image_path, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, NULL, NULL, NULL, NOW(), NOW())`,
-        [mbId, measuredAt, currentWeight, heightCm, bmi]
-      );
-      const weightRecordId = wResult.insertId;
-
-      const [goalResult] = await connection.query(
-        `INSERT INTO bm_health_goal_records
+    const [goalResult] = await pool.execute(
+      `INSERT INTO bm_health_goal_records
         (mb_id, current_weight, target_weight, daily_step_goal, weight_record_id, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, NOW(), NOW())
-        ON DUPLICATE KEY UPDATE
-          goal_record_id = LAST_INSERT_ID(goal_record_id),
-          current_weight = VALUES(current_weight),
-          target_weight = VALUES(target_weight),
-          daily_step_goal = VALUES(daily_step_goal),
-          weight_record_id = VALUES(weight_record_id),
-          updated_at = NOW()`,
-        [mbId, currentWeight, targetWeight, dailyStepGoal, weightRecordId]
-      );
+       VALUES (?, ?, ?, ?, NULL, NOW(), NOW())
+       ON DUPLICATE KEY UPDATE
+         goal_record_id = LAST_INSERT_ID(goal_record_id),
+         current_weight = VALUES(current_weight),
+         target_weight = VALUES(target_weight),
+         daily_step_goal = VALUES(daily_step_goal),
+         updated_at = NOW()`,
+      [mbId, currentWeight, targetWeight, dailyStepGoal]
+    );
 
-      await connection.commit();
+    const goalRecordId = goalResult.insertId;
+    const goal = new HealthGoalRecord({
+      goal_record_id: goalRecordId,
+      mb_id: mbId,
+      current_weight: currentWeight,
+      target_weight: targetWeight,
+      daily_step_goal: dailyStepGoal,
+      weight_record_id: null,
+      updated_at: new Date()
+    });
 
-      return {
-        goal: new HealthGoalRecord({
-          goal_record_id: goalResult.insertId,
-          mb_id: mbId,
-          current_weight: currentWeight,
-          target_weight: targetWeight,
-          daily_step_goal: dailyStepGoal,
-          weight_record_id: weightRecordId,
-          updated_at: new Date()
-        }),
-        weightRecordId
-      };
-    } catch (err) {
-      await connection.rollback();
-      throw err;
-    } finally {
-      connection.release();
+    this._insertWeightInBackground({
+      mbId,
+      currentWeight,
+      measuredAt,
+      goalRecordId,
+    }).catch((e) => {
+      console.warn('[HealthGoal] 체중 기록 후처리 실패:', e.message);
+    });
+
+    return { goal, weightRecordId: null };
+  }
+
+  async _insertWeightInBackground({ mbId, currentWeight, measuredAt, goalRecordId }) {
+    let heightCm = null;
+    try {
+      heightCm = await this.findHeightCmByMbId(mbId);
+    } catch (_) {
+      heightCm = null;
     }
+    const bmi = Weight.calculateBMI(currentWeight, heightCm);
+    const [wResult] = await pool.execute(
+      `INSERT INTO bm_weight_records
+        (mb_id, measured_at, weight, height, bmi, notes, front_image_path, side_image_path, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, NULL, NULL, NULL, NOW(), NOW())`,
+      [mbId, measuredAt, currentWeight, heightCm, bmi]
+    );
+    const weightRecordId = wResult.insertId;
+    if (!weightRecordId || !goalRecordId) return;
+    await pool.execute(
+      'UPDATE bm_health_goal_records SET weight_record_id = ? WHERE goal_record_id = ?',
+      [weightRecordId, goalRecordId]
+    );
   }
 }
 
