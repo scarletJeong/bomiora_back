@@ -296,77 +296,128 @@ class CouponRepository {
     throw new Error('쿠폰 ID 생성에 실패했습니다.');
   }
 
+  async countAvailableCoupons(userId) {
+    const id = String(userId || '').trim();
+    if (!id) return 0;
+    const today = kstTodayYmd();
+    const [rows] = await pool.execute(
+      `SELECT COUNT(*) AS cnt
+         FROM bomiora_shop_coupon c
+        WHERE c.mb_id = ?
+          AND (c.od_id IS NULL OR c.od_id = 0 OR c.od_id = '')
+          AND DATE_FORMAT(c.cp_start, '%Y-%m-%d') <= ?
+          AND DATE_FORMAT(c.cp_end, '%Y-%m-%d') >= ?
+          AND NOT EXISTS (
+            SELECT 1 FROM bomiora_shop_coupon_log l
+             WHERE l.mb_id = c.mb_id AND l.cp_id = c.cp_id
+          )`,
+      [id, today, today]
+    );
+    return Number(rows[0]?.cnt || 0);
+  }
+
   /**
-   * PHP shop/ajax.infcoupondownload.php 와 동일한 트랜잭션:
-   * 리뷰 검증 → 중복 차단 → it_nocoupon → INSERT 쿠폰 → cz_download +1
+   * 도움쿠폰 발급 — 성공 경로는 INSERT…SELECT 1회.
+   * cz_download 증가는 응답 후 비동기.
    */
   async downloadHelpCoupon({ mbId, itId, isId }) {
-    const conn = await pool.getConnection();
-    try {
-      await conn.beginTransaction();
+    const cpStart = kstTodayYmd();
+    const cpEnd = addDaysToYmdDateString(cpStart, 6);
+    const insertSql = `
+      INSERT INTO bomiora_shop_coupon
+        (cp_id, cp_subject, cp_method, cp_target, mb_id, cz_id, cp_start, cp_end,
+         cp_type, cp_price, cp_trunc, cp_minimum, cp_maximum, od_id, cp_datetime, mb_inf_id, is_id)
+      SELECT
+        ?,
+        CONCAT(
+          '[도움쿠폰] ', a.is_name, '님의 ',
+          CASE
+            WHEN CHAR_LENGTH(COALESCE(c.it_name, c.it_subject, '')) > 5
+              THEN CONCAT(LEFT(COALESCE(c.it_name, c.it_subject, ''), 5), '…')
+            ELSE COALESCE(c.it_name, c.it_subject, '')
+          END,
+          ' 할인쿠폰 (5%)'
+        ),
+        0, c.it_id, ?, 0, ?, ?, 1, 5, 1, 5000, 5000, 0, NOW(), '', a.is_id
+      FROM bomiora_shop_item_use a
+      INNER JOIN bomiora_shop_item_new c ON a.it_id = c.it_id
+      WHERE c.it_id = ? AND a.is_id = ?
+        AND a.is_rvkind = 'supporter' AND a.is_confirm = 1
+        AND COALESCE(c.it_nocoupon, '0') = '0'
+        AND NOT EXISTS (
+          SELECT 1 FROM bomiora_shop_coupon x
+           WHERE x.mb_id = ? AND x.is_id = ?
+        )`;
 
-      const [reviewRows] = await conn.query(
-        `SELECT a.is_id, a.is_name, a.cz_download, c.it_id,
-                COALESCE(c.it_name, c.it_subject) AS it_name
-         FROM bomiora_shop_item_use a
-         JOIN bomiora_shop_item_new c ON a.it_id = c.it_id
-         WHERE c.it_id = ? AND a.is_id = ?
-           AND a.is_rvkind = 'supporter' AND a.is_confirm = 1`,
-        [itId, isId]
-      );
-      if (!reviewRows.length) {
-        throw new HelpCouponError('제품 또는 리뷰가 존재하지 않습니다.');
+    let cpId = '';
+    let inserted = false;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      cpId = generateCouponId();
+      try {
+        const [result] = await pool.execute(insertSql, [
+          cpId,
+          mbId,
+          cpStart,
+          cpEnd,
+          itId,
+          isId,
+          mbId,
+          isId,
+        ]);
+        inserted = Number(result?.affectedRows || 0) > 0;
+        break;
+      } catch (error) {
+        if (error && error.code === 'ER_DUP_ENTRY' && attempt === 0) {
+          continue;
+        }
+        throw error;
       }
-      const review = reviewRows[0];
+    }
 
-      const [dupRows] = await conn.query(
-        'SELECT COUNT(*) AS count FROM bomiora_shop_coupon WHERE mb_id = ? AND is_id = ?',
-        [mbId, isId]
-      );
-      if (Number(dupRows[0].count) > 0) {
-        throw new HelpCouponError('이미 다운로드하신 쿠폰입니다.');
-      }
+    if (!inserted) {
+      await this._throwHelpCouponFailReason({ mbId, itId, isId });
+    }
 
-      const [itemRows] = await conn.query(
-        `SELECT COUNT(*) AS count FROM bomiora_shop_item_new
-         WHERE it_id = ? AND COALESCE(it_nocoupon, '0') = '0'`,
-        [itId]
-      );
-      if (!Number(itemRows[0].count)) {
-        throw new HelpCouponError('쿠폰이 적용되지 않는 제품 입니다.');
-      }
-
-      const cpId = await this._generateUniqueCouponId(conn);
-      const cpStart = kstTodayYmd();
-      const cpEnd = addDaysToYmdDateString(cpStart, 6);
-      const cpSubject = `[도움쿠폰] ${review.is_name}님의 ${cutStr(review.it_name, 5)} 할인쿠폰 (5%)`;
-
-      await conn.query(
-        `INSERT INTO bomiora_shop_coupon
-          (cp_id, cp_subject, cp_method, cp_target, mb_id, cz_id, cp_start, cp_end,
-           cp_type, cp_price, cp_trunc, cp_minimum, cp_maximum, od_id, cp_datetime, mb_inf_id, is_id)
-         VALUES (?, ?, 0, ?, ?, 0, ?, ?, 1, 5, 1, 5000, 5000, 0, NOW(), '', ?)`,
-        [cpId, cpSubject, itId, mbId, cpStart, cpEnd, isId]
-      );
-
-      await conn.query(
+    pool
+      .execute(
         'UPDATE bomiora_shop_item_use SET cz_download = cz_download + 1 WHERE is_id = ?',
         [isId]
-      );
+      )
+      .catch(() => {});
+    this.invalidateMemberCoupons(mbId);
 
-      await conn.commit();
-      this.invalidateMemberCoupons(mbId);
+    return { cpId, downloadCount: null };
+  }
 
-      return {
-        cpId,
-        downloadCount: Number(review.cz_download || 0) + 1
-      };
-    } catch (error) {
-      await conn.rollback();
-      throw error;
-    } finally {
-      conn.release();
+  async _throwHelpCouponFailReason({ mbId, itId, isId }) {
+    const [rows] = await pool.execute(
+      `SELECT
+          a.is_id,
+          a.is_rvkind,
+          a.is_confirm,
+          COALESCE(c.it_nocoupon, '0') AS it_nocoupon,
+          (SELECT COUNT(*) FROM bomiora_shop_coupon x
+            WHERE x.mb_id = ? AND x.is_id = ?) AS already
+         FROM bomiora_shop_item_use a
+         LEFT JOIN bomiora_shop_item_new c ON a.it_id = c.it_id
+        WHERE a.is_id = ? AND a.it_id = ?
+        LIMIT 1`,
+      [mbId, isId, isId, itId]
+    );
+    if (!rows.length) {
+      throw new HelpCouponError('제품 또는 리뷰가 존재하지 않습니다.');
     }
+    const row = rows[0];
+    if (Number(row.already || 0) > 0) {
+      throw new HelpCouponError('이미 다운로드하신 쿠폰입니다.');
+    }
+    if (String(row.is_rvkind || '') !== 'supporter' || Number(row.is_confirm) !== 1) {
+      throw new HelpCouponError('제품 또는 리뷰가 존재하지 않습니다.');
+    }
+    if (String(row.it_nocoupon || '0') !== '0') {
+      throw new HelpCouponError('쿠폰이 적용되지 않는 제품 입니다.');
+    }
+    throw new HelpCouponError('쿠폰 발급에 실패했습니다.');
   }
 
   parseCheckoutCoupons(body = {}) {

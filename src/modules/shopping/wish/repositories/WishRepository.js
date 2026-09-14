@@ -81,19 +81,19 @@ class WishRepository {
 
   /** 찜 + 상품 카드 필드 1회 JOIN (목록용 it_basic 미리보기만) */
   async findListByMbId(mbId) {
-    const [rows] = await pool.query(
+    const [rows] = await pool.execute(
       `SELECT
          w.wi_id,
-         CAST(w.it_id AS CHAR) AS it_id,
+         w.it_id,
          w.wi_time,
-         CAST(w.wi_it_kind AS CHAR) AS wi_it_kind,
-         CAST(p.it_name AS CHAR) AS it_name,
-         CAST(p.it_subject AS CHAR) AS it_subject,
+         w.wi_it_kind,
+         p.it_name,
+         p.it_subject,
          p.it_price,
-         CAST(p.it_kind AS CHAR) AS it_kind,
-         CAST(p.it_img1 AS CHAR) AS it_img1,
-         CAST(p.it_flutter_image_url AS CHAR) AS it_flutter_image_url,
-         CAST(LEFT(IFNULL(p.it_basic, ''), 200) AS CHAR) AS it_basic
+         p.it_kind,
+         p.it_img1,
+         p.it_flutter_image_url,
+         LEFT(IFNULL(p.it_basic, ''), 80) AS it_basic
        FROM bomiora_shop_wish w
        LEFT JOIN bomiora_shop_item_new p ON p.it_id = w.it_id
        WHERE w.mb_id = ?

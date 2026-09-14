@@ -58,6 +58,17 @@ class CouponController {
   async getAvailableCoupons(req, res) {
     try {
       const mbId = String(req.query.mb_id || '').trim();
+      const countOnly =
+        String(req.query.count || '') === '1' ||
+        String(req.query.countOnly || '') === '1';
+      if (countOnly) {
+        const count = await couponResponseCache.getOrSet(`avail-count:${mbId}`, async () => {
+          const cnt = await couponRepository.countAvailableCoupons(mbId);
+          return { success: true, count: cnt };
+        });
+        res.set('Cache-Control', 'private, max-age=20');
+        return res.json(count);
+      }
       const payload = await couponResponseCache.getOrSet(`avail:${mbId}`, async () => {
         const rows = await couponRepository.findAvailableCoupons(mbId);
         return { success: true, data: rows.map((r) => this.toMap(r)) };

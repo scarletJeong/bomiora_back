@@ -306,41 +306,40 @@ ${JOIN_SHOP_ITEM_NEW_SELECT}
 
   async findByMember(mbId, page, size) {
     const offset = page * size;
-    const [[countRows], [rows]] = await Promise.all([
-      pool.query(
-        'SELECT COUNT(*) AS count FROM bomiora_shop_item_use WHERE mb_id = ?',
-        [mbId]
-      ),
-      pool.query(
-        `SELECT
-           r.is_id,
-           CAST(r.it_id AS CHAR) AS it_id,
-           CAST(r.mb_id AS CHAR) AS mb_id,
-           CAST(r.is_name AS CHAR) AS is_name,
-           r.is_time,
-           r.is_confirm,
-           r.is_score1, r.is_score2, r.is_score3, r.is_score4, r.total_is_score,
-           CAST(r.is_rvkind AS CHAR) AS is_rvkind,
-           r.is_recommend, r.is_good, r.cz_download,
-           CAST(LEFT(IFNULL(r.is_positive_review_text, ''), 800) AS CHAR) AS is_positive_review_text,
-           CAST(LEFT(IFNULL(r.is_negative_review_text, ''), 800) AS CHAR) AS is_negative_review_text,
-           CAST(LEFT(IFNULL(r.is_more_review_text, ''), 400) AS CHAR) AS is_more_review_text,
-           CAST(r.is_img1 AS CHAR) AS is_img1,
-           CAST(r.is_img2 AS CHAR) AS is_img2,
-           CAST(r.is_img3 AS CHAR) AS is_img3,
-           CAST(r.od_id AS CHAR) AS od_id,
-           CAST(COALESCE(n.it_name, n.it_subject) AS CHAR) AS it_name,
-           CAST(n.it_kind AS CHAR) AS it_kind,
-           CAST(n.it_img1 AS CHAR) AS it_img1
-         FROM bomiora_shop_item_use r
-         LEFT JOIN bomiora_shop_item_new n ON n.it_id = r.it_id
-         WHERE r.mb_id = ?
-         ORDER BY r.is_id DESC
-         LIMIT ? OFFSET ?`,
-        [mbId, size, offset]
-      ),
-    ]);
-    return { rows, total: countRows[0].count };
+    const take = Math.max(1, Number(size) || 20);
+    const [rows] = await pool.query(
+      `SELECT
+         r.is_id,
+         r.it_id,
+         r.mb_id,
+         r.is_name,
+         r.is_time,
+         r.is_confirm,
+         r.is_score1, r.is_score2, r.is_score3, r.is_score4, r.total_is_score,
+         r.is_rvkind,
+         r.is_recommend, r.is_good, r.cz_download,
+         LEFT(IFNULL(r.is_positive_review_text, ''), 400) AS is_positive_review_text,
+         LEFT(IFNULL(r.is_negative_review_text, ''), 400) AS is_negative_review_text,
+         LEFT(IFNULL(r.is_more_review_text, ''), 200) AS is_more_review_text,
+         r.is_img1,
+         r.is_img2,
+         r.is_img3,
+         r.od_id,
+         COALESCE(n.it_name, n.it_subject) AS it_name,
+         n.it_kind,
+         n.it_flutter_image_url,
+         LEFT(IFNULL(n.it_img1, ''), 255) AS it_img1
+       FROM bomiora_shop_item_use r
+       LEFT JOIN bomiora_shop_item_new n ON n.it_id = r.it_id
+       WHERE r.mb_id = ?
+       ORDER BY r.is_id DESC
+       LIMIT ? OFFSET ?`,
+      [mbId, take + 1, offset]
+    );
+    const hasMore = rows.length > take;
+    const pageRows = hasMore ? rows.slice(0, take) : rows;
+    const total = offset + pageRows.length + (hasMore ? 1 : 0);
+    return { rows: pageRows, total, hasMore };
   }
 
   async findAll(rvkind, page, size) {
@@ -426,22 +425,19 @@ ${JOIN_SHOP_ITEM_NEW_SELECT}
       const id = this.normalizeItId(row.it_id);
       if (id) affected.add(id);
     }
-    let linkedRows = [];
     try {
       const [rows] = await pool.query(
-        `SELECT it_id, it_review_link FROM bomiora_shop_item_new
-         WHERE it_review_link IS NOT NULL AND TRIM(COALESCE(it_review_link, '')) != ''`
+        `SELECT it_id FROM bomiora_shop_item_new
+         WHERE it_review_link IS NOT NULL
+           AND it_review_link LIKE CONCAT('%', ?, '%')`,
+        [R]
       );
-      linkedRows = rows;
-    } catch (err) {
-      if (!this.isUnknownColumnError(err, 'it_review_link')) throw err;
-    }
-    for (const row of linkedRows) {
-      const parts = this.parseReviewLinkIds(row.it_review_link).map((p) => this.normalizeItId(p));
-      if (parts.includes(R)) {
+      for (const row of rows) {
         const id = this.normalizeItId(row.it_id);
         if (id) affected.add(id);
       }
+    } catch (err) {
+      if (!this.isUnknownColumnError(err, 'it_review_link')) throw err;
     }
     return [...affected];
   }
@@ -460,7 +456,9 @@ ${JOIN_SHOP_ITEM_NEW_SELECT}
     } catch (err) {
       if (!this.isUnknownColumnError(err, 'it_review_link')) throw err;
     }
-    await Promise.all([...toRefresh].map((id) => this.refreshItemReviewAggregates(id)));
+    for (const id of toRefresh) {
+      await this.refreshItemReviewAggregates(id);
+    }
   }
 
 }

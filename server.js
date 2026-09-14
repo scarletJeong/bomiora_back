@@ -227,6 +227,24 @@ app.listen(PORT, () => {
   } catch (e) {
     console.warn('[SchemaEnsure] 로드 스킵:', e.message);
   }
+
+  // 환불계좌 조회용 커버링 인덱스 (있으면 skip)
+  try {
+    require('./database/ensure_member_refund_index')
+      .ensureMemberRefundIndex()
+      .catch((e) => console.warn('[RefundIndex] 스킵:', e.message));
+  } catch (e) {
+    console.warn('[RefundIndex] 로드 스킵:', e.message);
+  }
+
+  // 회원 리뷰 목록 (mb_id, is_id)
+  try {
+    require('./database/ensure_review_member_index')
+      .ensureReviewMemberIndex()
+      .catch((e) => console.warn('[ReviewIndex] 스킵:', e.message));
+  } catch (e) {
+    console.warn('[ReviewIndex] 로드 스킵:', e.message);
+  }
 });
 
 module.exports = app;

@@ -13,7 +13,7 @@ const MAX_REVIEW_IMAGES = 3;
 const MAX_REVIEW_PAGE_SIZE = 200;
 const mainReviewHomeCache = new TtlCache(90_000);
 const mainReviewBestCache = new TtlCache(60_000);
-const memberReviewListCache = new TtlCache(60_000);
+const memberReviewListCache = new TtlCache(180_000);
 const productReviewListCache = new TtlCache(45_000);
 
 class ReviewController {
@@ -294,15 +294,30 @@ class ReviewController {
     };
   }
 
-  pagePayload(page, size, total) {
+  pagePayload(page, size, total, hasMore) {
     const safeSize = Math.max(1, size);
-    const totalPages = Math.ceil(total / safeSize);
+    const totalPages =
+      hasMore === true
+        ? page + 2
+        : hasMore === false
+          ? page + 1
+          : Math.ceil(total / safeSize);
     return {
       currentPage: page,
       totalPages,
       totalElements: total,
-      hasNext: page + 1 < totalPages
+      hasNext: hasMore != null ? !!hasMore : page + 1 < totalPages
     };
+  }
+
+  _syncAggregatesLater(itId) {
+    const id = itId != null ? String(itId).trim() : '';
+    if (!id) return;
+    setImmediate(() => {
+      reviewRepository.syncAggregatesForReviewItId(id).catch((err) => {
+        console.warn('[Review] aggregate sync failed', id, err?.message);
+      });
+    });
   }
 
   _invalidateMemberReviewList(mbId) {
@@ -451,18 +466,9 @@ class ReviewController {
         is_outage_num: req.body.isOutageNum || null
       });
 
-      // 집계 갱신 실패해도 리뷰 등록 자체는 성공 처리
-      try {
-        await reviewRepository.syncAggregatesForReviewItId(itId);
-      } catch (aggErr) {
-        console.error('[ReviewController.createReview] aggregate sync failed', {
-          itId,
-          message: aggErr?.message,
-        });
-      }
-
       this._invalidateMemberReviewList(mbId);
       this._invalidateProductReviewList(itId);
+      this._syncAggregatesLater(itId);
       return res.json({
         success: true,
         message: '리뷰가 성공적으로 작성되었습니다. 관리자 승인 후 게시됩니다.',
@@ -509,7 +515,7 @@ class ReviewController {
         return {
           success: true,
           reviews: result.rows.map((r) => this.toReviewResponse(r)),
-          ...this.pagePayload(page, size, result.total),
+          ...this.pagePayload(page, size, result.total, result.hasMore),
         };
       });
       res.set('Cache-Control', 'private, max-age=30');
@@ -808,12 +814,10 @@ class ReviewController {
       }
 
       const updated = await reviewRepository.updateById(isId, fields);
-      if (updated?.it_id != null) {
-        await reviewRepository.syncAggregatesForReviewItId(updated.it_id);
-      }
       this._invalidateMemberReviewList(row.mb_id);
       if (updated?.it_id != null) this._invalidateProductReviewList(updated.it_id);
       else if (row.it_id != null) this._invalidateProductReviewList(row.it_id);
+      this._syncAggregatesLater(updated?.it_id ?? row.it_id);
       return res.json({ success: true, message: '리뷰가 성공적으로 수정되었습니다.', review: this.toReviewResponse(updated) });
     } catch (error) {
       return res.json({ success: false, message: `리뷰 수정 중 오류가 발생했습니다: ${error.message}` });
@@ -830,9 +834,9 @@ class ReviewController {
       }
       const reviewItId = row.it_id;
       await reviewRepository.deleteById(isId);
-      await reviewRepository.syncAggregatesForReviewItId(reviewItId);
       this._invalidateMemberReviewList(row.mb_id);
       this._invalidateProductReviewList(reviewItId);
+      this._syncAggregatesLater(reviewItId);
       return res.json({ success: true, message: '리뷰가 성공적으로 삭제되었습니다.' });
     } catch (error) {
       return res.json({ success: false, message: `리뷰 삭제 중 오류가 발생했습니다: ${error.message}` });

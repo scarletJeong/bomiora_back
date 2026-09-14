@@ -1,7 +1,7 @@
 const wishRepository = require('../repositories/WishRepository');
 const { TtlCache } = require('../../../../utils/ttlCache');
 
-const wishListCache = new TtlCache(60_000);
+const wishListCache = new TtlCache(120_000);
 
 class WishController {
   bufferToString(value) {
