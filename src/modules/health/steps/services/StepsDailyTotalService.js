@@ -8,10 +8,11 @@ class StepsDailyTotalService {
     const prevStr = addDaysToYmdDateString(date, -1);
 
     const emptyBm = { totalSteps: 0, halfHourSlots: Array(48).fill(0), intervalCount: 0 };
-    const [bmAgg, prevBmAgg] = await Promise.all([
-      stepsRepository.aggregateBmStepsForCalendarDay(mbIdRaw, date).catch(() => emptyBm),
-      stepsRepository.aggregateBmStepsForCalendarDay(mbIdRaw, prevStr).catch(() => emptyBm),
-    ]);
+    const stepMap = await stepsRepository
+      .aggregateBmStepsForCalendarDays(mbIdRaw, [date, prevStr])
+      .catch(() => ({ [date]: emptyBm, [prevStr]: emptyBm }));
+    const bmAgg = stepMap[date] || emptyBm;
+    const prevBmAgg = stepMap[prevStr] || emptyBm;
 
     const useBm = bmAgg.intervalCount > 0;
 

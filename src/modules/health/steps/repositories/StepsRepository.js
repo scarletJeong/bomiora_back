@@ -204,13 +204,73 @@ class StepsRepository {
    * bm_steps: mb_id + 일자 기준 30분 슬롯(48) 및 일 합계.
    * 구간이 여러 슬롯/날에 걸치면 겹치는 시간 비율로 steps 분배.
    */
-  async aggregateBmStepsForCalendarDay(mbId, dateStr) {
+  _emptyStepsAgg() {
+    return { totalSteps: 0, halfHourSlots: Array.from({ length: 48 }, () => 0), intervalCount: 0 };
+  }
+
+  _aggregateRowsForDay(rows, dateStr) {
     const slots = Array.from({ length: 48 }, () => 0);
     const dayStart = parseHealthDateTimeInput(`${String(dateStr).trim()}T00:00:00+09:00`);
     const nextYmd = addDaysToYmdDateString(dateStr, 1);
     const dayEnd = parseHealthDateTimeInput(`${nextYmd}T00:00:00+09:00`);
-
     let intervalCount = 0;
+
+    for (const row of rows) {
+      const rawStart = row.interval_start instanceof Date
+        ? row.interval_start
+        : new Date(row.interval_start);
+      const rawEnd = row.interval_end instanceof Date
+        ? row.interval_end
+        : new Date(row.interval_end);
+      const stepsVal = Number(row.steps) || 0;
+      if (stepsVal <= 0 || !(rawEnd > rawStart)) continue;
+      if (!(rawStart < dayEnd && rawEnd > dayStart)) continue;
+      intervalCount += 1;
+
+      const segStart = rawStart > dayStart ? rawStart : dayStart;
+      const segEnd = rawEnd < dayEnd ? rawEnd : dayEnd;
+      if (!(segEnd > segStart)) continue;
+
+      const clippedMs = segEnd - segStart;
+      const fullMs = rawEnd - rawStart;
+      const stepsForDayPortion = fullMs > 0 ? (stepsVal * clippedMs) / fullMs : stepsVal;
+      if (!(clippedMs > 0)) continue;
+
+      for (let slotIdx = 0; slotIdx < 48; slotIdx++) {
+        const slotStart = new Date(dayStart);
+        slotStart.setMinutes(slotIdx * 30, 0, 0);
+        const slotEnd = new Date(slotStart);
+        slotEnd.setMinutes(slotStart.getMinutes() + 30, 0, 0);
+
+        const ovStart = segStart > slotStart ? segStart : slotStart;
+        const ovEnd = segEnd < slotEnd ? segEnd : slotEnd;
+        const ovMs = ovEnd - ovStart;
+        if (ovMs > 0) {
+          slots[slotIdx] += (stepsForDayPortion * ovMs) / clippedMs;
+        }
+      }
+    }
+
+    const roundedSlots = slots.map((v) => Math.round(v));
+    return {
+      totalSteps: roundedSlots.reduce((a, b) => a + b, 0),
+      halfHourSlots: roundedSlots,
+      intervalCount,
+    };
+  }
+
+  async aggregateBmStepsForCalendarDays(mbId, dateStrs) {
+    const dates = [...new Set((dateStrs || []).map((d) => String(d || '').trim()).filter(Boolean))];
+    const empty = {};
+    for (const d of dates) empty[d] = this._emptyStepsAgg();
+    if (!dates.length) return empty;
+
+    const sorted = dates.slice().sort();
+    const rangeStart = parseHealthDateTimeInput(`${sorted[0]}T00:00:00+09:00`);
+    const rangeEnd = parseHealthDateTimeInput(
+      `${addDaysToYmdDateString(sorted[sorted.length - 1], 1)}T00:00:00+09:00`
+    );
+
     try {
       const [rows] = await pool.query(
         `SELECT steps, interval_start, interval_end
@@ -218,58 +278,24 @@ class StepsRepository {
          WHERE mb_id = ?
            AND interval_start < ?
            AND interval_end > ?`,
-        [mbId, dayEnd, dayStart]
+        [mbId, rangeEnd, rangeStart]
       );
-
-      intervalCount = rows.length;
-
-      for (const row of rows) {
-        const rawStart = row.interval_start instanceof Date
-          ? row.interval_start
-          : new Date(row.interval_start);
-        const rawEnd = row.interval_end instanceof Date
-          ? row.interval_end
-          : new Date(row.interval_end);
-        const stepsVal = Number(row.steps) || 0;
-        if (stepsVal <= 0 || !(rawEnd > rawStart)) continue;
-
-        const segStart = rawStart > dayStart ? rawStart : dayStart;
-        const segEnd = rawEnd < dayEnd ? rawEnd : dayEnd;
-        if (!(segEnd > segStart)) continue;
-
-        const clippedMs = segEnd - segStart;
-        const fullMs = rawEnd - rawStart;
-        const stepsForDayPortion = fullMs > 0 ? (stepsVal * clippedMs) / fullMs : stepsVal;
-        if (!(clippedMs > 0)) continue;
-
-        for (let slotIdx = 0; slotIdx < 48; slotIdx++) {
-          const slotStart = new Date(dayStart);
-          slotStart.setMinutes(slotIdx * 30, 0, 0);
-          const slotEnd = new Date(slotStart);
-          slotEnd.setMinutes(slotStart.getMinutes() + 30, 0, 0);
-
-          const ovStart = segStart > slotStart ? segStart : slotStart;
-          const ovEnd = segEnd < slotEnd ? segEnd : slotEnd;
-          const ovMs = ovEnd - ovStart;
-          if (ovMs > 0) {
-            slots[slotIdx] += (stepsForDayPortion * ovMs) / clippedMs;
-          }
-        }
+      const out = {};
+      for (const d of dates) {
+        out[d] = this._aggregateRowsForDay(rows, d);
       }
+      return out;
     } catch (e) {
       if (e && (e.code === 'ER_NO_SUCH_TABLE' || String(e.message || '').includes('bm_steps'))) {
-        return { totalSteps: 0, halfHourSlots: slots.map(() => 0), intervalCount: 0 };
+        return empty;
       }
       throw e;
     }
+  }
 
-    const roundedSlots = slots.map((v) => Math.round(v));
-    const roundedTotal = roundedSlots.reduce((a, b) => a + b, 0);
-    return {
-      totalSteps: roundedTotal,
-      halfHourSlots: roundedSlots,
-      intervalCount
-    };
+  async aggregateBmStepsForCalendarDay(mbId, dateStr) {
+    const map = await this.aggregateBmStepsForCalendarDays(mbId, [dateStr]);
+    return map[String(dateStr).trim()] || this._emptyStepsAgg();
   }
 
   async aggregateBmStepsDailyTotalsBetween(mbId, startDateStr, endDateStr) {

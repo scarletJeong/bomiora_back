@@ -1,7 +1,7 @@
 const { TtlCache } = require('../../utils/ttlCache');
 
 /** 건강 대시보드 조회 캐시 (기록 추가는 최대 TTL만큼 늦게 반영) */
-const healthReadCache = new TtlCache(60_000);
+const healthReadCache = new TtlCache(180_000);
 
 function healthCacheKey(kind, mbId, extra = '') {
   return `${kind}:${String(mbId || '').trim()}:${extra}`;
