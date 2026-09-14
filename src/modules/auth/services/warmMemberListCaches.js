@@ -1,0 +1,12 @@
+function warmMemberListCaches(mbId) {
+  const id = String(mbId || '').trim();
+  if (!id) return;
+  try {
+    require('../../shopping/wish/controllers/WishController').warmList(id);
+  } catch (_) {}
+  try {
+    require('../../user/address/controllers/AddressController').warmList(id);
+  } catch (_) {}
+}
+
+module.exports = { warmMemberListCaches };
