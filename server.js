@@ -245,6 +245,14 @@ app.listen(PORT, () => {
   } catch (e) {
     console.warn('[ReviewIndex] 로드 스킵:', e.message);
   }
+
+  try {
+    require('./database/ensure_list_indexes')
+      .ensureListIndexes()
+      .catch((e) => console.warn('[ListIndex] 스킵:', e.message));
+  } catch (e) {
+    console.warn('[ListIndex] 로드 스킵:', e.message);
+  }
 });
 
 module.exports = app;
