@@ -75,6 +75,7 @@ class WishController {
         infCode: String(req.body.inf_code || req.body.infcode || req.body.in_id || '').trim(),
       });
       this.invalidateList(mbId);
+      this.warmList(mbId);
       return res.json({
         success: true,
         is_wished: result.isWished,
@@ -100,60 +101,73 @@ class WishController {
     }
   }
 
+  async loadListPayload(mbId, category = 'all') {
+    const rows = await wishRepository.findListByMbId(mbId);
+    const data = rows
+      .map((w) => {
+        const itIdKey = this.bufferToString(w.it_id || '').trim();
+        const kindFromWish = this.bufferToString(w.wi_it_kind || '').trim();
+        const kindFromProduct = this.bufferToString(w.it_kind || '').trim();
+        const wishIsContent = kindFromWish.toLowerCase() === 'content';
+        const productKind = wishIsContent
+          ? 'content'
+          : (kindFromProduct || kindFromWish || '');
+        const hasProduct = !!(w.it_name || w.it_img1 || w.it_flutter_image_url);
+
+        const row = {
+          wi_id: w.wi_id,
+          it_id: itIdKey,
+          wi_time: w.wi_time,
+        };
+        if (kindFromWish) row.wi_it_kind = kindFromWish;
+        if (productKind) {
+          row.product_kind = productKind;
+          row.it_kind = productKind;
+        }
+        if (hasProduct) {
+          row.product_name = w.it_name;
+          row.product_price = w.it_price;
+          if (w.it_subject) row.it_subject = this.bufferToString(w.it_subject);
+          if (!productKind) {
+            row.product_kind = kindFromProduct || null;
+            row.it_kind = row.product_kind;
+          }
+          const image = this.toImage(w);
+          row.image_url = image;
+          row.it_img = image;
+          row.it_img1 = image;
+          row.it_basic = w.it_basic;
+        }
+        return row;
+      })
+      .filter((w) => {
+        if (category === 'all') return true;
+        const pk = String(w.product_kind || '').toLowerCase();
+        if (category === 'prescription') return pk === 'prescription';
+        if (category === 'product') return pk === 'general';
+        if (category === 'content') return pk === 'content';
+        return true;
+      });
+
+    return { success: true, data, count: data.length };
+  }
+
+  warmList(mbId, category = 'all') {
+    const id = String(mbId || '').trim();
+    if (!id) return;
+    wishListCache
+      .getOrSet(`list:${id}:${category}`, () => this.loadListPayload(id, category))
+      .catch(() => {});
+  }
+
   async getWishList(req, res) {
     try {
       const mbId = req.query.mb_id;
       const category = req.query.category || 'all';
-      const payload = await wishListCache.getOrSet(`list:${mbId}:${category}`, async () => {
-        const rows = await wishRepository.findListByMbId(mbId);
-        const data = rows
-          .map((w) => {
-            const itIdKey = this.bufferToString(w.it_id || '').trim();
-            const kindFromWish = this.bufferToString(w.wi_it_kind || '').trim();
-            const kindFromProduct = this.bufferToString(w.it_kind || '').trim();
-            const wishIsContent = kindFromWish.toLowerCase() === 'content';
-            const productKind = wishIsContent
-              ? 'content'
-              : (kindFromProduct || kindFromWish || '');
-            const hasProduct = !!(w.it_name || w.it_img1 || w.it_flutter_image_url);
-
-            const row = {
-              wi_id: w.wi_id,
-              it_id: itIdKey,
-              wi_time: w.wi_time,
-            };
-            if (kindFromWish) row.wi_it_kind = kindFromWish;
-            if (productKind) {
-              row.product_kind = productKind;
-              row.it_kind = productKind;
-            }
-            if (hasProduct) {
-              row.product_name = w.it_name;
-              row.product_price = w.it_price;
-              if (w.it_subject) row.it_subject = this.bufferToString(w.it_subject);
-              if (!productKind) {
-                row.product_kind = kindFromProduct || null;
-                row.it_kind = row.product_kind;
-              }
-              const image = this.toImage(w);
-              row.image_url = image;
-              row.it_img = image;
-              row.it_img1 = image;
-              row.it_basic = w.it_basic;
-            }
-            return row;
-          })
-          .filter((w) => {
-            if (category === 'all') return true;
-            const pk = String(w.product_kind || '').toLowerCase();
-            if (category === 'prescription') return pk === 'prescription';
-            if (category === 'product') return pk === 'general';
-            if (category === 'content') return pk === 'content';
-            return true;
-          });
-
-        return { success: true, data, count: data.length };
-      });
+      const payload = await wishListCache.getOrSet(
+        `list:${mbId}:${category}`,
+        () => this.loadListPayload(mbId, category)
+      );
       res.set('Cache-Control', 'private, max-age=30');
       return res.json(payload);
     } catch (error) {
@@ -170,6 +184,7 @@ class WishController {
       }
       await wishRepository.deleteByMbIdAndItId(mbId, itId);
       this.invalidateList(mbId);
+      this.warmList(mbId);
       return res.json({ success: true, message: '찜하기가 삭제되었습니다.' });
     } catch (error) {
       return res.status(500).json({ success: false, message: '찜하기 삭제 중 오류가 발생했습니다.' });

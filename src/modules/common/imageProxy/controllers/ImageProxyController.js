@@ -1,7 +1,17 @@
+const crypto = require('crypto');
 const fs = require('fs/promises');
 const path = require('path');
 
+const PROXY_CACHE_DIR = path.join(__dirname, '../../../../../uploads/image-proxy-cache');
+const PROXY_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const PROXY_MEM_MAX = 80;
+
 class ImageProxyController {
+  constructor() {
+    this._memCache = new Map();
+    this._cacheDirReady = null;
+  }
+
   isAllowedHost(hostname) {
     const host = String(hostname || '').toLowerCase();
     if (!host) return false;
@@ -120,11 +130,81 @@ class ImageProxyController {
     res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
   }
 
+  cacheKey(url) {
+    return crypto.createHash('sha1').update(String(url)).digest('hex');
+  }
+
+  async ensureCacheDir() {
+    if (!this._cacheDirReady) {
+      this._cacheDirReady = fs.mkdir(PROXY_CACHE_DIR, { recursive: true }).catch(() => {});
+    }
+    await this._cacheDirReady;
+  }
+
+  rememberMem(key, buf, type) {
+    this._memCache.set(key, { buf, type, at: Date.now() });
+    if (this._memCache.size <= PROXY_MEM_MAX) return;
+    const oldest = this._memCache.keys().next().value;
+    if (oldest) this._memCache.delete(oldest);
+  }
+
+  async readProxyCache(key) {
+    const mem = this._memCache.get(key);
+    if (mem && Date.now() - mem.at < PROXY_CACHE_TTL_MS) {
+      return { buf: mem.buf, type: mem.type };
+    }
+    const file = path.join(PROXY_CACHE_DIR, `${key}.bin`);
+    const meta = path.join(PROXY_CACHE_DIR, `${key}.json`);
+    try {
+      const st = await fs.stat(file);
+      if (Date.now() - st.mtimeMs > PROXY_CACHE_TTL_MS) return null;
+      const [buf, metaRaw] = await Promise.all([
+        fs.readFile(file),
+        fs.readFile(meta, 'utf8').catch(() => '{}'),
+      ]);
+      let type = 'image/jpeg';
+      try {
+        type = JSON.parse(metaRaw).type || type;
+      } catch (_) {}
+      this.rememberMem(key, buf, type);
+      return { buf, type };
+    } catch (_) {
+      return null;
+    }
+  }
+
+  async writeProxyCache(key, buf, type) {
+    this.rememberMem(key, buf, type);
+    try {
+      await this.ensureCacheDir();
+      await Promise.all([
+        fs.writeFile(path.join(PROXY_CACHE_DIR, `${key}.bin`), buf),
+        fs.writeFile(
+          path.join(PROXY_CACHE_DIR, `${key}.json`),
+          JSON.stringify({ type: type || 'image/jpeg' }),
+        ),
+      ]);
+    } catch (_) {}
+  }
+
+  sendCachedImage(res, buf, type) {
+    res.setHeader('Content-Type', type || 'image/jpeg');
+    this.setImageCacheHeaders(res);
+    res.setHeader('X-Proxy-Cache', 'HIT');
+    return res.status(200).send(buf);
+  }
+
   async proxyImage(req, res) {
     try {
       const targetUrl = req.query.url;
       if (!targetUrl || !this.isAllowedUrl(String(targetUrl))) {
         return res.sendStatus(403);
+      }
+
+      const key = this.cacheKey(String(targetUrl));
+      const cached = await this.readProxyCache(key);
+      if (cached) {
+        return this.sendCachedImage(res, cached.buf, cached.type);
       }
 
       // localhost XAMPP 이미지는 로컬 파일에서 직접 읽어 반환
@@ -138,6 +218,7 @@ class ImageProxyController {
           const contentType = this.detectContentType(String(targetUrl), null);
           res.setHeader('Content-Type', contentType);
           this.setImageCacheHeaders(res);
+          this.writeProxyCache(key, bytes, contentType);
           return res.status(200).send(bytes);
         } catch (error) {
           if (error && error.code === 'ENOENT') {
@@ -177,6 +258,7 @@ class ImageProxyController {
       if (sniffed) {
         res.setHeader('Content-Type', sniffed);
         this.setImageCacheHeaders(res);
+        this.writeProxyCache(key, bytes, sniffed);
         return res.status(200).send(bytes);
       }
 
@@ -213,6 +295,7 @@ class ImageProxyController {
       const contentType = this.detectContentType(urlStr, response.headers.get('content-type'));
       res.setHeader('Content-Type', contentType);
       this.setImageCacheHeaders(res);
+      this.writeProxyCache(key, bytes, contentType);
       return res.status(200).send(bytes);
     } catch (error) {
       return res.sendStatus(500);
