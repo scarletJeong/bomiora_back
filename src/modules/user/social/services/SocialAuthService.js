@@ -4,6 +4,7 @@ const userRepository = require('../../../auth/repositories/UserRepository');
 const pointRepository = require('../../point/repositories/PointRepository');
 const { createPBKDF2Password } = require('../../../../utils/passwordUtil');
 const socialProfileRepository = require('../repositories/SocialProfileRepository');
+const { warmMemberListCaches } = require('../../../auth/services/warmMemberListCaches');
 const {
   getSocialConvertId,
   normalizeProvider,
@@ -131,6 +132,7 @@ class SocialAuthService {
       }
     }
 
+    warmMemberListCaches(updatedUser.mbId || user.mbId);
     return {
       success: true,
       user: updatedUser.toResponse(),
