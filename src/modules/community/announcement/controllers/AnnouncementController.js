@@ -1,7 +1,7 @@
 const announcementRepository = require('../repositories/AnnouncementRepository');
 const { TtlCache } = require('../../../../utils/ttlCache');
 
-const announcementListCache = new TtlCache(90_000);
+const announcementListCache = new TtlCache(300_000);
 const announcementDetailCache = new TtlCache(180_000);
 
 class AnnouncementController {

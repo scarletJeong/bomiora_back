@@ -27,50 +27,38 @@ class AnnouncementRepository {
     const offset = (safePage - 1) * safeSize;
     const keyword = `%${String(query || '').trim()}%`;
     const useKeyword = String(query || '').trim().length > 0;
-
     const whereSql = this._buildWhereClause({ useKeyword });
-    const topNoticeGuard = this._topNoticeGuardSql();
-
-    const countParams = useKeyword ? [keyword, keyword] : [];
     const listParams = useKeyword
-      ? [keyword, keyword, safeSize, offset]
-      : [safeSize, offset];
+      ? [keyword, keyword, safeSize + 1, offset]
+      : [safeSize + 1, offset];
 
-    const [[countRows], [rows]] = await Promise.all([
-      pool.query(
-        `SELECT COUNT(*) AS total
-           FROM bm_notice n
-           ${whereSql}
-           AND ${topNoticeGuard}`,
-        countParams
-      ),
-      pool.query(
-        `SELECT
-            n.id,
-            n.title,
-            NULL AS content,
-            n.view_count,
-            n.is_notice,
-            n.writer_name,
-            n.created_at,
-            n.created_by,
-            n.updated_at,
-            n.updated_by,
-            n.image_path
-          FROM bm_notice n
-          ${whereSql}
-          AND ${topNoticeGuard}
-          ORDER BY n.is_notice DESC, n.created_at DESC, n.id DESC
-          LIMIT ? OFFSET ?`,
-        listParams
-      ),
-    ]);
+    const [rows] = await pool.query(
+      `SELECT
+          n.id,
+          n.title,
+          NULL AS content,
+          n.view_count,
+          n.is_notice,
+          n.writer_name,
+          n.created_at,
+          n.created_by,
+          n.updated_at,
+          n.updated_by,
+          n.image_path
+        FROM bm_notice n
+        ${whereSql}
+        ORDER BY n.is_notice DESC, n.created_at DESC, n.id DESC
+        LIMIT ? OFFSET ?`,
+      listParams
+    );
 
+    const hasMore = rows.length > safeSize;
+    const pageRows = hasMore ? rows.slice(0, safeSize) : rows;
     return {
-      total: Number(countRows?.[0]?.total || 0),
+      total: offset + pageRows.length + (hasMore ? 1 : 0),
       page: safePage,
       size: safeSize,
-      rows,
+      rows: pageRows,
     };
   }
 
