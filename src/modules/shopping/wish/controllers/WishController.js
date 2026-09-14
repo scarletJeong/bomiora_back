@@ -26,10 +26,13 @@ class WishController {
 
   invalidateList(mbId) {
     if (!mbId) return;
-    for (const key of wishListCache.store.keys()) {
-      if (key.startsWith(`list:${mbId}`) || key.startsWith(`check:${mbId}:`)) {
-        wishListCache.store.delete(key);
-      }
+    const match = (key) =>
+      key.startsWith(`list:${mbId}`) || key.startsWith(`check:${mbId}:`);
+    for (const key of [...wishListCache.store.keys()]) {
+      if (match(key)) wishListCache.remove(key);
+    }
+    for (const key of [...wishListCache.inFlight.keys()]) {
+      if (match(key)) wishListCache.inFlight.delete(key);
     }
   }
 
@@ -155,8 +158,10 @@ class WishController {
   warmList(mbId, category = 'all') {
     const id = String(mbId || '').trim();
     if (!id) return;
+    const key = `list:${id}:${category}`;
+    wishListCache.remove(key);
     wishListCache
-      .getOrSet(`list:${id}:${category}`, () => this.loadListPayload(id, category))
+      .getOrSet(key, () => this.loadListPayload(id, category))
       .catch(() => {});
   }
 
