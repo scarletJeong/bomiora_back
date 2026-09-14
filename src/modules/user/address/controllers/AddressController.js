@@ -36,16 +36,29 @@ class AddressController {
     if (mbId) addressListCache.store.delete(`list:${mbId}`);
   }
 
+  async loadListPayload(mbId) {
+    const addresses = await addressRepository.findByMbId(mbId);
+    return {
+      success: true,
+      data: addresses.map((a) => this.mapAddress(a)),
+    };
+  }
+
+  warmList(mbId) {
+    const id = String(mbId || '').trim();
+    if (!id) return;
+    addressListCache
+      .getOrSet(`list:${id}`, () => this.loadListPayload(id))
+      .catch(() => {});
+  }
+
   async getAddressList(req, res) {
     try {
       const mbId = req.query.mbId || req.query.mb_id;
-      const payload = await addressListCache.getOrSet(`list:${mbId}`, async () => {
-        const addresses = await addressRepository.findByMbId(mbId);
-        return {
-          success: true,
-          data: addresses.map((a) => this.mapAddress(a)),
-        };
-      });
+      const payload = await addressListCache.getOrSet(
+        `list:${mbId}`,
+        () => this.loadListPayload(mbId)
+      );
       res.set('Cache-Control', 'private, max-age=30');
       return res.json(payload);
     } catch (error) {
@@ -103,6 +116,7 @@ class AddressController {
       );
 
       this.invalidateList(mbId);
+      this.warmList(mbId);
       return res.json({
         success: true,
         data: this.mapAddress(saved),
@@ -137,6 +151,7 @@ class AddressController {
       }
 
       this.invalidateList(mbId);
+      this.warmList(mbId);
       return res.json({ success: true, data: this.mapAddress(updated), message: '배송지가 수정되었습니다.' });
     } catch (error) {
       return res.status(400).json({ error: error.message });
@@ -151,6 +166,7 @@ class AddressController {
         return res.status(400).json({ error: '배송지를 찾을 수 없습니다.' });
       }
       this.invalidateList(mbId);
+      this.warmList(mbId);
       return res.json({ success: true, message: '배송지가 삭제되었습니다.' });
     } catch (error) {
       return res.status(400).json({ error: error.message });
@@ -171,6 +187,7 @@ class AddressController {
       }
 
       this.invalidateList(mbId);
+      this.warmList(mbId);
       return res.json({
         success: true,
         data: this.mapAddress(updated),
