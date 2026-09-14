@@ -8,7 +8,9 @@ const {
   payloadFromRow,
   rememberPayload,
 } = require('../services/refundAccountCache');
+const { warmMemberListCaches } = require('../services/warmMemberListCaches');
 const { SUBDIRS, mirrorUploadedFile } = require('../../../utils/cafe24ImageMirror');
+const { formatSqlDateOnlyForApi } = require('../../../utils/healthDateTime');
 const fs = require('fs');
 const path = require('path');
 
@@ -141,7 +143,7 @@ class UserController {
       if (passwordMatch) {
         const clientIp = getClientIp(req);
         const today = getKstDateString();
-        const lastLoginYmd = String(user.lastLoginAt || '').slice(0, 10);
+        const lastLoginYmd = formatSqlDateOnlyForApi(user.lastLoginAt) || '';
         if (lastLoginYmd === today) {
           userRepository.touchLastLogin(user.mbId, clientIp).catch(() => {});
         } else {
@@ -155,6 +157,7 @@ class UserController {
             });
         }
 
+        warmMemberListCaches(user.mbId);
         return res.json({
           success: true,
           user: user.toResponse(),
@@ -944,6 +947,10 @@ class UserController {
    */
   async session(req, res) {
     try {
+      // Express etag 304(빈 body) 방지 — 세션 JSON은 캐시하지 않음
+      res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
+      res.set('Pragma', 'no-cache');
+
       const mbId = String(req.query?.mb_id || req.query?.mbId || '').trim();
       if (!mbId) {
         return res.status(400).json({
@@ -970,26 +977,34 @@ class UserController {
         });
       }
 
+      // mysql2 Date를 String().slice하면 "Mon Sep 14"가 되어 매일 FOR UPDATE를 탐.
+      const today = getKstDateString();
+      const lastLoginYmd = formatSqlDateOnlyForApi(user.lastLoginAt) || '';
+      const alreadyToday = lastLoginYmd === today;
+
       // 자동로그인(앱 재실행)도 "오늘 첫 접속"이면 100P 지급.
-      // 푸시는 이후 FCM 토큰 등록(/api/user/fcm-token)에서 발송.
-      let firstLoginPoint = null;
-      try {
+      // 응답은 기다리지 않음 — 이미 지급된 날은 DB 트랜잭션 자체를 건너뜀.
+      if (!alreadyToday) {
         const clientIp = getClientIp(req);
-        firstLoginPoint = await pointRepository.grantDailyFirstLoginPoint({
-          mbId: user.mbId,
-          ip: clientIp,
-        });
-        if (firstLoginPoint?.granted) {
-          console.log(
-            '[SESSION] 첫로그인 100P 지급 — 푸시는 FCM 토큰 등록 시 발송',
-            user.mbId
-          );
-        }
-      } catch (e) {
-        console.error(
-          '[SESSION] 첫로그인 포인트 지급 실패(세션은 유지):',
-          e?.message || e
-        );
+        pointRepository
+          .grantDailyFirstLoginPoint({
+            mbId: user.mbId,
+            ip: clientIp,
+          })
+          .then((firstLoginPoint) => {
+            if (firstLoginPoint?.granted) {
+              console.log(
+                '[SESSION] 첫로그인 100P 지급 — 푸시는 FCM 토큰 등록 시 발송',
+                user.mbId
+              );
+            }
+          })
+          .catch((e) => {
+            console.error(
+              '[SESSION] 첫로그인 포인트 지급 실패(세션은 유지):',
+              e?.message || e
+            );
+          });
       }
 
       return res.json({
@@ -997,9 +1012,10 @@ class UserController {
         active: true,
         user: user.toResponse(),
         message: '정상 회원입니다.',
-        firstLoginPoint: firstLoginPoint?.granted
-          ? { granted: true, point: firstLoginPoint.poPoint || 100 }
-          : { granted: false, code: firstLoginPoint?.code || null },
+        firstLoginPoint: {
+          granted: false,
+          code: alreadyToday ? 'ALREADY' : 'PENDING',
+        },
       });
     } catch (error) {
       console.error('❌ [SESSION] 오류:', error);
@@ -1059,6 +1075,7 @@ class UserController {
       user.lastLoginAt = getKstDateTimeString();
       const updatedUser = await userRepository.update(user);
 
+      warmMemberListCaches(updatedUser.mbId || user.mbId);
       return res.json({
         success: true,
         user: updatedUser.toResponse(),
