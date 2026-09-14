@@ -1,5 +1,6 @@
 const crypto = require('crypto');
 const pool = require('../../../config/database');
+const { rememberFromMemberRow } = require('../services/refundAccountCache');
 const User = require('../models/User');
 
 class UserRepository {
@@ -79,7 +80,9 @@ class UserRepository {
         'SELECT * FROM bomiora_member WHERE mb_id = ?',
         [mbId]
       );
-      return rows.length > 0 ? new User(rows[0]) : null;
+      if (!rows.length) return null;
+      rememberFromMemberRow(mbId, rows[0]);
+      return new User(rows[0]);
     } catch (error) {
       console.error('❌ [UserRepository] findByMbId 오류:', error);
       throw error;
@@ -650,11 +653,11 @@ class UserRepository {
    */
   async findRefundAccountByMbId(mbId) {
     try {
-      const [rows] = await pool.query(
-        `SELECT CAST(mb_refund_bank AS CHAR) AS mb_refund_bank,
-                CAST(mb_refund_account AS CHAR) AS mb_refund_account,
-                CAST(mb_refund_holder AS CHAR) AS mb_refund_holder
-         FROM bomiora_member WHERE mb_id = ? LIMIT 1`,
+      const [rows] = await pool.execute(
+        `SELECT mb_id, mb_refund_bank, mb_refund_account, mb_refund_holder
+           FROM bomiora_member
+          WHERE mb_id = ?
+          LIMIT 1`,
         [mbId]
       );
       return rows.length ? rows[0] : null;

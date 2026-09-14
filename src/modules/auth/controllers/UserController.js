@@ -2,12 +2,15 @@ const userRepository = require('../repositories/UserRepository');
 const pointRepository = require('../../user/point/repositories/PointRepository');
 const otpRepository = require('../repositories/OtpRepository');
 const { verifyPBKDF2Password, mysqlPassword, createPBKDF2Password } = require('../../../utils/passwordUtil');
-const { TtlCache } = require('../../../utils/ttlCache');
+const {
+  getCachedPayload,
+  setCachedPayload,
+  payloadFromRow,
+  rememberPayload,
+} = require('../services/refundAccountCache');
 const { SUBDIRS, mirrorUploadedFile } = require('../../../utils/cafe24ImageMirror');
 const fs = require('fs');
 const path = require('path');
-
-const refundAccountCache = new TtlCache(30_000);
 
 class UserController {
   async checkDupInfo(req, res) {
@@ -807,20 +810,19 @@ class UserController {
       if (!mbId) {
         return res.status(400).json({ success: false, message: 'mb_id가 필요합니다.' });
       }
-      const row = await refundAccountCache.getOrSet(`refund:${mbId}`, async () => {
-        const found = await userRepository.findRefundAccountByMbId(mbId);
-        return found || null;
-      });
+      const cached = getCachedPayload(mbId);
+      if (cached) {
+        res.set('Cache-Control', 'private, max-age=60');
+        return res.json(cached);
+      }
+      const row = await userRepository.findRefundAccountByMbId(mbId);
       if (!row) {
         return res.status(404).json({ success: false, message: '사용자를 찾을 수 없습니다.' });
       }
-      const s = (v) => this._bufferToString(v).trim();
-      return res.json({
-        success: true,
-        refundBank: s(row.mb_refund_bank),
-        refundAccount: s(row.mb_refund_account),
-        refundHolder: s(row.mb_refund_holder),
-      });
+      const payload = payloadFromRow(row);
+      setCachedPayload(mbId, payload);
+      res.set('Cache-Control', 'private, max-age=60');
+      return res.json(payload);
     } catch (error) {
       console.error('❌ [GET REFUND ACCOUNT] 오류:', error);
       return res.status(500).json({
@@ -866,7 +868,7 @@ class UserController {
         account,
         holder,
       });
-      refundAccountCache.store.delete(`refund:${mbId}`);
+      rememberPayload(mbId, { bank, account, holder });
 
       return res.json({
         success: true,
