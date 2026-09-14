@@ -23,7 +23,7 @@ app.use(express.urlencoded({ extended: true, limit: '20mb' })); // URL 인코딩
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // 기본 라우트
-app.get('/', (req, res) => {
+app.get('/', (req, res) => { 
   res.json({ 
     message: 'Bomiora Backend API',
     version: '1.0.0',
