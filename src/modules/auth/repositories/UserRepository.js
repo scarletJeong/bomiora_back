@@ -271,8 +271,8 @@ class UserRepository {
         ''
       ).trim();
       const ip = String(clientIp || '');
-      const marketingEmail = agreements?.marketingEmail === true ? 1 : 0;
-      const marketingSms = agreements?.marketingSms === true ? 1 : 0;
+      const marketing = resolveMarketingAgree(agreements);
+      const appPush = resolveAppPushAgree(agreements);
       const initialPoint = 5000;
 
       console.log('[UserRepository.create] 저장 요청 부가 데이터:', {
@@ -291,9 +291,10 @@ class UserRepository {
            mb_no, mb_id, mb_email, mb_password, mb_name, mb_nick, mb_nick_date,
            mb_sex, mb_birth, mb_hp, mb_certify, mb_dupinfo, mb_point,
            mb_datetime, mb_today_login, mb_email_certify, mb_login_ip, mb_ip,
-           mb_mailling, mb_sms
+           mb_mailling, mb_sms,
+           mb_notif_order, mb_notif_marketing, mb_notif_app_push, mb_notif_sms
          ) 
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           mbNo,
           mbId,
@@ -313,8 +314,12 @@ class UserRepository {
           nowKstDateTime,
           ip,
           ip,
-          marketingEmail,
-          marketingSms,
+          marketing,
+          marketing,
+          1,
+          marketing,
+          appPush,
+          marketing,
         ]
       );
 
@@ -687,6 +692,30 @@ class UserRepository {
 }
 
 module.exports = new UserRepository();
+
+function agreeFlag(value) {
+  return value === true || value === 1 || value === '1';
+}
+
+function resolveMarketingAgree(agreements) {
+  if (!agreements) return 0;
+  if (agreeFlag(agreements.marketing) || agreeFlag(agreements.marketingAgree)) return 1;
+  if (agreeFlag(agreements.marketingEmail) || agreeFlag(agreements.marketingSms)) return 1;
+  return 0;
+}
+
+function resolveAppPushAgree(agreements) {
+  if (!agreements) return 0;
+  if (
+    agreeFlag(agreements.appPush) ||
+    agreeFlag(agreements.appPushAgree) ||
+    agreeFlag(agreements.night) ||
+    agreeFlag(agreements.nightAgree)
+  ) {
+    return 1;
+  }
+  return 0;
+}
 
 function getKstDateTimeString() {
   const now = new Date(Date.now() + (9 * 60 * 60 * 1000));

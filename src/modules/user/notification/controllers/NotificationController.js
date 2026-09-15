@@ -85,6 +85,7 @@ class NotificationController {
         return res.status(404).json({ success: false, message: '회원을 찾을 수 없습니다.' });
       }
 
+      res.set('Cache-Control', 'private, max-age=30');
       return res.json({
         success: true,
         data: {
@@ -111,11 +112,6 @@ class NotificationController {
         return res.status(400).json({ success: false, message: 'mb_id가 필요합니다.' });
       }
 
-      const exists = await notificationRepository.memberExists(mbId);
-      if (!exists) {
-        return res.status(404).json({ success: false, message: '회원을 찾을 수 없습니다.' });
-      }
-
       const settings = {
         orderAgree: readBool(req.body?.order_agree ?? req.body?.orderAgree),
         marketingAgree: readBool(req.body?.marketing_agree ?? req.body?.marketingAgree),
@@ -123,7 +119,10 @@ class NotificationController {
         smsAgree: readBool(req.body?.sms_agree ?? req.body?.smsAgree),
       };
 
-      await notificationRepository.updateSettings(mbId, settings);
+      const updated = await notificationRepository.updateSettings(mbId, settings);
+      if (!updated) {
+        return res.status(404).json({ success: false, message: '회원을 찾을 수 없습니다.' });
+      }
 
       return res.json({
         success: true,

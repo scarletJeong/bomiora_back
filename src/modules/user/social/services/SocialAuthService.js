@@ -317,8 +317,19 @@ class SocialAuthService {
     const nowKstDate = getKstDateString();
     const randomPassword = crypto.randomBytes(16).toString('hex');
     const pbkdf2Hash = createPBKDF2Password(randomPassword);
-    const marketingEmail = agreements?.marketingEmail === true ? 1 : 0;
-    const marketingSms = agreements?.marketingSms === true ? 1 : 0;
+    const marketing =
+      agreements?.marketing === true ||
+      agreements?.marketingAgree === true ||
+      agreements?.marketingEmail === true ||
+      agreements?.marketingSms === true
+        ? 1
+        : 0;
+    const appPush =
+      agreements?.appPush === true ||
+      agreements?.appPushAgree === true ||
+      agreements?.night === true
+        ? 1
+        : 0;
     const initialPoint = 5000;
 
     let conn;
@@ -335,9 +346,10 @@ class SocialAuthService {
            mb_no, mb_id, mb_email, mb_password, mb_name, mb_nick, mb_nick_date,
            mb_sex, mb_birth, mb_hp, mb_certify, mb_dupinfo, mb_point,
            mb_datetime, mb_today_login, mb_email_certify, mb_login_ip, mb_ip,
-           mb_mailling, mb_sms
+           mb_mailling, mb_sms,
+           mb_notif_order, mb_notif_marketing, mb_notif_app_push, mb_notif_sms
          )
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', '', ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           mbNo,
           mbId,
@@ -355,8 +367,12 @@ class SocialAuthService {
           nowKstDateTime,
           clientIp,
           clientIp,
-          marketingEmail,
-          marketingSms,
+          marketing,
+          marketing,
+          1,
+          marketing,
+          appPush,
+          marketing,
         ]
       );
 

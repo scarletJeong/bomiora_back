@@ -1,38 +1,70 @@
 const crypto = require('crypto');
 const pool = require('../../../../config/database');
+const { TtlCache } = require('../../../../utils/ttlCache');
+
+const settingsCache = new TtlCache(180_000);
 
 function hashFcmToken(fcmToken) {
   return crypto.createHash('sha256').update(fcmToken, 'utf8').digest('hex');
 }
 
 class NotificationRepository {
+  cacheKey(mbId) {
+    return `settings:${String(mbId || '').trim()}`;
+  }
+
+  rememberSettings(mbId, row) {
+    const id = String(mbId || '').trim();
+    if (!id || !row) return;
+    settingsCache.set(this.cacheKey(id), row);
+  }
+
+  warmSettings(mbId) {
+    const id = String(mbId || '').trim();
+    if (!id) return;
+    this.findSettingsByMbId(id).catch(() => {});
+  }
+
   async findSettingsByMbId(mbId) {
-    const [rows] = await pool.query(
-      `SELECT mb_notif_order, mb_notif_marketing, mb_notif_app_push, mb_notif_sms
-       FROM bomiora_member
-       WHERE mb_id = ?
-       LIMIT 1`,
-      [mbId]
-    );
-    return rows[0] || null;
+    const id = String(mbId || '').trim();
+    if (!id) return null;
+    return settingsCache.getOrSet(this.cacheKey(id), async () => {
+      const [rows] = await pool.query(
+        `SELECT mb_notif_order, mb_notif_marketing, mb_notif_app_push, mb_notif_sms
+         FROM bomiora_member
+         WHERE mb_id = ?
+         LIMIT 1`,
+        [id]
+      );
+      return rows[0] || null;
+    });
   }
 
   async updateSettings(mbId, settings) {
-    await pool.query(
+    const id = String(mbId || '').trim();
+    const order = settings.orderAgree ? 1 : 0;
+    const marketing = settings.marketingAgree ? 1 : 0;
+    const appPush = settings.appPushAgree ? 1 : 0;
+    const sms = settings.smsAgree ? 1 : 0;
+    const [result] = await pool.query(
       `UPDATE bomiora_member
        SET mb_notif_order = ?,
            mb_notif_marketing = ?,
            mb_notif_app_push = ?,
-           mb_notif_sms = ?
+           mb_notif_sms = ?,
+           mb_mailling = ?,
+           mb_sms = ?
        WHERE mb_id = ?`,
-      [
-        settings.orderAgree ? 1 : 0,
-        settings.marketingAgree ? 1 : 0,
-        settings.appPushAgree ? 1 : 0,
-        settings.smsAgree ? 1 : 0,
-        mbId,
-      ]
+      [order, marketing, appPush, sms, marketing, marketing, id]
     );
+    if (!result.affectedRows) return false;
+    this.rememberSettings(id, {
+      mb_notif_order: order,
+      mb_notif_marketing: marketing,
+      mb_notif_app_push: appPush,
+      mb_notif_sms: sms,
+    });
+    return true;
   }
 
   async upsertFcmToken({ mbId, fcmToken, platform }) {
@@ -68,11 +100,8 @@ class NotificationRepository {
   }
 
   async memberExists(mbId) {
-    const [rows] = await pool.query(
-      'SELECT COUNT(*) AS cnt FROM bomiora_member WHERE mb_id = ?',
-      [mbId]
-    );
-    return rows[0]?.cnt > 0;
+    const row = await this.findSettingsByMbId(mbId);
+    return !!row;
   }
 }
 
