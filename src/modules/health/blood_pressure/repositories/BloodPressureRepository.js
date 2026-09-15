@@ -143,15 +143,16 @@ class BloodPressureRepository {
     return rows.length ? new BloodPressure(rows[0]) : null;
   }
 
-  async findByMbIdAndMeasuredAtBetween(mbId, startDate, endDate) {
-    const [rows] = await pool.query(
-      `SELECT * FROM bm_blood_pressure
+  async findByMbIdAndMeasuredAtBetween(mbId, startDate, endDate, { limit } = {}) {
+    const sql = `SELECT * FROM bm_blood_pressure
        WHERE mb_id = ?
        AND measured_at >= ?
        AND measured_at <= ?
-       ORDER BY measured_at DESC`,
-      [mbId, startDate, endDate]
-    );
+       ORDER BY measured_at DESC${limit ? ' LIMIT ?' : ''}`;
+    const params = limit
+      ? [mbId, startDate, endDate, Number(limit)]
+      : [mbId, startDate, endDate];
+    const [rows] = await pool.query(sql, params);
 
     return rows.map((row) => new BloodPressure(row));
   }

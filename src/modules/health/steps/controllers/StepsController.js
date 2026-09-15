@@ -191,14 +191,27 @@ class StepsController {
           message: 'mb_id, start, end(YYYY-MM-DD)는 필수입니다.'
         });
       }
-      const map = await stepsRepository.aggregateBmStepsDailyTotalsBetween(mbId, start, end);
-      const days = [];
-      let key = start;
-      while (key <= end) {
-        days.push({ date: key, total_steps: map.get(key) || 0 });
-        key = addDaysToYmdDateString(key, 1);
-      }
-      return res.json({ success: true, data: { days } });
+      const map = await getHealthCached(
+        'steps-range',
+        mbId,
+        async () => {
+          const totals = await stepsRepository.aggregateBmStepsDailyTotalsBetween(
+            mbId,
+            start,
+            end,
+          );
+          const days = [];
+          let key = start;
+          while (key <= end) {
+            days.push({ date: key, total_steps: totals.get(key) || 0 });
+            key = addDaysToYmdDateString(key, 1);
+          }
+          return { success: true, data: { days } };
+        },
+        `${start}:${end}`,
+      );
+      res.set('Cache-Control', 'private, max-age=30');
+      return res.json(map);
     } catch (error) {
       console.error('daily-range 조회 실패:', error);
       return res.status(500).json({
@@ -219,14 +232,26 @@ class StepsController {
           message: 'mb_id, year는 필수입니다.'
         });
       }
-      const totals = await stepsRepository.aggregateBmStepsMonthlyTotalsForYear(mbId, year);
-      return res.json({
-        success: true,
-        data: {
-          year,
-          months: totals.map((total_steps, i) => ({ month: i + 1, total_steps }))
-        }
-      });
+      const payload = await getHealthCached(
+        'steps-monthly',
+        mbId,
+        async () => {
+          const totals = await stepsRepository.aggregateBmStepsMonthlyTotalsForYear(
+            mbId,
+            year,
+          );
+          return {
+            success: true,
+            data: {
+              year,
+              months: totals.map((total_steps, i) => ({ month: i + 1, total_steps })),
+            },
+          };
+        },
+        String(year),
+      );
+      res.set('Cache-Control', 'private, max-age=30');
+      return res.json(payload);
     } catch (error) {
       console.error('monthly-totals 조회 실패:', error);
       return res.status(500).json({

@@ -25,12 +25,12 @@ class HealthDashboardService {
       stepsData,
       goalRow,
     ] = await Promise.all([
-      weightRepository.findByMbIdAndDateRange(id, start, end),
-      bloodPressureRepository.findByMbIdAndMeasuredAtBetween(id, start, end),
-      bloodSugarRepository.findByMbIdAndMeasuredAtBetween(id, start, end),
-      heartRateRepository.findByMbIdAndMeasuredAtBetween(id, start, end),
+      weightRepository.findByMbIdAndDateRange(id, start, end, { limit: 1 }),
+      bloodPressureRepository.findByMbIdAndMeasuredAtBetween(id, start, end, { limit: 1 }),
+      bloodSugarRepository.findByMbIdAndMeasuredAtBetween(id, start, end, { limit: 1 }),
+      heartRateRepository.findByMbIdAndMeasuredAtBetween(id, start, end, { limit: 1 }),
       menstrualCycleRepository.findFirstByMbIdOrderByCreatedAtDesc(id),
-      stepsDailyTotalService.buildDailyTotal(id, dateStr),
+      stepsDailyTotalService.buildDailyTotalLite(id, dateStr),
       healthGoalRepository.findLatestByMbId(id),
     ]);
 

@@ -2,6 +2,43 @@ const stepsRepository = require('../repositories/StepsRepository');
 const { toIsoUtcString, addDaysToYmdDateString } = require('../../../../utils/healthDateTime');
 
 class StepsDailyTotalService {
+  _litePayload(mbIdRaw, date, totalSteps, prevTotal) {
+    const userId = Number(mbIdRaw);
+    const numericUser = Number.isFinite(userId);
+    const total = Number(totalSteps) || 0;
+    const prev = Number(prevTotal) || 0;
+    const approxKm = total * 0.0007;
+    return {
+      id: 0,
+      user_id: numericUser ? userId : 0,
+      mb_id: mbIdRaw,
+      date,
+      total_steps: total,
+      distance: Math.round(approxKm * 10) / 10,
+      calories: Math.round(total * 0.04),
+      hourly_steps: [],
+      half_hour_steps: [],
+      created_at: null,
+      updated_at: null,
+      steps_difference: total - prev,
+      source: 'bm_steps',
+    };
+  }
+
+  /** 대시보드용 — 일자 합계만 (30분 슬롯 JS 집계 생략) */
+  async buildDailyTotalLite(mbIdRaw, date) {
+    const prevStr = addDaysToYmdDateString(date, -1);
+    const map = await stepsRepository
+      .aggregateBmStepsDailyTotalsBetween(mbIdRaw, prevStr, date)
+      .catch(() => new Map());
+    return this._litePayload(
+      mbIdRaw,
+      date,
+      map.get(date) || 0,
+      map.get(prevStr) || 0,
+    );
+  }
+
   async buildDailyTotal(mbIdRaw, date) {
     const userId = Number(mbIdRaw);
     const numericUser = Number.isFinite(userId);

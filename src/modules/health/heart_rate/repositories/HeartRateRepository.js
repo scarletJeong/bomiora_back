@@ -66,15 +66,16 @@ class HeartRateRepository {
     return rows.length ? new HeartRate(rows[0]) : null;
   }
 
-  async findByMbIdAndMeasuredAtBetween(mbId, startDate, endDate) {
-    const [rows] = await pool.query(
-      `SELECT * FROM bm_heart_rate
+  async findByMbIdAndMeasuredAtBetween(mbId, startDate, endDate, { limit } = {}) {
+    const sql = `SELECT * FROM bm_heart_rate
        WHERE mb_id = ?
        AND measured_at >= ?
        AND measured_at <= ?
-       ORDER BY measured_at DESC`,
-      [mbId, startDate, endDate]
-    );
+       ORDER BY measured_at DESC${limit ? ' LIMIT ?' : ''}`;
+    const params = limit
+      ? [mbId, startDate, endDate, Number(limit)]
+      : [mbId, startDate, endDate];
+    const [rows] = await pool.query(sql, params);
     return rows.map((row) => new HeartRate(row));
   }
 

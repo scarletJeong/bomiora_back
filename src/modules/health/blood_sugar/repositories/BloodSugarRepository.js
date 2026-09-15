@@ -89,13 +89,14 @@ class BloodSugarRepository {
     return rows.length ? new BloodSugar(rows[0]) : null;
   }
 
-  async findByMbIdAndMeasuredAtBetween(mbId, startDate, endDate) {
-    const [rows] = await pool.query(
-      `SELECT * FROM bm_blood_sugar
+  async findByMbIdAndMeasuredAtBetween(mbId, startDate, endDate, { limit } = {}) {
+    const sql = `SELECT * FROM bm_blood_sugar
        WHERE mb_id = ? AND measured_at BETWEEN ? AND ?
-       ORDER BY measured_at DESC`,
-      [mbId, startDate, endDate]
-    );
+       ORDER BY measured_at DESC${limit ? ' LIMIT ?' : ''}`;
+    const params = limit
+      ? [mbId, startDate, endDate, Number(limit)]
+      : [mbId, startDate, endDate];
+    const [rows] = await pool.query(sql, params);
     return rows.map((row) => new BloodSugar(row));
   }
 
