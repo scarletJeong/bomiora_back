@@ -10,6 +10,9 @@ function warmMemberListCaches(mbId) {
   try {
     require('../../user/notification/repositories/NotificationRepository').warmSettings(id);
   } catch (_) {}
+  try {
+    require('../../shopping/recent_view/controllers/RecentViewController').warmList(id, 4);
+  } catch (_) {}
 }
 
 module.exports = { warmMemberListCaches };

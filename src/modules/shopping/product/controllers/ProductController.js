@@ -77,6 +77,56 @@ class ProductController {
         };
       })
       .catch(() => null);
+    this.warmCatalogCaches().catch(() => {});
+  }
+
+  async _categoriesPayload(itKind) {
+    const kind = String(itKind || '').trim();
+    return homeProductCache.getOrSet(`categories-with-products:${kind}`, async () => {
+      const rows = await productRepository.findCategoriesWithProducts(kind);
+      const categories = rows.map((row) => ({
+        categoryId: this.bufferToString(row.ca_id),
+        categoryName: this.bufferToString(row.ca_name),
+        productKind: kind,
+        sortOrder: row.ca_order != null ? Number(row.ca_order) : 0,
+      }));
+      return { success: true, data: categories };
+    });
+  }
+
+  async _listPayload(categoryId, itKind, page, pageSize) {
+    const cacheKey = `list:${categoryId}:${itKind || ''}:${page}:${pageSize}`;
+    return productListCache.getOrSet(cacheKey, async () => {
+      const [rows, shopDefault] = await Promise.all([
+        productRepository.findByCategory(categoryId, itKind, page, pageSize),
+        this.getShopDefaultCached(),
+      ]);
+      const products = (rows || []).map((r) => this.toProductSearchDto(r, shopDefault));
+      return {
+        success: true,
+        data: products,
+        total: products.length,
+        page,
+        pageSize,
+      };
+    });
+  }
+
+  /** 스토어 탭·카테고리 목록 선적재 — 첫 진입 380ms DB 왕복 제거 */
+  async warmCatalogCaches() {
+    await this.warmShopDefault();
+    for (const kind of ['prescription', 'general']) {
+      try {
+        const payload = await this._categoriesPayload(kind);
+        const cats = Array.isArray(payload?.data) ? payload.data : [];
+        await Promise.all(
+          cats
+            .map((c) => String(c.categoryId || '').trim())
+            .filter(Boolean)
+            .map((id) => this._listPayload(id, kind, 1, 20).catch(() => null))
+        );
+      } catch (_) {}
+    }
   }
 
   _toInt(value, fallback = 0) {
@@ -387,21 +437,7 @@ class ProductController {
       const itKind = req.query.it_kind || null;
       const page = Number(req.query.page || 1);
       const pageSize = Number(req.query.pageSize || 20);
-      const cacheKey = `list:${categoryId}:${itKind || ''}:${page}:${pageSize}`;
-      const payload = await productListCache.getOrSet(cacheKey, async () => {
-        const [rows, shopDefault] = await Promise.all([
-          productRepository.findByCategory(categoryId, itKind, page, pageSize),
-          this.getShopDefaultCached(),
-        ]);
-        const products = (rows || []).map((r) => this.toProductSearchDto(r, shopDefault));
-        return {
-          success: true,
-          data: products,
-          total: products.length,
-          page,
-          pageSize,
-        };
-      });
+      const payload = await this._listPayload(categoryId, itKind, page, pageSize);
       res.set('Cache-Control', 'public, max-age=120');
       return res.json(payload);
     } catch (error) {
@@ -487,19 +523,7 @@ class ProductController {
         });
       }
 
-      const payload = await homeProductCache.getOrSet(
-        `categories-with-products:${itKind}`,
-        async () => {
-          const rows = await productRepository.findCategoriesWithProducts(itKind);
-          const categories = rows.map((row) => ({
-            categoryId: this.bufferToString(row.ca_id),
-            categoryName: this.bufferToString(row.ca_name),
-            productKind: itKind,
-            sortOrder: row.ca_order != null ? Number(row.ca_order) : 0
-          }));
-          return { success: true, data: categories };
-        }
-      );
+      const payload = await this._categoriesPayload(itKind);
 
       res.set('Cache-Control', 'public, max-age=120');
       return res.json(payload);

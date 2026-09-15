@@ -203,23 +203,13 @@ class ProductRepository {
            SELECT DISTINCT LEFT(ca_id, 2) AS ca2
              FROM bomiora_shop_item_new
             WHERE it_kind = ? AND it_use = '1'
-              AND ca_id IS NOT NULL AND ca_id <> ''
-           UNION
-           SELECT DISTINCT LEFT(ca_id2, 2)
-             FROM bomiora_shop_item_new
-            WHERE it_kind = ? AND it_use = '1'
-              AND ca_id2 IS NOT NULL AND ca_id2 <> ''
-           UNION
-           SELECT DISTINCT LEFT(ca_id3, 2)
-             FROM bomiora_shop_item_new
-            WHERE it_kind = ? AND it_use = '1'
-              AND ca_id3 IS NOT NULL AND ca_id3 <> ''
+              AND ca_id IS NOT NULL AND TRIM(ca_id) <> ''
          ) x ON x.ca2 = c.ca_id
         WHERE c.ca_use = '1'
           AND c.ca_menu_show = '1'
           AND CHAR_LENGTH(c.ca_id) = 2
         ORDER BY c.ca_order, c.ca_id`,
-      [kind, kind, kind]
+      [kind]
     );
     return rows;
   }

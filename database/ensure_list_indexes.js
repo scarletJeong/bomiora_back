@@ -36,6 +36,16 @@ const INDEXES = [
     name: 'idx_coupon_log_mb_cp',
     sql: 'ALTER TABLE bomiora_shop_coupon_log ADD INDEX idx_coupon_log_mb_cp (mb_id, cp_id)',
   },
+  {
+    table: 'bomiora_shop_item_new',
+    name: 'idx_item_list_cat',
+    sql: 'ALTER TABLE bomiora_shop_item_new ADD INDEX idx_item_list_cat (ca_id, it_kind, it_use, it_order, it_id)',
+  },
+  {
+    table: 'bomiora_shop_recent_view',
+    name: 'idx_recent_mb_time',
+    sql: 'ALTER TABLE bomiora_shop_recent_view ADD INDEX idx_recent_mb_time (mb_id, rv_time)',
+  },
 ];
 
 async function ensureListIndexes() {
