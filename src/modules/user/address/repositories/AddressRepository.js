@@ -177,19 +177,27 @@ class AddressRepository {
     };
   }
 
+  /**
+   * 기본배송지는 삭제하지 않음.
+   * 조건(기본이 아님)과 DELETE를 한 쿼리에서 처리 — 조회 후 삭제 순서 유지, RTT는 1회.
+   */
   async delete(id, mbId) {
+    const [result] = await pool.query(
+      `DELETE FROM bomiora_shop_order_address
+        WHERE ad_id = ? AND mb_id = ? AND IFNULL(ad_default, 0) <> 1`,
+      [id, mbId]
+    );
+    if (result.affectedRows > 0) {
+      return { ok: true };
+    }
     const [cur] = await pool.query(
       'SELECT ad_default FROM bomiora_shop_order_address WHERE ad_id = ? AND mb_id = ? LIMIT 1',
       [id, mbId]
     );
-    const [result] = await pool.query(
-      'DELETE FROM bomiora_shop_order_address WHERE ad_id = ? AND mb_id = ?',
-      [id, mbId]
-    );
-    if (result.affectedRows && Number(cur[0]?.ad_default || 0) === 1) {
-      await this.ensureDefault(mbId);
+    if (cur.length && Number(cur[0].ad_default || 0) === 1) {
+      return { ok: false, code: 'DEFAULT' };
     }
-    return result.affectedRows > 0;
+    return { ok: false, code: 'NOT_FOUND' };
   }
 
   async setDefault(id, mbId) {

@@ -33,7 +33,22 @@ class AddressController {
   }
 
   invalidateList(mbId) {
-    if (mbId) addressListCache.store.delete(`list:${mbId}`);
+    if (mbId) addressListCache.remove(`list:${mbId}`);
+  }
+
+  patchListRemove(mbId, adId) {
+    const id = String(mbId || '').trim();
+    if (!id) return;
+    const key = `list:${id}`;
+    const cached = addressListCache.get(key);
+    if (cached && Array.isArray(cached.data)) {
+      addressListCache.set(key, {
+        ...cached,
+        data: cached.data.filter((a) => Number(a.adId) !== Number(adId)),
+      });
+      return;
+    }
+    addressListCache.remove(key);
   }
 
   async loadListPayload(mbId) {
@@ -161,12 +176,17 @@ class AddressController {
   async deleteAddress(req, res) {
     try {
       const mbId = req.query.mbId;
-      const deleted = await addressRepository.delete(Number(req.params.id), mbId);
-      if (!deleted) {
+      const id = Number(req.params.id);
+      const result = await addressRepository.delete(id, mbId);
+      if (!result.ok) {
+        if (result.code === 'DEFAULT') {
+          return res.status(400).json({
+            error: '다른 배송지를 기본 배송지로 설정 후 삭제해주세요.',
+          });
+        }
         return res.status(400).json({ error: '배송지를 찾을 수 없습니다.' });
       }
-      this.invalidateList(mbId);
-      this.warmList(mbId);
+      this.patchListRemove(mbId, id);
       return res.json({ success: true, message: '배송지가 삭제되었습니다.' });
     } catch (error) {
       return res.status(400).json({ error: error.message });
