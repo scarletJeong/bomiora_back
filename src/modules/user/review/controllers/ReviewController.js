@@ -860,17 +860,37 @@ class ReviewController {
     }
   }
 
+  _findCachedReviewItId(mbId, isId) {
+    const prefix = `member:${String(mbId || '').trim()}:`;
+    const want = Number(isId);
+    for (const [key, hit] of memberReviewListCache.store) {
+      if (!key.startsWith(prefix) || !hit?.value) continue;
+      const reviews = hit.value.reviews;
+      if (!Array.isArray(reviews)) continue;
+      const found = reviews.find((r) => Number(r.isId) === want);
+      if (found?.itId) return String(found.itId);
+    }
+    return '';
+  }
+
   async deleteReview(req, res) {
     try {
       const isId = Number(req.params.isId);
-      const row = await reviewRepository.findById(isId);
-      if (!row) return res.json({ success: false, message: '리뷰를 찾을 수 없습니다.' });
-      if (!this._isSameMember(row.mb_id, req.query.mbId)) {
-        return res.json({ success: false, message: '리뷰를 삭제할 권한이 없습니다.' });
+      const mbId = String(req.query.mbId || req.query.mb_id || '').trim();
+      if (!mbId || !Number.isFinite(isId)) {
+        return res.json({ success: false, message: '리뷰를 삭제할 수 없습니다.' });
       }
-      const reviewItId = row.it_id;
-      await reviewRepository.deleteById(isId);
-      this._invalidateMemberReviewList(row.mb_id);
+      let reviewItId = String(req.query.itId || req.query.it_id || '').trim();
+      if (!reviewItId) reviewItId = this._findCachedReviewItId(mbId, isId);
+
+      const deleted = await reviewRepository.deleteByIdAndMbId(isId, mbId);
+      if (!deleted) {
+        return res.json({
+          success: false,
+          message: '리뷰를 찾을 수 없거나 삭제 권한이 없습니다.',
+        });
+      }
+      this._invalidateMemberReviewList(mbId);
       this._invalidateProductReviewList(reviewItId);
       this._syncAggregatesLater(reviewItId);
       return res.json({ success: true, message: '리뷰가 성공적으로 삭제되었습니다.' });

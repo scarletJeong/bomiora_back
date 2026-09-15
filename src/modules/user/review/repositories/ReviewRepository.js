@@ -137,6 +137,14 @@ ${JOIN_SHOP_ITEM_NEW_SELECT}
     return result.affectedRows > 0;
   }
 
+  async deleteByIdAndMbId(isId, mbId) {
+    const [result] = await pool.query(
+      'DELETE FROM bomiora_shop_item_use WHERE is_id = ? AND mb_id = ?',
+      [isId, String(mbId || '').trim()]
+    );
+    return result.affectedRows > 0;
+  }
+
   async updateById(isId, fields) {
     return this.updateByIdAndMbId(isId, null, fields);
   }
