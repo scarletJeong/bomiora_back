@@ -210,6 +210,28 @@ class QaController {
     return parts.join(',');
   }
 
+  /** 목록 카드용 — 본문 미리보기·상태만. 이미지·답변 본문은 상세에서. */
+  toListMap(contact) {
+    return {
+      wr_id: this._asInt(contact.wr_id, 0),
+      wr_subject: this._asText(contact.wr_subject) ?? '',
+      wr_content: this._asText(contact.wr_content) ?? '',
+      mb_id: this._asText(contact.mb_id) ?? '',
+      wr_datetime: contact.wr_datetime,
+      wr_parent: this._asInt(contact.wr_parent, 0),
+      ca_name: this._asText(contact.ca_name) ?? '',
+      wr_6: this._asText(contact.wr_6) ?? '',
+      wr_is_comment: this._asInt(contact.wr_is_comment, 0),
+      is_closed: this._isClosedRow(contact) ? 1 : 0,
+      followup_count: 0,
+      latest_wr_id: this._asInt(contact.latest_wr_id || contact.wr_id, 0),
+      latest_wr_is_comment: this._asInt(
+        contact.latest_wr_is_comment ?? contact.wr_is_comment,
+        0,
+      ),
+    };
+  }
+
   toMap(contact) {
     const wr8 = this._asText(contact.wr_8) ?? '';
     const closed = this._isClosedRow(contact);
@@ -262,7 +284,10 @@ class QaController {
       qaRepository.autoCloseExpiredForIdentity(identity).catch((err) => {
         console.warn('[QA] 일괄 자동종료 스킵:', err?.message || err);
       });
-      return res.json({ success: true, data: contacts.map((c) => this.toMap(c)) });
+      return res.json({
+        success: true,
+        data: contacts.map((c) => this.toListMap(c)),
+      });
     } catch (error) {
       return res.status(500).json({
         success: false,

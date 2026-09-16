@@ -57,34 +57,18 @@ class QaRepository {
       SELECT
         root.wr_id,
         CAST(root.wr_subject AS CHAR) AS wr_subject,
-        CAST(LEFT(IFNULL(root.wr_content, ''), 800) AS CHAR) AS wr_content,
+        CAST(LEFT(IFNULL(root.wr_content, ''), 80) AS CHAR) AS wr_content,
         CAST(root.mb_id AS CHAR) AS mb_id,
-        CAST(root.wr_name AS CHAR) AS wr_name,
-        CAST(root.wr_email AS CHAR) AS wr_email,
         root.wr_datetime,
-        root.wr_last,
-        root.wr_comment,
-        CAST(LEFT(IFNULL(root.wr_reply, ''), 200) AS CHAR) AS wr_reply,
         root.wr_parent,
         CAST(root.ca_name AS CHAR) AS ca_name,
         CAST(root.wr_6 AS CHAR) AS wr_6,
-        root.wr_hit,
-        CAST(root.wr_option AS CHAR) AS wr_option,
         root.wr_is_comment,
-        CAST(root.wr_8 AS CHAR) AS wr_8,
         CASE
           WHEN IFNULL(root.is_closed, 0) = 1 THEN 1
           WHEN LOWER(TRIM(CAST(IFNULL(root.wr_8, '') AS CHAR))) IN ('1', 'y', 'closed') THEN 1
-          WHEN IFNULL(root.wr_is_comment, 0) = 1
-            AND (
-              TRIM(CAST(IFNULL(root.wr_7, '') AS CHAR)) <> ''
-              OR TRIM(CAST(IFNULL(root.wr_reply, '') AS CHAR)) <> ''
-            )
-            AND DATE(IFNULL(root.wr_last, root.wr_datetime)) <= DATE_SUB(CURDATE(), INTERVAL 2 DAY)
-          THEN 1
           ELSE 0
         END AS is_closed,
-        root.wr_datetime AS thread_last_datetime,
         0 AS followup_count,
         root.wr_id AS latest_wr_id,
         root.wr_is_comment AS latest_wr_is_comment
