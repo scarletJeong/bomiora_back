@@ -57,7 +57,15 @@ class QaRepository {
       SELECT
         root.wr_id,
         CAST(root.wr_subject AS CHAR) AS wr_subject,
-        CAST(LEFT(IFNULL(root.wr_content, ''), 80) AS CHAR) AS wr_content,
+        CAST(LEFT(
+          CASE
+            WHEN LOCATE('\n---\n', IFNULL(root.wr_content, '')) > 0 THEN
+              SUBSTRING(root.wr_content FROM LOCATE('\n---\n', root.wr_content) + 5)
+            WHEN LEFT(IFNULL(root.wr_content, ''), 9) = '[QA_CARD]' THEN
+              ''
+            ELSE IFNULL(root.wr_content, '')
+          END
+        , 80) AS CHAR) AS wr_content,
         CAST(root.mb_id AS CHAR) AS mb_id,
         root.wr_datetime,
         root.wr_parent,
