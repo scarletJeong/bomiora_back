@@ -211,6 +211,10 @@ class KcpPayRepository {
       }
 
       await connection.commit();
+      try {
+        const orderController = require('../../../user/delivery/controllers/OrderController');
+        orderController.invalidateOrderListCache(payload.mbId);
+      } catch (_) {}
       return { success: true };
     } catch (error) {
       await connection.rollback();
