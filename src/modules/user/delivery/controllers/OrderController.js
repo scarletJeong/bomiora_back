@@ -5,7 +5,11 @@ const userRepository = require('../../../auth/repositories/UserRepository');
 const kcpApprovalService = require('../../../shopping/kcp_pay/services/kcpApprovalService');
 const { logKcpPayProblem } = require('../../../shopping/kcp_pay/services/kcpPayLogger');
 const { TtlCache } = require('../../../../utils/ttlCache');
-const { formatSqlDateOnlyForApi } = require('../../../../utils/healthDateTime');
+const {
+  formatSqlDateOnlyForApi,
+  formatSqlDateTimeForApi,
+  formatKstStamp
+} = require('../../../../utils/healthDateTime');
 
 const orderDetailCache = new TtlCache(60_000);
 const orderListCache = new TtlCache(120_000);
@@ -44,18 +48,8 @@ class OrderController {
   }
 
   formatDate(dateValue, withTime) {
-    if (!dateValue) return '';
-    const d = new Date(dateValue);
-    if (Number.isNaN(d.getTime())) return '';
-    const yyyy = d.getFullYear();
-    const mm = String(d.getMonth() + 1).padStart(2, '0');
-    const dd = String(d.getDate()).padStart(2, '0');
-    if (!withTime) return `${yyyy}.${mm}.${dd}`;
-    const hh = String(d.getHours()).padStart(2, '0');
-    const mi = String(d.getMinutes()).padStart(2, '0');
-    const ss = String(d.getSeconds()).padStart(2, '0');
-    return `${yyyy}.${mm}.${dd} ${hh}:${mi}:${ss}`;
-    }
+    return formatSqlDateTimeForApi(dateValue, withTime);
+  }
 
   /**
    * MySQL DATE → YYYY-MM-DD (KST 달력). Node TZ/mysql2 Date 변환으로 하루 빠지지 않게 한다.
@@ -380,11 +374,7 @@ class OrderController {
 
   /** 주문 취소 메모 (parseCancelInfo가 고객 요청으로 인식). 가상계좌는 환불계좌 한 줄 추가 */
   buildCustomerCancelMemo(existingMemo = '', refund) {
-    const now = new Date();
-    const pad = (n) => String(n).padStart(2, '0');
-    const stamp =
-      `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ` +
-      `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+    const stamp = formatKstStamp(new Date());
     let line = `(${stamp}) 주문자 본인 직접 취소`;
     if (refund && refund.bank && refund.account && refund.holder) {
       line += `\n[환불계좌] ${refund.bank} / ${refund.account} / ${refund.holder}`;

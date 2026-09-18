@@ -141,7 +141,6 @@ function toIsoUtcString(value) {
   return fallback ?? s;
 }
 
-/** 한국 달력 하루(00:00~23:59:59.999 KST)에 해당하는 UTC 구간 — measured_at 범위 조회 등 */
 /** YYYY-MM-DD 달력(그레고리력) 기준으로 일 수 더하기 — 서버 로컬 TZ와 무관 */
 function addDaysToYmdDateString(ymd, deltaDays) {
   const raw = String(ymd).trim();
@@ -159,6 +158,30 @@ function addDaysToYmdDateString(ymd, deltaDays) {
  * mysql2 `timezone: +09:00` 이면 DATE `YYYY-MM-DD` 가 KST 00:00 instant(UTC 전날 15:00)가 되고,
  * Node TZ가 UTC일 때 `getDate()` 는 하루 빨라진다. 목록 `DATE_FORMAT` 과 맞추려면 KST 달력을 쓴다.
  */
+function pad2(n) {
+  return String(n).padStart(2, '0');
+}
+
+function kstWallClockParts(date) {
+  const kst = new Date(date.getTime() + 9 * 60 * 60 * 1000);
+  return {
+    y: kst.getUTCFullYear(),
+    m: kst.getUTCMonth() + 1,
+    d: kst.getUTCDate(),
+    h: kst.getUTCHours(),
+    mi: kst.getUTCMinutes(),
+    s: kst.getUTCSeconds()
+  };
+}
+
+/** 현재(또는 주어진) instant → KST `YYYY-MM-DD HH:mm:ss` (Node TZ와 무관) */
+function formatKstStamp(value = new Date()) {
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return '';
+  const p = kstWallClockParts(d);
+  return `${p.y}-${pad2(p.m)}-${pad2(p.d)} ${pad2(p.h)}:${pad2(p.mi)}:${pad2(p.s)}`;
+}
+
 function formatSqlDateOnlyForApi(value) {
   if (value == null || value === '') return null;
 
@@ -172,13 +195,46 @@ function formatSqlDateOnlyForApi(value) {
   const d = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(d.getTime())) return null;
 
-  const kst = new Date(d.getTime() + 9 * 60 * 60 * 1000);
-  const y = kst.getUTCFullYear();
-  const m = String(kst.getUTCMonth() + 1).padStart(2, '0');
-  const dd = String(kst.getUTCDate()).padStart(2, '0');
-  return `${y}-${m}-${dd}`;
+  const p = kstWallClockParts(d);
+  return `${p.y}-${pad2(p.m)}-${pad2(p.d)}`;
 }
 
+/**
+ * 주문 od_time 등 MySQL DATETIME → 화면용 KST 벽시계.
+ * Node TZ가 UTC여도 mysql2 `+09:00` Date 의 getHours()가 9시간 밀리지 않게 한다.
+ * - 타임존 없는 문자열: 적힌 시·분을 그대로 사용
+ * - Date / ISO(Z): instant → KST
+ */
+function formatSqlDateTimeForApi(value, withTime = true) {
+  if (value == null || value === '') return '';
+
+  if (typeof value === 'string') {
+    const s = value.trim();
+    if (!s) return '';
+    const normalized = s.includes('T') ? s : s.replace(' ', 'T');
+    if (!hasExplicitZone(normalized)) {
+      const m = s.match(
+        /^(\d{4})[-.](\d{1,2})[-.](\d{1,2})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?/
+      );
+      if (m) {
+        const y = m[1];
+        const mo = pad2(m[2]);
+        const d = pad2(m[3]);
+        if (!withTime) return `${y}.${mo}.${d}`;
+        return `${y}.${mo}.${d} ${pad2(m[4] || '0')}:${pad2(m[5] || '0')}:${pad2(m[6] || '0')}`;
+      }
+    }
+  }
+
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return '';
+  const p = kstWallClockParts(d);
+  const date = `${p.y}.${pad2(p.m)}.${pad2(p.d)}`;
+  if (!withTime) return date;
+  return `${date} ${pad2(p.h)}:${pad2(p.mi)}:${pad2(p.s)}`;
+}
+
+/** 한국 달력 하루(00:00~23:59:59.999 KST)에 해당하는 UTC 구간 — measured_at 범위 조회 등 */
 function utcRangeForKstCalendarDay(dateStr) {
   const raw = String(dateStr).trim();
   if (!DATE_ONLY.test(raw)) {
@@ -196,5 +252,7 @@ module.exports = {
   toIsoUtcString,
   utcRangeForKstCalendarDay,
   addDaysToYmdDateString,
-  formatSqlDateOnlyForApi
+  formatSqlDateOnlyForApi,
+  formatSqlDateTimeForApi,
+  formatKstStamp
 };
