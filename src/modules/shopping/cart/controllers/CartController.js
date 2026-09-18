@@ -1060,8 +1060,12 @@ class CartController {
   async removeCartItem(req, res) {
     try {
       const ctId = Number(req.params.ctId);
+      const mbIdHint = String(req.query.mb_id || req.body?.mb_id || '').trim();
       const cart = await cartRepository.findById(ctId);
-      if (!cart) return res.status(404).json({ success: false, message: '장바구니 항목을 찾을 수 없습니다.' });
+      if (!cart) {
+        if (mbIdHint) this.invalidateCartListCache(mbIdHint);
+        return res.json({ success: true, message: '이미 삭제된 항목입니다.' });
+      }
 
       const mbId = this.bufferToString(cart.mb_id);
       const itId = this.bufferToString(cart.it_id);
@@ -1069,13 +1073,17 @@ class CartController {
       const parentOfRow = this.normalizeParent(cart.parent);
 
       const deleted = await cartRepository.deleteById(ctId);
-      if (!deleted) return res.status(404).json({ success: false, message: '장바구니 항목을 찾을 수 없습니다.' });
+      if (!deleted) {
+        this.invalidateCartListCache(mbId, ctStatus);
+        return res.json({ success: true, message: '이미 삭제된 항목입니다.' });
+      }
 
       // 본품 삭제 시 parent=본품it_id 인 추가상품도 삭제
       if (!parentOfRow && itId) {
         await cartRepository.deleteSupplyChildren(mbId, itId, ctStatus);
       }
 
+      this.invalidateCartListCache(mbId, ctStatus);
       return res.json({ success: true, message: '장바구니에서 삭제되었습니다.' });
     } catch (error) {
       return res.status(500).json({ success: false, message: '장바구니 삭제 중 오류가 발생했습니다.', error: error.message });
