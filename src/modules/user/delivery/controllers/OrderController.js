@@ -1021,7 +1021,7 @@ class OrderController {
     try {
       const odId = this.toOdId(req.params.odId);
       if (!odId) return res.status(400).json({ error: '주문번호가 필요합니다.' });
-      const { mbId, reservationDate, reservationTime } = req.body;
+      const { mbId, reservationDate, reservationTime, reservationEndTime } = req.body;
       if (!mbId || !String(mbId).trim()) return res.status(400).json({ error: '회원 ID가 필요합니다.' });
       if (!reservationDate || !String(reservationDate).trim()) return res.status(400).json({ error: '예약 날짜가 필요합니다.' });
       if (!reservationTime || !String(reservationTime).trim()) return res.status(400).json({ error: '예약 시간이 필요합니다.' });
@@ -1042,7 +1042,13 @@ class OrderController {
       const date = String(reservationDate).includes('T')
         ? String(reservationDate).substring(0, String(reservationDate).indexOf('T'))
         : String(reservationDate);
-      const changed = await orderRepository.updateReservation(mbId, odId, date, reservationTime);
+      const changed = await orderRepository.updateReservation(
+        mbId,
+        odId,
+        date,
+        reservationTime,
+        reservationEndTime
+      );
       if (!changed) throw new Error('예약 정보를 찾을 수 없습니다.');
 
       this.invalidateOrderDetailCache(mbId, odId);

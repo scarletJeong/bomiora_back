@@ -405,26 +405,50 @@ class OrderRepository {
     return result.affectedRows > 0;
   }
 
-  async updateReservation(mbId, odId, date, time) {
+  _addMinutes(hhmm, minutes) {
+    const m = String(hhmm || '').trim().match(/^(\d{1,2}):(\d{2})/);
+    if (!m) return String(hhmm || '').trim();
+    let hour = Number(m[1]);
+    let minute = Number(m[2]) + Number(minutes || 0);
+    if (minute >= 60) {
+      hour += Math.floor(minute / 60);
+      minute %= 60;
+    }
+    hour = ((hour % 24) + 24) % 24;
+    return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+  }
+
+  async _reservationRelayMinutes() {
+    try {
+      const [rows] = await pool.query(
+        'SELECT de_rsvt_grelay_time FROM bomiora_shop_default LIMIT 1'
+      );
+      const raw = rows?.[0]?.de_rsvt_grelay_time;
+      const n = raw != null ? Number(raw) : NaN;
+      return Number.isFinite(n) && n > 0 ? n : 30;
+    } catch (_) {
+      return 30;
+    }
+  }
+
+  async updateReservation(mbId, odId, date, time, endTime) {
     const odIdStr = String(odId ?? '').replace(/[^0-9]/g, '').trim();
     const start = String(time || '').trim();
-    let endTime = start;
-    const m = start.match(/^(\d{1,2}):(\d{2})/);
-    if (m) {
-      let hour = Number(m[1]);
-      let minute = Number(m[2]) + 20;
-      if (minute >= 60) {
-        hour += Math.floor(minute / 60);
-        minute %= 60;
-      }
-      endTime = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+    const givenEnd = String(endTime || '').trim();
+    let resolvedEnd = /^\d{1,2}:\d{2}$/.test(givenEnd)
+      ? givenEnd.length === 4
+        ? `0${givenEnd}`
+        : givenEnd
+      : '';
+    if (!resolvedEnd) {
+      resolvedEnd = this._addMinutes(start, await this._reservationRelayMinutes());
     }
     const [result] = await pool.query(
       `UPDATE bomiora_shop_health_profiles_cart
        SET hp_rsvt_date = ?, hp_rsvt_stime = ?, hp_rsvt_etime = ?, hp_mdatetime = NOW()
        WHERE mb_id = ?
          AND REPLACE(REPLACE(CAST(od_id AS CHAR), ',', ''), ' ', '') = ?`,
-      [date, start, endTime, mbId, odIdStr]
+      [date, start, resolvedEnd, mbId, odIdStr]
     );
     return result.affectedRows > 0;
   }
