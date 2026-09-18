@@ -5,6 +5,7 @@ const pointRepository = require('../../point/repositories/PointRepository');
 const { createPBKDF2Password } = require('../../../../utils/passwordUtil');
 const socialProfileRepository = require('../repositories/SocialProfileRepository');
 const { warmMemberListCaches } = require('../../../auth/services/warmMemberListCaches');
+const appleIdentityService = require('../../../auth/services/appleIdentityService');
 const {
   getSocialConvertId,
   normalizeProvider,
@@ -32,6 +33,8 @@ class SocialAuthService {
         body.kakao_id ||
         body.naverId ||
         body.naver_id ||
+        body.appleId ||
+        body.apple_id ||
         ''
     ).trim();
 
@@ -141,8 +144,34 @@ class SocialAuthService {
     };
   }
 
+  async applyAppleIdentity(req, payload) {
+    if (payload.provider !== 'apple') {
+      return { ok: true, payload };
+    }
+    const verified = await appleIdentityService.verifyFromRequest(req);
+    if (!verified.ok) {
+      return {
+        ok: false,
+        status: 401,
+        body: {
+          success: false,
+          message: verified.message || 'Apple 토큰 검증에 실패했습니다.',
+        },
+      };
+    }
+    payload.identifier = verified.sub;
+    if (verified.email) {
+      payload.email = verified.email;
+    }
+    return { ok: true, payload };
+  }
+
   async login(req, defaultProvider = '') {
     const payload = this.parseLoginPayload(req.body, defaultProvider);
+    const apple = await this.applyAppleIdentity(req, payload);
+    if (!apple.ok) {
+      return { status: apple.status, body: apple.body };
+    }
 
     if (!payload.provider) {
       return {
@@ -204,14 +233,33 @@ class SocialAuthService {
 
   async register(req) {
     const provider = normalizeProvider(req.body?.provider);
-    const identifier = String(
+    let identifier = String(
       req.body?.identifier ||
         req.body?.kakaoId ||
         req.body?.kakao_id ||
         req.body?.naverId ||
         req.body?.naver_id ||
+        req.body?.appleId ||
+        req.body?.apple_id ||
         ''
     ).trim();
+
+    if (provider === 'apple') {
+      const verified = await appleIdentityService.verifyFromRequest(req);
+      if (!verified.ok) {
+        return {
+          status: 401,
+          body: {
+            success: false,
+            message: verified.message || 'Apple 토큰 검증에 실패했습니다.',
+          },
+        };
+      }
+      identifier = verified.sub;
+      if (verified.email && !req.body.email) {
+        req.body.email = verified.email;
+      }
+    }
 
     if (!provider || !identifier) {
       return {

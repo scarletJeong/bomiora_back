@@ -28,7 +28,7 @@ function getSocialConvertId(identifier, provider) {
 
 function normalizeProvider(provider) {
   const p = String(provider || '').trim().toLowerCase();
-  if (p === 'kakao' || p === 'naver') {
+  if (p === 'kakao' || p === 'naver' || p === 'apple') {
     return p;
   }
   return '';

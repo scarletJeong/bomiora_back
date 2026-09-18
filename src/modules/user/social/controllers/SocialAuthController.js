@@ -27,6 +27,19 @@ class SocialAuthController {
     }
   }
 
+  async loginApple(req, res) {
+    try {
+      const result = await socialAuthService.login(req, 'apple');
+      return res.status(result.status).json(result.body);
+    } catch (error) {
+      console.error('❌ [SocialAuthController.loginApple] 오류:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Apple 로그인 처리 중 오류가 발생했습니다.',
+      });
+    }
+  }
+
   async loginNaver(req, res) {
     try {
       const result = await socialAuthService.login(req, 'naver');
