@@ -18,13 +18,15 @@ class FoodRepository {
    * @param {number} limit - 최대 건수 (기본 20)
    */
   async searchByFoodName(keyword, limit = 20) {
-    const like = `%${(keyword || '').trim().replace(/%/g, '\\%')}%`;
+    const trimmed = (keyword || '').trim();
+    if (!trimmed) return [];
+
+    const like = `%${trimmed.replace(/%/g, '\\%')}%`;
     const [rows] = await pool.query(
       `SELECT *,
               ${OTHER_GRAMS_EXPR} AS other_grams
        FROM bm_food_nutrition
        WHERE food_name LIKE ? OR representative_food_name LIKE ?
-       ORDER BY food_name
        LIMIT ?`,
       [like, like, Math.min(Number(limit) || 20, 100)]
     );

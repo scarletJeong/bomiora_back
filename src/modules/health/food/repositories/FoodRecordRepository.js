@@ -41,6 +41,26 @@ class FoodRecordRepository {
     return rows;
   }
 
+  async findByMbIdAndDateWithItems(mbId, recordDate) {
+    // 1. 식사 기록 먼저 조회
+    const records = await this.findByMbIdAndDate(mbId, recordDate);
+    if (records.length === 0) return [];
+
+    const recordIds = records.map(r => r.id);
+
+    // 2. 해당 기록들에 속한 모든 아이템 조회
+    const [itemRows] = await pool.query(
+      'SELECT * FROM bm_food_records_items WHERE food_record_id IN (?) ORDER BY item_id',
+      [recordIds]
+    );
+
+    // 3. 기록별로 아이템 그룹화
+    return records.map(r => ({
+      ...r,
+      items: itemRows.filter(i => i.food_record_id === r.id)
+    }));
+  }
+
   async update(id, data) {
     await pool.query(
       `UPDATE bm_food_records
@@ -121,15 +141,39 @@ class FoodRecordRepository {
   /** 식사 기록의 총 칼로리/탄단지를 items 합계로 갱신 */
   async updateRecordTotalsFromItems(foodRecordId) {
     await pool.query(
-      `UPDATE bm_food_records r SET
-        r.calories = (SELECT COALESCE(SUM(i.kcal), 0) FROM bm_food_records_items i WHERE i.food_record_id = r.id),
-        r.protein  = (SELECT COALESCE(SUM(i.protein), 0) FROM bm_food_records_items i WHERE i.food_record_id = r.id),
-        r.carbs    = (SELECT COALESCE(SUM(i.carbohydrate), 0) FROM bm_food_records_items i WHERE i.food_record_id = r.id),
-        r.fat      = (SELECT COALESCE(SUM(i.fat), 0) FROM bm_food_records_items i WHERE i.food_record_id = r.id),
-        r.other    = (SELECT COALESCE(SUM(i.other), 0) FROM bm_food_records_items i WHERE i.food_record_id = r.id),
-        r.updated_at = NOW()
+      `UPDATE bm_food_records r
+       INNER JOIN (
+         SELECT
+           food_record_id,
+           COALESCE(SUM(kcal), 0) as total_kcal,
+           COALESCE(SUM(protein), 0) as total_protein,
+           COALESCE(SUM(carbohydrate), 0) as total_carbs,
+           COALESCE(SUM(fat), 0) as total_fat,
+           COALESCE(SUM(other), 0) as total_other
+         FROM bm_food_records_items
+         WHERE food_record_id = ?
+         GROUP BY food_record_id
+       ) i ON r.id = i.food_record_id
+       SET
+         r.calories = i.total_kcal,
+         r.protein  = i.total_protein,
+         r.carbs    = i.total_carbs,
+         r.fat      = i.total_fat,
+         r.other    = i.total_other,
+         r.updated_at = NOW()
        WHERE r.id = ?`,
-      [foodRecordId]
+      [foodRecordId, foodRecordId]
+    );
+
+    // 항목이 하나도 없을 경우 대비 (JOIN 실패 시 합계 0으로 리셋)
+    await pool.query(
+      `UPDATE bm_food_records r
+       SET
+         r.calories = 0, r.protein = 0, r.carbs = 0, r.fat = 0, r.other = 0,
+         r.updated_at = NOW()
+       WHERE r.id = ?
+       AND NOT EXISTS (SELECT 1 FROM bm_food_records_items WHERE food_record_id = ?)`,
+      [foodRecordId, foodRecordId]
     );
   }
 

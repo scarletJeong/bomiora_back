@@ -360,18 +360,34 @@ class FoodRecordController {
           message: 'mb_id, record_date 가 필요합니다.'
         });
       }
-      const records = await foodRecordRepository.findByMbIdAndDate(mb_id, record_date);
-      const withItems = await Promise.all(
-        records.map(async (r) => {
-          const rows = await foodRecordRepository.findFoodItemsByFoodRecordId(r.id);
-          return serializeFoodRecordRow(r, mapFoodItemRows(rows));
-        })
-      );
+
+      // N+1 문제 해결: JOIN으로 한 번에 가져오기
+      const records = await foodRecordRepository.findByMbIdAndDateWithItems(mb_id, record_date);
+
+      const formatted = records.map(r => {
+        const items = r.items ? r.items.map(item => ({
+          item_id: item.item_id,
+          food_record_id: item.food_record_id,
+          food_code: bufferFieldToString(item.food_code),
+          food_name: bufferFieldToString(item.food_name),
+          serving_quantity: item.serving_quantity != null ? Number(item.serving_quantity) : null,
+          kcal: item.kcal != null ? Number(item.kcal) : null,
+          carbohydrate: item.carbohydrate != null ? Number(item.carbohydrate) : null,
+          protein: item.protein != null ? Number(item.protein) : null,
+          fat: item.fat != null ? Number(item.fat) : null,
+          other: item.other != null ? Number(item.other) : null,
+          created_at: toIsoUtcString(item.created_at)
+        })) : [];
+
+        return serializeFoodRecordRow(r, items);
+      });
+
       return res.json({
         success: true,
-        data: withItems
+        data: formatted
       });
     } catch (error) {
+      console.error('[FoodRecordController.getByDate]', error.message);
       return res.status(500).json({
         success: false,
         message: `식사 기록 조회 실패: ${error.message}`
