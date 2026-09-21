@@ -1075,30 +1075,18 @@ class OrderController {
       if (!mbId) return res.status(400).json({ error: '회원 ID가 필요합니다.' });
       if (!addressId || Number.isNaN(addressId)) return res.status(400).json({ error: '배송지 ID가 필요합니다.' });
 
-      const order = await orderRepository.findById(odId);
-      if (!order) throw new Error('주문을 찾을 수 없습니다.');
-      if (this.bufferToString(order.mb_id || '').trim() !== mbId) {
-        throw new Error('주문 정보가 일치하지 않습니다.');
-      }
-      const odStatus = this.bufferToString(order.od_status || '').trim();
-      if (!['주문', '입금', '준비'].includes(odStatus)) {
-        throw new Error('배송지는 결제대기/배송준비 상태에서만 변경할 수 있습니다.');
-      }
-      if (await orderRepository.isConsultationDone(mbId, odId)) {
-        throw new Error('처방 주문은 배송지 변경이 불가능합니다.');
-      }
+      // 최적화: 유효성 검사와 업데이트를 통합된 단일 트랜잭션으로 처리
+      const result = await orderRepository.validateAndChangeAddress(odId, mbId, addressId);
 
-      const addressRow = await orderRepository.getAddressById(mbId, addressId);
-      if (!addressRow) throw new Error('선택한 배송지를 찾을 수 없습니다.');
-
-      const address = this.normalizeAddressRowForOrder(addressRow);
-      const changed = await orderRepository.updateOrderAddress(odId, mbId, address);
-      if (!changed) throw new Error('배송지 변경에 실패했습니다.');
+      if (!result.success) {
+        return res.status(400).json({ error: result.error });
+      }
 
       this.invalidateOrderDetailCache(mbId, odId);
       return res.json({ success: true, message: '배송지가 변경되었습니다.' });
     } catch (error) {
-      return res.status(400).json({ error: error.message });
+      console.error('[OrderController.changeDeliveryAddress] Error:', error.message);
+      return res.status(500).json({ error: '배송지 변경 처리 중 서버 오류가 발생했습니다.' });
     }
   }
 
@@ -1116,22 +1104,12 @@ class OrderController {
         req.body.od_memo ?? req.body.memo ?? req.body.deliveryMessage ?? ''
       ).trim();
 
-      const order = await orderRepository.findById(odId);
-      if (!order) throw new Error('주문을 찾을 수 없습니다.');
-      if (this.bufferToString(order.mb_id || '').trim() !== mbId) {
-        throw new Error('주문 정보가 일치하지 않습니다.');
-      }
+      // 최적화: 유효성 검사와 업데이트 통합 처리
+      const result = await orderRepository.validateAndUpdateOrderMemo(odId, mbId, memo);
 
-      const odStatus = this.bufferToString(order.od_status || '').trim();
-      if (!['주문', '입금', '준비'].includes(odStatus)) {
-        throw new Error('배송요청사항은 결제대기/배송준비 상태에서만 변경할 수 있습니다.');
+      if (!result.success) {
+        return res.status(400).json({ error: result.error });
       }
-      if (await orderRepository.isConsultationDone(mbId, odId)) {
-        throw new Error('처방 주문은 배송요청사항 변경이 불가능합니다.');
-      }
-
-      const changed = await orderRepository.updateOrderMemo(odId, mbId, memo);
-      if (!changed) throw new Error('배송요청사항 변경에 실패했습니다.');
 
       this.invalidateOrderDetailCache(mbId, odId);
       return res.json({
@@ -1140,7 +1118,8 @@ class OrderController {
         od_memo: memo,
       });
     } catch (error) {
-      return res.status(400).json({ error: error.message });
+      console.error('[OrderController.updateDeliveryMemo] Error:', error.message);
+      return res.status(500).json({ error: '배송요청사항 변경 중 서버 오류가 발생했습니다.' });
     }
   }
 }

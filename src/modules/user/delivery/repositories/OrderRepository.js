@@ -405,6 +405,140 @@ class OrderRepository {
     return result.affectedRows > 0;
   }
 
+  /**
+   * 배송지 변경을 위한 모든 유효성 검사 및 업데이트를 원자적으로 수행 (속도 최적화)
+   * @returns {Promise<{success: boolean, error?: string}>}
+   */
+  async validateAndChangeAddress(odId, mbId, addressId) {
+    const conn = await pool.getConnection();
+    try {
+      await conn.beginTransaction();
+
+      // 1. 주문 정보 및 상담 완료 여부 동시 조회 (Lock)
+      const [orderRows] = await conn.query(
+        `SELECT o.od_id, o.mb_id, o.od_status,
+                (SELECT 1 FROM bomiora_shop_health_profiles_cart h
+                 WHERE h.mb_id = o.mb_id AND h.od_id = o.od_id
+                   AND h.hp_9 = 'prescription' AND h.hp_10 = 'completion'
+                   AND h.hp_mdatetime IS NOT NULL AND h.hp_mdatetime <> '0000-00-00 00:00:00'
+                 LIMIT 1) AS is_consultation_done
+         FROM bomiora_shop_order o
+         WHERE o.od_id = ? AND o.mb_id = ?
+         LIMIT 1 FOR UPDATE`,
+        [odId, mbId]
+      );
+
+      if (!orderRows.length) {
+        return { success: false, error: '주문을 찾을 수 없습니다.' };
+      }
+
+      const order = orderRows[0];
+      const odStatus = this.bufferToString(order.od_status).trim();
+
+      if (!['주문', '입금', '준비'].includes(odStatus)) {
+        return { success: false, error: '배송지는 결제대기/배송준비 상태에서만 변경할 수 있습니다.' };
+      }
+      if (order.is_consultation_done) {
+        return { success: false, error: '처방 주문은 배송지 변경이 불가능합니다.' };
+      }
+
+      // 2. 새 주소 정보 조회
+      const [addrRows] = await conn.query(
+        `SELECT ad_name, ad_tel, ad_hp, ad_zip1, ad_zip2, ad_addr1, ad_addr2, ad_addr3, ad_jibeon
+         FROM bomiora_shop_order_address
+         WHERE mb_id = ? AND ad_id = ?
+         LIMIT 1`,
+        [mbId, addressId]
+      );
+
+      if (!addrRows.length) {
+        return { success: false, error: '선택한 배송지를 찾을 수 없습니다.' };
+      }
+
+      const addr = addrRows[0];
+
+      // 3. 주문 주소 업데이트
+      await conn.query(
+        `UPDATE bomiora_shop_order
+         SET od_name = ?, od_tel = ?, od_hp = ?, od_zip1 = ?, od_zip2 = ?,
+             od_addr1 = ?, od_addr2 = ?, od_addr3 = ?, od_addr_jibeon = ?
+         WHERE od_id = ? AND mb_id = ?`,
+        [
+          this.bufferToString(addr.ad_name) || '',
+          this.bufferToString(addr.ad_tel) || '',
+          this.bufferToString(addr.ad_hp) || '',
+          this.bufferToString(addr.ad_zip1) || '',
+          this.bufferToString(addr.ad_zip2) || '',
+          this.bufferToString(addr.ad_addr1) || '',
+          this.bufferToString(addr.ad_addr2) || '',
+          this.bufferToString(addr.ad_addr3) || '',
+          this.bufferToString(addr.ad_jibeon) || '',
+          odId,
+          mbId
+        ]
+      );
+
+      await conn.commit();
+      return { success: true };
+    } catch (error) {
+      await conn.rollback();
+      throw error;
+    } finally {
+      conn.release();
+    }
+  }
+
+  /**
+   * 배송요청사항 변경을 위한 유효성 검사 및 업데이트를 통합 수행 (속도 최적화)
+   * @returns {Promise<{success: boolean, error?: string}>}
+   */
+  async validateAndUpdateOrderMemo(odId, mbId, memo) {
+    const conn = await pool.getConnection();
+    try {
+      await conn.beginTransaction();
+
+      const [orderRows] = await conn.query(
+        `SELECT o.od_id, o.mb_id, o.od_status,
+                (SELECT 1 FROM bomiora_shop_health_profiles_cart h
+                 WHERE h.mb_id = o.mb_id AND h.od_id = o.od_id
+                   AND h.hp_9 = 'prescription' AND h.hp_10 = 'completion'
+                   AND h.hp_mdatetime IS NOT NULL AND h.hp_mdatetime <> '0000-00-00 00:00:00'
+                 LIMIT 1) AS is_consultation_done
+         FROM bomiora_shop_order o
+         WHERE o.od_id = ? AND o.mb_id = ?
+         LIMIT 1 FOR UPDATE`,
+        [odId, mbId]
+      );
+
+      if (!orderRows.length) {
+        return { success: false, error: '주문을 찾을 수 없습니다.' };
+      }
+
+      const order = orderRows[0];
+      const odStatus = this.bufferToString(order.od_status).trim();
+
+      if (!['주문', '입금', '준비'].includes(odStatus)) {
+        return { success: false, error: '배송요청사항은 결제대기/배송준비 상태에서만 변경할 수 있습니다.' };
+      }
+      if (order.is_consultation_done) {
+        return { success: false, error: '처방 주문은 배송요청사항 변경이 불가능합니다.' };
+      }
+
+      await conn.query(
+        'UPDATE bomiora_shop_order SET od_memo = ? WHERE od_id = ? AND mb_id = ?',
+        [String(memo ?? ''), odId, mbId]
+      );
+
+      await conn.commit();
+      return { success: true };
+    } catch (error) {
+      await conn.rollback();
+      throw error;
+    } finally {
+      conn.release();
+    }
+  }
+
   _addMinutes(hhmm, minutes) {
     const m = String(hhmm || '').trim().match(/^(\d{1,2}):(\d{2})/);
     if (!m) return String(hhmm || '').trim();
