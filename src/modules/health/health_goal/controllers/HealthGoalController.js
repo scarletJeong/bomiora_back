@@ -32,6 +32,12 @@ class HealthGoalController {
 
       const currentWeight = parsePositiveNumber(req.body.current_weight, '현재 체중');
       const targetWeight = parsePositiveNumber(req.body.target_weight, '목표 체중');
+      if (targetWeight >= currentWeight) {
+        return res.status(400).json({
+          success: false,
+          message: '목표 체중은 현재 체중보다 적게 설정해주세요.',
+        });
+      }
       const dailyStepGoal = parseNonNegativeInt(req.body.daily_step_goal, '하루 목표 걸음 수');
 
       let measuredAt;
