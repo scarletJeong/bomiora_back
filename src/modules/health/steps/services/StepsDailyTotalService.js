@@ -25,18 +25,31 @@ class StepsDailyTotalService {
     };
   }
 
-  /** 대시보드용 — 일자 합계만 (30분 슬롯 JS 집계 생략) */
+  /** 대시보드용 — 상세와 같은 일자 기준으로 합계만. 걸음이 없으면 null */
   async buildDailyTotalLite(mbIdRaw, date) {
     const prevStr = addDaysToYmdDateString(date, -1);
-    const map = await stepsRepository
-      .aggregateBmStepsDailyTotalsBetween(mbIdRaw, prevStr, date)
-      .catch(() => new Map());
-    return this._litePayload(
-      mbIdRaw,
-      date,
-      map.get(date) || 0,
-      map.get(prevStr) || 0,
-    );
+    const stepMap = await stepsRepository
+      .aggregateBmStepsForCalendarDays(mbIdRaw, [date, prevStr])
+      .catch(() => ({}));
+    const today = stepMap[date];
+    const prev = stepMap[prevStr];
+    let total = today && today.intervalCount > 0 ? Number(today.totalSteps) || 0 : 0;
+    let prevTotal = prev && prev.intervalCount > 0 ? Number(prev.totalSteps) || 0 : 0;
+
+    if (total <= 0) {
+      const userId = Number(mbIdRaw);
+      if (Number.isFinite(userId)) {
+        const [record, previous] = await Promise.all([
+          stepsRepository.findByUserIdAndRecordDate(userId, date),
+          stepsRepository.findByUserIdAndRecordDate(userId, prevStr),
+        ]);
+        total = record ? Number(record.totalSteps) || 0 : 0;
+        prevTotal = previous ? Number(previous.totalSteps) || 0 : 0;
+      }
+    }
+
+    if (total <= 0) return null;
+    return this._litePayload(mbIdRaw, date, total, prevTotal);
   }
 
   async buildDailyTotal(mbIdRaw, date) {
