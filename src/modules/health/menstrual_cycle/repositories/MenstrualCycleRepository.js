@@ -105,7 +105,7 @@ class MenstrualCycleRepository {
               cycle_length, period_length
        FROM bm_menstrual_cycle
        WHERE mb_id = ?
-       ORDER BY created_at DESC
+       ORDER BY last_period_start DESC, id DESC
        LIMIT 1`,
       [mbId]
     );
