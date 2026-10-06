@@ -9,6 +9,12 @@ const cartRecommendCache = new TtlCache(60_000);
 const cartListCache = new TtlCache(30_000);
 
 class CartController {
+  readAnswer102(body) {
+    const raw = body?.answer102 ?? body?.answer_10_2 ?? body?.answer10_2 ?? '';
+    const text = String(raw).trim();
+    return text || null;
+  }
+
   toInt(value, fallback = 0) {
     const n = Number(value);
     return Number.isFinite(n) ? n : fallback;
@@ -737,6 +743,7 @@ class CartController {
         answer8: req.body.answer8,
         answer9: req.body.answer9,
         answer10: req.body.answer10,
+        answer102: this.readAnswer102(req.body),
         answer11: req.body.answer11,
         answer12: req.body.answer12,
         answer13: req.body.answer13,
@@ -808,6 +815,7 @@ class CartController {
           answer8: req.body.answer8,
           answer9: req.body.answer9,
           answer10: req.body.answer10,
+          answer102: this.readAnswer102(req.body),
           answer11: req.body.answer11,
           answer12: req.body.answer12,
           answer13: req.body.answer13,
@@ -951,6 +959,7 @@ class CartController {
             answer8: req.body.answer8,
             answer9: req.body.answer9,
             answer10: req.body.answer10,
+            answer102: this.readAnswer102(req.body),
             answer11: req.body.answer11,
             answer12: req.body.answer12,
             answer13: req.body.answer13,
