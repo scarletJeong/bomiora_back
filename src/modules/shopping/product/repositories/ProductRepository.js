@@ -4,6 +4,8 @@ const pool = require('../../../../config/database');
 const HOME_CARD_COLUMNS = `
   CAST(it_id AS CHAR) AS it_id,
   CAST(it_name AS CHAR) AS it_name,
+  CAST(LEFT(IFNULL(it_basic, ''), 120) AS CHAR) AS it_basic,
+  CAST(it_subject AS CHAR) AS it_subject,
   it_price, it_cust_price,
   CAST(ca_id AS CHAR) AS ca_id,
   CAST(it_kind AS CHAR) AS it_kind,
