@@ -74,14 +74,14 @@ class EventController {
       wr_1: beginDate ? this.formatDateYmd(beginDate) : null,
       wr_2: endDate ? this.formatDateYmd(endDate) : null,
       is_active: active,
-      // bm_event 신규 필드
+      // bm_event
       title: this.normalizeText(row.title) || '',
       content: this.normalizeText(row.content) || '',
       writer_name: this.normalizeText(row.writer_name) || '',
       image_path: imagePath,
       begin_time: row.begin_time ? String(row.begin_time) : null,
       end_time: row.end_time ? String(row.end_time) : null,
-      is_use: Number(row.is_use || 0),
+      sort_order: Number(row.sort_order || 0),
       view_count: Number(row.view_count || 0),
       created_by: this.normalizeText(row.created_by) || '',
       created_at: row.created_at ? String(row.created_at) : null,
