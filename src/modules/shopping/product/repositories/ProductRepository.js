@@ -16,6 +16,18 @@ const HOME_CARD_COLUMNS = `
   it_sc_type, it_sc_price, it_sc_minimum
 `;
 
+/** JOIN 시 상품 컬럼만 alias. `AS it_id` 별칭은 그대로 둔다. */
+function qualifyHomeCardColumns(alias) {
+  return HOME_CARD_COLUMNS.replace(
+    /\b(it_id|it_name|it_basic|it_subject|it_price|it_cust_price|ca_id|it_kind|it_type3|it_type4|it_stock_qty|it_use_avg|it_use_cnt|it_flutter_image_url|it_img1|it_sc_type|it_sc_price|it_sc_minimum)\b/g,
+    (name, _g, offset, src) => {
+      const before = src.slice(Math.max(0, offset - 6), offset);
+      if (/AS\s+$/i.test(before)) return name;
+      return `${alias}.${name}`;
+    }
+  );
+}
+
 /** 목록/카드용 — LONGTEXT·여분 이미지·옵션 메타 제외 */
 const LIST_COLUMNS = `
   CAST(it_id AS CHAR) AS it_id,
@@ -184,6 +196,9 @@ class ProductRepository {
 
   async findNewProducts(limit) {
     const safeLimit = Math.min(Math.max(Number(limit) || 10, 1), 50);
+    const displayed = await this.findDisplayedProducts('new', safeLimit);
+    if (displayed != null) return displayed;
+
     const [rows] = await pool.query(
       `SELECT ${HOME_CARD_COLUMNS} FROM bomiora_shop_item_new
        WHERE it_type3 = '1' AND it_use = '1' AND ${LIST_VISIBLE_SQL}
@@ -220,14 +235,51 @@ class ProductRepository {
   }
 
   /**
-   * MD pick (웹 get_new_product) — it_type5 = 1
+   * 홈 신상품/MD Pick.
+   * bomiora_shop_item_display 에 use_yn=1 행이 있으면 그 순서만 쓴다.
+   * 섹션에 등록이 하나도 없을 때만 null 을 반환해 기존 it_type 조회로 넘긴다.
+   * 상품 테이블은 이 API DB의 bomiora_shop_item_new (g5_shop_item 과 동일 it_id).
+   */
+  async findDisplayedProducts(section, safeLimit) {
+    const [registered] = await pool.query(
+      `SELECT COUNT(*) AS cnt
+         FROM bomiora_shop_item_display
+        WHERE section = ? AND use_yn = 1`,
+      [section]
+    );
+    const count = Number(registered[0]?.cnt || 0);
+    if (count <= 0) return null;
+
+    const columns = qualifyHomeCardColumns('i');
+    const [rows] = await pool.query(
+      `SELECT ${columns}
+         FROM bomiora_shop_item_display d
+         INNER JOIN bomiora_shop_item_new i ON i.it_id = d.it_id
+        WHERE d.section = ?
+          AND d.use_yn = 1
+          AND i.it_use = '1'
+          AND IFNULL(i.it_nolist, 0) = 0
+          AND i.ca_id <> 'a0'
+        ORDER BY d.sort_order ASC, d.id ASC
+        LIMIT ${safeLimit}`,
+      [section]
+    );
+    return rows;
+  }
+
+  /**
+   * MD pick — 디스플레이 section=md_pick.
+   * 등록이 없을 때만 it_type5 = 1 로 대체.
    * @param {number} limit
-   * @param {string|null} productKind it_kind 필터 (예: general)
+   * @param {string|null} productKind 대체 조회에만 쓰는 it_kind
    */
   async findMdPickProducts(limit, productKind = null) {
     const hasKind = productKind != null && String(productKind).trim() !== '';
     const params = [];
     const safeLimit = Math.min(Math.max(Number(limit) || 4, 1), 50);
+    const displayed = await this.findDisplayedProducts('md_pick', safeLimit);
+    if (displayed != null) return displayed;
+
     let where = `it_use = '1' AND ${LIST_VISIBLE_SQL} AND it_type5 = '1' AND (it_mb_inf = '' OR it_mb_inf IS NULL)`;
     if (hasKind) {
       where += ' AND it_kind = ?';
