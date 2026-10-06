@@ -111,6 +111,7 @@ async function notifyPointEarned(mbId, points) {
 
   // 제목만 표시 (body를 같게 넣으면 알림/알림센터에 문구가 2번 보임)
   const title = `포인트 ${amount}P가 적립되었어요.`;
+  const ymd = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Seoul' }).format(new Date());
   return sendToMember(mbId, {
     type: 'point',
     title,
@@ -118,7 +119,9 @@ async function notifyPointEarned(mbId, points) {
     data: {
       type: 'point',
       point: String(amount),
-      id: String(amount),
+      ymd,
+      id: `${ymd}_${amount}`,
+      notification_id: `point_${ymd}_${amount}`,
       title,
     },
     bypassAppPushAgree: true,
