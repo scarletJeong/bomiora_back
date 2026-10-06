@@ -196,7 +196,9 @@ class ProductRepository {
 
   async findNewProducts(limit) {
     const safeLimit = Math.min(Math.max(Number(limit) || 10, 1), 50);
-    const displayed = await this.findDisplayedProducts('new', safeLimit);
+    const displayed = await this.findDisplayedProducts('new', safeLimit, {
+      excludeShake: false,
+    });
     if (displayed != null) return displayed;
 
     const [rows] = await pool.query(
@@ -238,9 +240,10 @@ class ProductRepository {
    * 홈 신상품/MD Pick.
    * bomiora_shop_item_display 에 use_yn=1 행이 있으면 그 순서만 쓴다.
    * 섹션에 등록이 하나도 없을 때만 null 을 반환해 기존 it_type 조회로 넘긴다.
-   * 상품 테이블은 이 API DB의 bomiora_shop_item_new (g5_shop_item 과 동일 it_id).
+   * 신상품은 ca_id=a0(쉐이크)을 포함하고, MD Pick만 제외한다.
    */
-  async findDisplayedProducts(section, safeLimit) {
+  async findDisplayedProducts(section, safeLimit, options = {}) {
+    const excludeShake = options.excludeShake !== false;
     const [registered] = await pool.query(
       `SELECT COUNT(*) AS cnt
          FROM bomiora_shop_item_display
@@ -251,6 +254,7 @@ class ProductRepository {
     if (count <= 0) return null;
 
     const columns = qualifyHomeCardColumns('i');
+    const shakeSql = excludeShake ? "AND i.ca_id <> 'a0'" : '';
     const [rows] = await pool.query(
       `SELECT ${columns}
          FROM bomiora_shop_item_display d
@@ -259,7 +263,7 @@ class ProductRepository {
           AND d.use_yn = 1
           AND i.it_use = '1'
           AND IFNULL(i.it_nolist, 0) = 0
-          AND i.ca_id <> 'a0'
+          ${shakeSql}
         ORDER BY d.sort_order ASC, d.id ASC
         LIMIT ${safeLimit}`,
       [section]
@@ -277,7 +281,9 @@ class ProductRepository {
     const hasKind = productKind != null && String(productKind).trim() !== '';
     const params = [];
     const safeLimit = Math.min(Math.max(Number(limit) || 4, 1), 50);
-    const displayed = await this.findDisplayedProducts('md_pick', safeLimit);
+    const displayed = await this.findDisplayedProducts('md_pick', safeLimit, {
+      excludeShake: true,
+    });
     if (displayed != null) return displayed;
 
     let where = `it_use = '1' AND ${LIST_VISIBLE_SQL} AND it_type5 = '1' AND (it_mb_inf = '' OR it_mb_inf IS NULL)`;
