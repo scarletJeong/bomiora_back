@@ -444,7 +444,9 @@ async function pushTodayLoginPointIfPending(mbId, fcmToken) {
     data: {
       type: 'point',
       point: String(points),
-      id: String(points),
+      ymd: today,
+      id: `${today}_${points}`,
+      notification_id: `point_${today}_${points}`,
       title,
     },
   });
