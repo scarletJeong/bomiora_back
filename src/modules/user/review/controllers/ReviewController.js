@@ -775,18 +775,15 @@ class ReviewController {
         String(req.body.isRvkind || '').toLowerCase() === 'general';
 
       if (!isGeneralProduct) {
-        if (req.body.isScore1 != null) {
-          fields.is_score1 = this._normalizeTenthScore(req.body.isScore1) ?? 0;
-        }
-        if (req.body.isScore2 != null) {
-          fields.is_score2 = this._normalizeTenthScore(req.body.isScore2) ?? 0;
-        }
-        if (req.body.isScore3 != null) {
-          fields.is_score3 = this._normalizeTenthScore(req.body.isScore3) ?? 0;
-        }
-        if (req.body.isScore4 != null) {
-          fields.is_score4 = this._normalizeTenthScore(req.body.isScore4) ?? 0;
-        }
+        const scoreInt = (v) => {
+          const n = Number(v);
+          if (!Number.isFinite(n) || n <= 0) return 0;
+          return Math.min(5, Math.max(0, Math.round(n)));
+        };
+        if (req.body.isScore1 != null) fields.is_score1 = scoreInt(req.body.isScore1);
+        if (req.body.isScore2 != null) fields.is_score2 = scoreInt(req.body.isScore2);
+        if (req.body.isScore3 != null) fields.is_score3 = scoreInt(req.body.isScore3);
+        if (req.body.isScore4 != null) fields.is_score4 = scoreInt(req.body.isScore4);
         const s1 = fields.is_score1 ?? req.body.isScore1;
         const s2 = fields.is_score2 ?? req.body.isScore2;
         const s3 = fields.is_score3 ?? req.body.isScore3;
@@ -826,6 +823,7 @@ class ReviewController {
       if (!affected) {
         return res.json({ success: false, message: '리뷰를 찾을 수 없거나 수정 권한이 없습니다.' });
       }
+      this._invalidateMemberReviewList(mbId);
       const itId = req.body.itId != null ? String(req.body.itId).trim() : '';
       if (itId) this._invalidateProductReviewList(itId);
       this._syncAggregatesLater(itId);
