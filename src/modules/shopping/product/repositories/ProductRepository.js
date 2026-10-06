@@ -33,6 +33,9 @@ const LIST_COLUMNS = `
 `;
 
 /** 상세용 — 본문 HTML은 필요 필드만, 이미지 1~5만 */
+/** 목록·검색·홈·추천에서만 사용. 상세·옵션·연결상품·장바구니는 이 조건을 붙이지 않는다. */
+const LIST_VISIBLE_SQL = "IFNULL(it_nolist, 0) = 0";
+
 const DETAIL_COLUMNS = `
   CAST(it_id AS CHAR) AS it_id,
   CAST(it_name AS CHAR) AS it_name,
@@ -79,7 +82,7 @@ class ProductRepository {
     const hasKind = productKind != null && String(productKind).trim() !== '';
 
     const params = [categoryId];
-    let where = 'ca_id = ? AND it_use = 1';
+    let where = `ca_id = ? AND it_use = '1' AND ${LIST_VISIBLE_SQL}`;
     if (hasKind) {
       where += ' AND it_kind = ?';
       params.push(productKind);
@@ -172,7 +175,7 @@ class ProductRepository {
     const safeLimit = Math.min(Math.max(Number(limit) || 10, 1), 50);
     const [rows] = await pool.query(
       `SELECT ${HOME_CARD_COLUMNS} FROM bomiora_shop_item_new
-       WHERE it_type4 = '1' AND it_use = '1'
+       WHERE it_type4 = '1' AND it_use = '1' AND ${LIST_VISIBLE_SQL}
        ORDER BY it_order ASC, it_id DESC
        LIMIT ${safeLimit}`
     );
@@ -183,7 +186,7 @@ class ProductRepository {
     const safeLimit = Math.min(Math.max(Number(limit) || 10, 1), 50);
     const [rows] = await pool.query(
       `SELECT ${HOME_CARD_COLUMNS} FROM bomiora_shop_item_new
-       WHERE it_type3 = '1' AND it_use = '1'
+       WHERE it_type3 = '1' AND it_use = '1' AND ${LIST_VISIBLE_SQL}
        ORDER BY it_order ASC, it_id DESC
        LIMIT ${safeLimit}`
     );
@@ -204,7 +207,7 @@ class ProductRepository {
          INNER JOIN (
            SELECT DISTINCT LEFT(ca_id, 2) AS ca2
              FROM bomiora_shop_item_new
-            WHERE it_kind = ? AND it_use = '1'
+            WHERE it_kind = ? AND it_use = '1' AND ${LIST_VISIBLE_SQL}
               AND ca_id IS NOT NULL AND TRIM(ca_id) <> ''
          ) x ON x.ca2 = c.ca_id
         WHERE c.ca_use = '1'
@@ -225,7 +228,7 @@ class ProductRepository {
     const hasKind = productKind != null && String(productKind).trim() !== '';
     const params = [];
     const safeLimit = Math.min(Math.max(Number(limit) || 4, 1), 50);
-    let where = `it_use = '1' AND it_type5 = '1' AND (it_mb_inf = '' OR it_mb_inf IS NULL)`;
+    let where = `it_use = '1' AND ${LIST_VISIBLE_SQL} AND it_type5 = '1' AND (it_mb_inf = '' OR it_mb_inf IS NULL)`;
     if (hasKind) {
       where += ' AND it_kind = ?';
       params.push(productKind);
@@ -259,7 +262,8 @@ class ProductRepository {
     // NOTE: 일부 DB 스키마에서는 it_explain 컬럼이 없고 it_explan만 존재합니다.
     // 존재하지 않는 컬럼을 COALESCE에 넣어도 SQL 에러가 나므로 it_explan만 사용합니다.
     let where = `
-      it_use = 1
+      it_use = '1'
+      AND ${LIST_VISIBLE_SQL}
       AND (
         it_name LIKE ?
         OR it_basic LIKE ?

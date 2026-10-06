@@ -103,6 +103,11 @@ async function ensureSupplyDepoptSchema() {
 
       await ensureColumn(
         'bomiora_shop_item_new',
+        'it_nolist',
+        `ADD COLUMN it_nolist tinyint(4) NOT NULL DEFAULT 0`
+      );
+      await ensureColumn(
+        'bomiora_shop_item_new',
         'it_supply_items',
         `ADD COLUMN it_supply_items varchar(255) NOT NULL DEFAULT ''`
       );

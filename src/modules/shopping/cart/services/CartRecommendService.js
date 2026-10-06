@@ -1,6 +1,8 @@
 const pool = require('../../../../config/database');
 
 const MAX_PRODUCTS = 4;
+/** 추천 목록에서만 제외. 장바구니에 이미 담긴 상품 조회에는 쓰지 않는다. */
+const LIST_VISIBLE_SQL = 'IFNULL(it_nolist, 0) = 0';
 /** 상품 상세 / 바텀시트 추천 최대 개수 */
 const DETAIL_MAX_PRODUCTS = 3;
 
@@ -113,6 +115,7 @@ class CartRecommendService {
        WHERE it_mb_inf = ?
          AND it_stock_qty > 0
          AND it_use = '1'
+         AND ${LIST_VISIBLE_SQL}
          ${excludeSql}`,
       params
     );
@@ -129,6 +132,7 @@ class CartRecommendService {
       `SELECT COUNT(*) AS cnt
        FROM bomiora_shop_item_new
        WHERE it_use = '1'
+         AND ${LIST_VISIBLE_SQL}
          AND (it_soldout IS NULL OR it_soldout != '1')
          AND (it_mb_inf = '' OR it_mb_inf IS NULL OR it_mb_inf = '0')
          AND it_type5 = 1`
@@ -182,6 +186,7 @@ class CartRecommendService {
        WHERE it_mb_inf = ?
          AND it_stock_qty > 0
          AND it_use = '1'
+         AND ${LIST_VISIBLE_SQL}
          AND it_name NOT LIKE '%체험%'
          ${excludeSql}
        ORDER BY ${orderClause}
@@ -200,6 +205,7 @@ class CartRecommendService {
     const params = [];
     let whereSql = `it_stock_qty > 0
          AND it_use = '1'
+         AND ${LIST_VISIBLE_SQL}
          AND (it_name LIKE '%체험분%' OR it_name LIKE '%체험%')`;
 
     if (influencerId) {
@@ -232,6 +238,7 @@ class CartRecommendService {
       `SELECT ${RECOMMEND_COLUMNS}
        FROM bomiora_shop_item_new
        WHERE it_use = '1'
+         AND ${LIST_VISIBLE_SQL}
          AND (it_soldout IS NULL OR it_soldout != '1')
          AND (it_mb_inf = '' OR it_mb_inf IS NULL)
          AND it_type5 = 1
@@ -329,6 +336,7 @@ class CartRecommendService {
              WHERE it_mb_inf = ?
                AND it_stock_qty > 0
                AND it_use = '1'
+               AND ${LIST_VISIBLE_SQL}
                AND it_id NOT IN (${excludePlaceholders})
                AND (it_related_products IS NULL OR it_related_products = '' OR it_related_products = '0')
              ORDER BY it_update_time DESC
@@ -371,6 +379,7 @@ class CartRecommendService {
              WHERE it_mb_inf = ?
                AND it_stock_qty > 0
                AND it_use = '1'
+               AND ${LIST_VISIBLE_SQL}
                AND it_id NOT IN (${excludePlaceholders})
                AND (it_id = ? OR it_id IN (${relatedPlaceholders}))
              ORDER BY FIELD(it_id, ?) DESC, ${orderClause}
@@ -384,6 +393,7 @@ class CartRecommendService {
              WHERE it_mb_inf = ?
                AND it_stock_qty > 0
                AND it_use = '1'
+               AND ${LIST_VISIBLE_SQL}
                AND (it_related_products IS NULL OR it_related_products = '' OR it_related_products = '0')
                AND it_id NOT IN (${excludePlaceholders})
              ORDER BY ${orderClause}
@@ -449,6 +459,7 @@ class CartRecommendService {
   }) {
     const params = [];
     let where = `it_use = '1'
+      AND ${LIST_VISIBLE_SQL}
       AND (it_soldout IS NULL OR it_soldout != '1')
       AND it_stock_qty > 0`;
 
