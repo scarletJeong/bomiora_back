@@ -1,7 +1,9 @@
 const pool = require('../../../config/database');
 const { TtlCache } = require('../../../utils/ttlCache');
+const { registerPublicCache } = require('../../internal/cache/publicCacheRegistry');
 
 const configCache = new TtlCache(300_000);
+registerPublicCache('config', configCache);
 
 class ConfigController {
   async getConfig(req, res) {

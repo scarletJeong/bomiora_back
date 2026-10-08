@@ -4,6 +4,7 @@ const { SUBDIRS, mirrorUploadedFile } = require('../../../../utils/cafe24ImageMi
 const reviewRepository = require('../repositories/ReviewRepository');
 const mainReviewRepository = require('../repositories/MainReviewRepository');
 const { TtlCache } = require('../../../../utils/ttlCache');
+const { registerPublicCache } = require('../../../internal/cache/publicCacheRegistry');
 
 const REVIEW_UPLOAD_DIR =
   process.env.REVIEW_IMAGE_UPLOAD_DIR || path.join(process.cwd(), 'uploads', 'review_images');
@@ -15,6 +16,9 @@ const mainReviewHomeCache = new TtlCache(90_000);
 const mainReviewBestCache = new TtlCache(60_000);
 const memberReviewListCache = new TtlCache(180_000);
 const productReviewListCache = new TtlCache(45_000);
+registerPublicCache('review', mainReviewHomeCache);
+registerPublicCache('review', mainReviewBestCache);
+registerPublicCache('review', productReviewListCache);
 
 class ReviewController {
   /** 0.1 단위 만족도 (DB DECIMAL(3,1) 권장; TINYINT면 소수 잘림) */

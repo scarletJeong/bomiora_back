@@ -1,7 +1,9 @@
 const getCategoryRepository = require('../repositories/GetCategoryRepository');
 const { TtlCache } = require('../../../../utils/ttlCache');
+const { registerPublicCache } = require('../../../internal/cache/publicCacheRegistry');
 
 const categoryCache = new TtlCache(300_000);
+registerPublicCache('category', categoryCache);
 
 class GetCategoryController {
   normalizeText(value) {

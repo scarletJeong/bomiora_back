@@ -7,6 +7,7 @@ class TtlCache {
     this.defaultTtlMs = defaultTtlMs;
     this.store = new Map();
     this.inFlight = new Map();
+    this.generation = 0;
   }
 
   get(key) {
@@ -34,12 +35,16 @@ class TtlCache {
     const pending = this.inFlight.get(key);
     if (pending) return pending;
 
+    const generation = this.generation;
     const promise = (async () => {
       try {
         const value = await loader();
+        if (generation !== this.generation) return value;
         return this.set(key, value, ttlMs);
       } finally {
-        this.inFlight.delete(key);
+        if (this.inFlight.get(key) === promise) {
+          this.inFlight.delete(key);
+        }
       }
     })();
 
@@ -50,6 +55,12 @@ class TtlCache {
   remove(key) {
     this.store.delete(key);
     this.inFlight.delete(key);
+  }
+
+  clear() {
+    this.generation += 1;
+    this.store.clear();
+    this.inFlight.clear();
   }
 }
 

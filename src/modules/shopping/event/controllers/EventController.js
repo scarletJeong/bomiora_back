@@ -1,8 +1,11 @@
 const eventRepository = require('../repositories/EventRepository');
 const { TtlCache } = require('../../../../utils/ttlCache');
+const { registerPublicCache } = require('../../../internal/cache/publicCacheRegistry');
 
 const eventListCache = new TtlCache(90_000);
 const eventDetailCache = new TtlCache(60_000);
+registerPublicCache('event', eventListCache);
+registerPublicCache('event', eventDetailCache);
 
 class EventController {
   normalizeText(value) {

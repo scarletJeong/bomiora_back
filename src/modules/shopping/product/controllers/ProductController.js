@@ -3,11 +3,16 @@ const productOptionRepository = require('../option/repositories/ProductOptionRep
 const reviewRepository = require('../../../user/review/repositories/ReviewRepository');
 const shopDefaultRepository = require('../../../common/shopdefault/repositories/ShopDefaultRepository');
 const { TtlCache } = require('../../../../utils/ttlCache');
+const { registerPublicCache } = require('../../../internal/cache/publicCacheRegistry');
 
 const homeProductCache = new TtlCache(90_000);
 const productListCache = new TtlCache(120_000);
 const optionCache = new TtlCache(90_000);
 const productDetailCache = new TtlCache(90_000);
+registerPublicCache('product', homeProductCache);
+registerPublicCache('product', productListCache);
+registerPublicCache('product', optionCache);
+registerPublicCache('product', productDetailCache);
 
 class ProductController {
   constructor() {

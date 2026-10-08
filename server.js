@@ -123,8 +123,9 @@ app.use('/api/address', require('./src/modules/common/address/routes/addressSear
 app.use('/api/get-category', require('./src/modules/common/get_category/routes/getCategoryRoutes'));
 app.use('/api/get_category', require('./src/modules/common/get_category/routes/getCategoryRoutes'));
 
-// 내부 연동 (PHP 관리자 → FCM 등)
+// 내부 연동 (PHP 관리자 → FCM, 공개 목록 캐시 삭제)
 app.use('/api/internal', require('./src/modules/internal/notify/routes/internalNotifyRoutes'));
+app.use('/api/internal', require('./src/modules/internal/cache/routes/internalCacheRoutes'));
 
 // 브라우저 기본 favicon 요청으로 콘솔에 404가 쌓이지 않도록
 app.get('/favicon.ico', (req, res) => {

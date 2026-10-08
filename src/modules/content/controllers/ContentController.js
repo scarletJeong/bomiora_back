@@ -1,7 +1,9 @@
 const contentRepository = require('../repositories/ContentRepository');
 const { TtlCache } = require('../../../utils/ttlCache');
+const { registerPublicCache } = require('../../internal/cache/publicCacheRegistry');
 
 const contentListCache = new TtlCache(180_000);
+registerPublicCache('content', contentListCache);
 
 class ContentController {
   normalizeText(value) {

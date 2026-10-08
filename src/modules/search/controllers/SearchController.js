@@ -2,8 +2,10 @@ const searchRepository = require('../repositories/SearchRepository');
 const productController = require('../../shopping/product/controllers/ProductController');
 const contentController = require('../../content/controllers/ContentController');
 const { TtlCache } = require('../../../utils/ttlCache');
+const { registerPublicCache } = require('../../internal/cache/publicCacheRegistry');
 
 const searchCache = new TtlCache(45_000);
+registerPublicCache('search', searchCache);
 
 class SearchController {
   _asPositiveInt(value, fallback) {

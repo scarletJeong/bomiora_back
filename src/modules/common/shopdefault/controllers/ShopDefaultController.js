@@ -1,7 +1,9 @@
 const shopDefaultRepository = require('../repositories/ShopDefaultRepository');
 const { TtlCache } = require('../../../../utils/ttlCache');
+const { registerPublicCache } = require('../../../internal/cache/publicCacheRegistry');
 
 const reservationSettingsCache = new TtlCache(60_000);
+registerPublicCache('shop', reservationSettingsCache);
 
 class ShopDefaultController {
   normalizeTimeValue(timeValue) {

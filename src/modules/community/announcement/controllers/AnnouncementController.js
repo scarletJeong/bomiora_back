@@ -1,8 +1,11 @@
 const announcementRepository = require('../repositories/AnnouncementRepository');
 const { TtlCache } = require('../../../../utils/ttlCache');
+const { registerPublicCache } = require('../../../internal/cache/publicCacheRegistry');
 
 const announcementListCache = new TtlCache(300_000);
 const announcementDetailCache = new TtlCache(180_000);
+registerPublicCache('announcement', announcementListCache);
+registerPublicCache('announcement', announcementDetailCache);
 
 class AnnouncementController {
   normalizeText(value) {
