@@ -296,6 +296,10 @@ class KcpPayController {
     }
 
     this.applyKcpHtmlCsp(res);
+    // 네이버 인앱은 attachment/데이터 주소를 다운로드 확인창으로 연다.
+    res.setHeader('Content-Disposition', 'inline');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Cache-Control', 'no-store');
 
     return res.status(200).type('html').send(String(row.request_html));
   }
