@@ -421,14 +421,16 @@ class ProductController {
 
   toOptionDto(row) {
     const id = String(row.io_id || '');
-    const optionName = id.replace(/\d+.*/, '');
-    const matched = id.match(/\d+/);
+    const axis = id.split('\u001e').map((part) => part.trim()).filter(Boolean);
+    const optionName = axis[0] || id;
+    const subOption = axis.slice(1).join(' > ');
     const ioType = Number(row.io_type);
     return {
       id,
       productId: row.it_id,
       optionName,
-      days: matched ? Number(matched[0]) : null,
+      subOption,
+      days: null,
       price: row.io_price,
       stock: row.io_stock_qty,
       type: Number.isFinite(ioType) ? ioType : 0,
