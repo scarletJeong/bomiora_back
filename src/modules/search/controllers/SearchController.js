@@ -1,6 +1,7 @@
 const searchRepository = require('../repositories/SearchRepository');
 const productController = require('../../shopping/product/controllers/ProductController');
 const contentController = require('../../content/controllers/ContentController');
+const eventController = require('../../shopping/event/controllers/EventController');
 const { TtlCache } = require('../../../utils/ttlCache');
 const { registerPublicCache } = require('../../internal/cache/publicCacheRegistry');
 
@@ -31,10 +32,11 @@ class SearchController {
       const prescriptionLimit = this._asPositiveInt(req.query.rxLimit, 20);
       const storeLimit = this._asPositiveInt(req.query.storeLimit, 20);
       const contentLimit = this._asPositiveInt(req.query.contentLimit, 20);
-      const cacheKey = `q:${query}:${prescriptionLimit}:${storeLimit}:${contentLimit}`;
+      const eventLimit = this._asPositiveInt(req.query.eventLimit, 20);
+      const cacheKey = `q:${query}:${prescriptionLimit}:${storeLimit}:${contentLimit}:${eventLimit}`;
 
       const payload = await searchCache.getOrSet(cacheKey, async () => {
-        const [rxRows, storeRows, contentResult, shopDefault] = await Promise.all([
+        const [rxRows, storeRows, contentResult, eventRows, shopDefault] = await Promise.all([
           searchRepository.searchProducts({
             query,
             itKind: 'prescription',
@@ -49,6 +51,10 @@ class SearchController {
             query,
             limit: contentLimit,
           }),
+          searchRepository.searchEvents({
+            query,
+            limit: eventLimit,
+          }),
           productController.getShopDefaultCached(),
         ]);
 
@@ -58,7 +64,12 @@ class SearchController {
         const storeItemsSlim = storeRows.map((r) =>
           productController.toProductSearchDto(r, shopDefault)
         );
-        const contentItems = contentResult.rows.map((r) => contentController.toMap(r));
+        const contentItems = contentResult.rows.map((r) => {
+          const item = contentController.toMap(r);
+          item.content_html = '';
+          return item;
+        });
+        const eventItems = eventRows.map((r) => eventController.toMap(r));
 
         return {
           success: true,
@@ -71,6 +82,10 @@ class SearchController {
             store: {
               count: storeItemsSlim.length,
               items: storeItemsSlim,
+            },
+            event: {
+              count: eventItems.length,
+              items: eventItems,
             },
             content: {
               count: contentItems.length,
@@ -86,7 +101,11 @@ class SearchController {
               },
             },
           },
-          totalCount: rxItemsSlim.length + storeItemsSlim.length + contentItems.length,
+          totalCount:
+            rxItemsSlim.length +
+            storeItemsSlim.length +
+            contentItems.length +
+            eventItems.length,
         };
       });
 
