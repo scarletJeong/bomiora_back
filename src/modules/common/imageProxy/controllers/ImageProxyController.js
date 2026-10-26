@@ -149,8 +149,8 @@ class ImageProxyController {
     try {
       return await sharp(buf, { failOn: 'none', limitInputPixels: false, sequentialRead: true })
         .rotate()
-        .resize({ width, withoutEnlargement: true })
-        .jpeg({ quality: 70, mozjpeg: true })
+        .resize({ width, withoutEnlargement: true, fastShrinkOnLoad: true })
+        .jpeg({ quality: 60, mozjpeg: false, progressive: false })
         .toBuffer();
     } catch (_) {
       return null;
