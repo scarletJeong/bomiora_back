@@ -20,6 +20,8 @@ const PRODUCT_REVIEW_LIST_COLUMNS = `
            CAST(r.it_id AS CHAR) AS it_id,
            CAST(r.mb_id AS CHAR) AS mb_id,
            CAST(r.is_name AS CHAR) AS is_name,
+           CAST(mem.mb_name AS CHAR) AS member_name,
+              CAST(mem.mb_nick AS CHAR) AS member_nick,
            r.is_time,
            r.is_confirm,
            r.is_score1, r.is_score2, r.is_score3, r.is_score4, r.total_is_score,
@@ -97,6 +99,20 @@ class ReviewRepository {
     return map;
   }
 
+  async findMemberDisplayName(mbId) {
+    const id = String(mbId || '').trim();
+    if (!id) return '';
+    const [rows] = await pool.query(
+      `SELECT CAST(mb_name AS CHAR) AS mb_name, CAST(mb_nick AS CHAR) AS mb_nick
+       FROM bomiora_member WHERE mb_id = ? LIMIT 1`,
+      [id]
+    );
+    if (!rows.length) return '';
+    const name = String(rows[0].mb_name || '').trim();
+    const nick = String(rows[0].mb_nick || '').trim();
+    return name || nick;
+  }
+
   async create(fields) {
     const textOrEmpty = (v) => (v == null ? '' : String(v));
     const [result] = await pool.query(
@@ -124,8 +140,11 @@ class ReviewRepository {
   async findById(isId) {
     const [rows] = await pool.query(
       `SELECT r.*,
+              CAST(mem.mb_name AS CHAR) AS member_name,
+              CAST(mem.mb_nick AS CHAR) AS member_nick,
 ${JOIN_SHOP_ITEM_NEW_SELECT}
        FROM bomiora_shop_item_use r
+       LEFT JOIN bomiora_member mem ON mem.mb_id = r.mb_id
        LEFT JOIN bomiora_shop_item_new n ON n.it_id = r.it_id
        WHERE r.is_id = ?`,
       [isId]
@@ -312,6 +331,7 @@ ${JOIN_SHOP_ITEM_NEW_SELECT}
 ${PRODUCT_REVIEW_LIST_COLUMNS},
 ${JOIN_SHOP_ITEM_NEW_SELECT}
          FROM bomiora_shop_item_use r
+         LEFT JOIN bomiora_member mem ON mem.mb_id = r.mb_id
          LEFT JOIN bomiora_shop_item_new n ON n.it_id = r.it_id
          WHERE ${where.join(' AND ')}
          ORDER BY r.is_id DESC
@@ -331,6 +351,8 @@ ${JOIN_SHOP_ITEM_NEW_SELECT}
          r.it_id,
          r.mb_id,
          r.is_name,
+         CAST(mem.mb_name AS CHAR) AS member_name,
+              CAST(mem.mb_nick AS CHAR) AS member_nick,
          r.is_time,
          r.is_confirm,
          r.is_score1, r.is_score2, r.is_score3, r.is_score4, r.total_is_score,
@@ -351,6 +373,7 @@ ${JOIN_SHOP_ITEM_NEW_SELECT}
          LEFT(IFNULL(n.it_img1, ''), 255) AS shop_it_img1,
          LEFT(IFNULL(n.it_img1, ''), 255) AS it_img1
        FROM bomiora_shop_item_use r
+       LEFT JOIN bomiora_member mem ON mem.mb_id = r.mb_id
        LEFT JOIN bomiora_shop_item_new n ON n.it_id = r.it_id
        WHERE r.mb_id = ?
        ORDER BY r.is_id DESC
@@ -379,8 +402,11 @@ ${JOIN_SHOP_ITEM_NEW_SELECT}
     const offset = page * size;
     const [rows] = await pool.query(
       `SELECT r.*,
+              CAST(mem.mb_name AS CHAR) AS member_name,
+              CAST(mem.mb_nick AS CHAR) AS member_nick,
 ${JOIN_SHOP_ITEM_NEW_SELECT}
        FROM bomiora_shop_item_use r
+       LEFT JOIN bomiora_member mem ON mem.mb_id = r.mb_id
        LEFT JOIN bomiora_shop_item_new n ON n.it_id = r.it_id
        WHERE ${where.join(' AND ')}
        ORDER BY r.is_id DESC

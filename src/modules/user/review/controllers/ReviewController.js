@@ -238,6 +238,16 @@ class ReviewController {
     return this._looksLikeReviewImageRef(s) ? s : '';
   }
 
+  _reviewAuthorName(row, rvkind) {
+    if (String(rvkind || '').trim().toLowerCase() === 'supporter') {
+      return this.normalizeSqlUtf8(row.is_name);
+    }
+    const memberName = String(this.normalizeSqlUtf8(row.member_name) || '').trim();
+    if (memberName) return memberName;
+    const memberNick = String(this.normalizeSqlUtf8(row.member_nick) || '').trim();
+    return memberNick || null;
+  }
+
   toReviewResponse(row) {
     const images = [
       row.is_img1, row.is_img2, row.is_img3, row.is_img4, row.is_img5,
@@ -282,7 +292,7 @@ class ReviewController {
       itKind,
       productImage,
       mbId: this.trimSqlText(row.mb_id) || String(row.mb_id ?? ''),
-      isName: this.normalizeSqlUtf8(row.is_name),
+      isName: this._reviewAuthorName(row, rvkind),
       isTime: row.is_time,
       isConfirm: row.is_confirm,
       isScore1: row.is_score1,
@@ -433,12 +443,18 @@ class ReviewController {
         return Math.min(5, Math.max(0, Math.round(n)));
       };
 
+      const rvkind = String(req.body.isRvkind || 'general').trim().toLowerCase();
+      const memberDisplayName = rvkind === 'supporter'
+        ? ''
+        : await reviewRepository.findMemberDisplayName(mbId);
       const saved = await reviewRepository.create({
         mb_id: mbId,
         od_id: odId,
         it_id: itId,
-        is_name: req.body.isName || mbId,
-        is_confirm: 0,
+        is_name: rvkind === 'supporter'
+          ? (req.body.isName || mbId)
+          : memberDisplayName,
+        is_confirm: 1,
         is_score1: scoreInt(s1),
         is_score2: scoreInt(s2),
         is_score3: scoreInt(s3),
@@ -485,7 +501,7 @@ class ReviewController {
       this._syncAggregatesLater(itId);
       return res.json({
         success: true,
-        message: '리뷰가 성공적으로 작성되었습니다. 관리자 승인 후 게시됩니다.',
+        message: '리뷰가 성공적으로 작성되었습니다.',
         review: this.toReviewResponse(saved)
       });
     } catch (error) {
