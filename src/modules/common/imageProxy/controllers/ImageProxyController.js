@@ -1,6 +1,9 @@
 const crypto = require('crypto');
 const fs = require('fs/promises');
 const path = require('path');
+const sharp = require('sharp');
+
+sharp.cache(false);
 
 const PROXY_CACHE_DIR = path.join(__dirname, '../../../../../uploads/image-proxy-cache');
 const PROXY_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -134,6 +137,26 @@ class ImageProxyController {
     return crypto.createHash('sha1').update(String(url)).digest('hex');
   }
 
+  thumbWidth(raw) {
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n <= 0) return 0;
+    return Math.min(480, Math.max(32, Math.round(n)));
+  }
+
+  /** 검색 썸네일용. 원본이 10MB가 넘어도 가로만 줄여 jpeg로 보낸다. */
+  async resizeForThumb(buf, width) {
+    if (!width || !buf || !buf.length) return null;
+    try {
+      return await sharp(buf, { failOn: 'none', limitInputPixels: false, sequentialRead: true })
+        .rotate()
+        .resize({ width, withoutEnlargement: true })
+        .jpeg({ quality: 70, mozjpeg: true })
+        .toBuffer();
+    } catch (_) {
+      return null;
+    }
+  }
+
   async ensureCacheDir() {
     if (!this._cacheDirReady) {
       this._cacheDirReady = fs.mkdir(PROXY_CACHE_DIR, { recursive: true }).catch(() => {});
@@ -187,6 +210,21 @@ class ImageProxyController {
     } catch (_) {}
   }
 
+  async sendImageBytes(res, key, bytes, type, thumbW) {
+    let out = bytes;
+    let outType = type || 'image/jpeg';
+    if (thumbW) {
+      const resized = await this.resizeForThumb(bytes, thumbW);
+      if (!resized) return res.sendStatus(415);
+      out = resized;
+      outType = 'image/jpeg';
+    }
+    res.setHeader('Content-Type', outType);
+    this.setImageCacheHeaders(res);
+    this.writeProxyCache(key, out, outType);
+    return res.status(200).send(out);
+  }
+
   sendCachedImage(res, buf, type) {
     res.setHeader('Content-Type', type || 'image/jpeg');
     this.setImageCacheHeaders(res);
@@ -201,7 +239,9 @@ class ImageProxyController {
         return res.sendStatus(403);
       }
 
-      const key = this.cacheKey(String(targetUrl));
+      const thumbW = this.thumbWidth(req.query.w);
+      const cacheSource = thumbW ? `${targetUrl}|w=${thumbW}` : String(targetUrl);
+      const key = this.cacheKey(cacheSource);
       const cached = await this.readProxyCache(key);
       if (cached) {
         return this.sendCachedImage(res, cached.buf, cached.type);
@@ -256,10 +296,7 @@ class ImageProxyController {
 
       const sniffed = this.sniffImageMimeFromBuffer(bytes);
       if (sniffed) {
-        res.setHeader('Content-Type', sniffed);
-        this.setImageCacheHeaders(res);
-        this.writeProxyCache(key, bytes, sniffed);
-        return res.status(200).send(bytes);
+        return this.sendImageBytes(res, key, bytes, sniffed, thumbW);
       }
 
       const rawCt = response.headers.get('content-type') || '';
@@ -293,10 +330,7 @@ class ImageProxyController {
       }
 
       const contentType = this.detectContentType(urlStr, response.headers.get('content-type'));
-      res.setHeader('Content-Type', contentType);
-      this.setImageCacheHeaders(res);
-      this.writeProxyCache(key, bytes, contentType);
-      return res.status(200).send(bytes);
+      return this.sendImageBytes(res, key, bytes, contentType, thumbW);
     } catch (error) {
       return res.sendStatus(500);
     }

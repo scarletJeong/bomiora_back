@@ -1,7 +1,7 @@
 const pool = require('../../../config/database');
 
 class ContentRepository {
-  async findList({ page = 1, size = 20, query = '', category = '전체' }) {
+  async findList({ page = 1, size = 20, query = '', category = '전체', titleOnly = false }) {
     const safePage = Number.isFinite(page) && page > 0 ? page : 1;
     const safeSize = Number.isFinite(size) && size > 0 ? size : 20;
     const offset = (safePage - 1) * safeSize;
@@ -21,8 +21,13 @@ class ContentRepository {
     }
 
     if (useQuery) {
-      whereParts.push('(title LIKE ? OR content LIKE ?)');
-      params.push(keyword, keyword);
+      if (titleOnly) {
+        whereParts.push('title LIKE ?');
+        params.push(keyword);
+      } else {
+        whereParts.push('(title LIKE ? OR content LIKE ?)');
+        params.push(keyword, keyword);
+      }
     }
 
     const whereSql = `WHERE ${whereParts.join(' AND ')}`;
