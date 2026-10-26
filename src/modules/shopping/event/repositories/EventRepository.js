@@ -39,6 +39,20 @@ class EventRepository {
     return rows;
   }
 
+  async searchByTitle(query, limit = 20) {
+    const keyword = `%${String(query || '').trim()}%`;
+    const safeLimit = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 20;
+    const [rows] = await pool.query(
+      `SELECT ${EVENT_LIST_COLUMNS}
+        FROM bm_event
+        WHERE title LIKE ?
+        ORDER BY sort_order ASC, id DESC
+        LIMIT ?`,
+      [keyword, safeLimit]
+    );
+    return rows;
+  }
+
   async findById(id) {
     const [rows] = await pool.query(
       `SELECT
