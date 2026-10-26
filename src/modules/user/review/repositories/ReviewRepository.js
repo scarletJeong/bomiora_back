@@ -7,6 +7,7 @@ const pool = require('../../../../config/database');
 /** bomiora_shop_item_use r LEFT JOIN bomiora_shop_item_new n 시 상품 메타·썸네일 */
 /** 상품 쪽 썸네일. 목록에 is_img BLOB 은 넣지 않는다. */
 const JOIN_SHOP_ITEM_NEW_SELECT = `
+              n.it_subject AS it_subject,
               COALESCE(n.it_name, n.it_subject) AS it_name,
               n.it_kind AS it_kind,
               n.it_flutter_image_url AS it_flutter_image_url,
@@ -341,7 +342,9 @@ ${JOIN_SHOP_ITEM_NEW_SELECT}
          r.is_img1,
          r.is_img2,
          r.is_img3,
+         r.is_outage_num,
          r.od_id,
+         n.it_subject,
          COALESCE(n.it_name, n.it_subject) AS it_name,
          n.it_kind,
          n.it_flutter_image_url,

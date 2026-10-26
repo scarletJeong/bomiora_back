@@ -278,6 +278,7 @@ class ReviewController {
       isId: row.is_id,
       itId: this.trimSqlText(row.it_id) || String(row.it_id ?? ''),
       itName: this.normalizeSqlUtf8(row.it_name),
+      itSubject: this.normalizeSqlUtf8(row.it_subject),
       itKind,
       productImage,
       mbId: this.trimSqlText(row.mb_id) || String(row.mb_id ?? ''),
@@ -822,6 +823,16 @@ class ReviewController {
         fields.is_img9 = images[8] || '';
         fields.is_img10 = images[9] || '';
       }
+      if (
+        req.body.isOutageNum !== undefined &&
+        req.body.isOutageNum !== null &&
+        req.body.isOutageNum !== ''
+      ) {
+        const kg = Number(req.body.isOutageNum);
+        if (Number.isFinite(kg)) {
+          fields.is_outage_num = Math.max(0, Math.round(kg));
+        }
+      }
 
       const affected = await reviewRepository.updateByIdAndMbId(isId, mbId, fields);
       if (!affected) {
@@ -847,6 +858,7 @@ class ReviewController {
         is_positive_review_text: fields.is_positive_review_text ?? req.body.isPositiveReviewText,
         is_negative_review_text: fields.is_negative_review_text ?? req.body.isNegativeReviewText,
         is_more_review_text: fields.is_more_review_text ?? req.body.isMoreReviewText,
+        is_outage_num: fields.is_outage_num ?? req.body.isOutageNum,
         is_img1: fields.is_img1,
         is_img2: fields.is_img2,
         is_img3: fields.is_img3,
