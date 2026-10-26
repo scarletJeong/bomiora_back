@@ -141,8 +141,23 @@ class WishController {
           row.it_img1 = image;
           row.it_basic = w.it_basic;
         }
+        if (wishIsContent) {
+          const contentTitle = this.bufferToString(w.content_title).trim();
+          // 삭제·비공개·제목 없는 글은 건강콘텐츠 목록에 없으므로 찜 카드로 두지 않는다.
+          if (!contentTitle) return null;
+          const contentCategory = this.bufferToString(w.content_category).trim();
+          const contentThumb = this.bufferToString(w.content_thumbnail).trim();
+          row.content_id = itIdKey;
+          row.title = contentTitle;
+          if (contentCategory) row.category = contentCategory;
+          if (contentThumb) {
+            row.thumbnail = contentThumb;
+            row.thumbnail_url = contentThumb;
+          }
+        }
         return row;
       })
+      .filter(Boolean)
       .filter((w) => {
         if (category === 'all') return true;
         const pk = String(w.product_kind || '').toLowerCase();

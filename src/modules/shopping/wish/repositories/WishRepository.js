@@ -93,9 +93,18 @@ class WishRepository {
          p.it_kind,
          LEFT(IFNULL(p.it_flutter_image_url, p.it_img1), 200) AS it_img1,
          p.it_flutter_image_url,
-         LEFT(IFNULL(p.it_basic, ''), 80) AS it_basic
+         LEFT(IFNULL(p.it_basic, ''), 80) AS it_basic,
+         CAST(c.category AS CHAR) AS content_category,
+         CAST(c.title AS CHAR) AS content_title,
+         CAST(c.thumbnail AS CHAR) AS content_thumbnail
        FROM bomiora_shop_wish w
        LEFT JOIN bomiora_shop_item_new p ON p.it_id = w.it_id
+       LEFT JOIN bm_content c
+         ON LOWER(TRIM(w.wi_it_kind)) = 'content'
+        AND c.id = CAST(w.it_id AS UNSIGNED)
+        AND c.is_deleted = 0
+        AND c.is_published = 1
+        AND CHAR_LENGTH(TRIM(CAST(c.title AS CHAR))) > 0
        WHERE w.mb_id = ?
        ORDER BY w.wi_time DESC`,
       [mbId]
