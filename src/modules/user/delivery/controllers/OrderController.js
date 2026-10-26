@@ -260,7 +260,7 @@ class OrderController {
       parent_it_id: parent || null,
       ioType,
       io_type: ioType,
-      // ct_price는 이미 라인 총액이다. io_type 0은 옵션가가 ct_price에 포함되어 있어
+      // ct_price는  이미 라인 총액이다. io_type 0은 옵션가가 ct_price에 포함되어 있어
       // io_price를 다시 더하면 주문완료 상품금액이 결제액보다 커진다.
       // io_type 1~3만 io_price * 수량을 더한다. (장바구니 cartLineAmount와 동일)
       totalPrice:
