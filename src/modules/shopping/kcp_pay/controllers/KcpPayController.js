@@ -194,6 +194,7 @@ class KcpPayController {
         couponDiscount: safeCouponDiscount,
         usedPoint: safeUsedPoint,
         coupons: checkoutCoupons,
+        returnUrl: this.resolveShopReturnUrl(req, req.body?.return_url),
       });
 
       const callbackUrl = this.resolveCallbackUrl(req, config.callbackUrl);
@@ -254,6 +255,7 @@ class KcpPayController {
           shopUserId: mbId,
           approvalKey: trade.approvalKey,
           payUrl: trade.payUrl,
+          returnUrl: pending.request.returnUrl,
         });
         paymentChannel = 'mobile_smartpay';
         console.log('📱 [KcpPay] mobile trade registered', {
@@ -393,6 +395,7 @@ class KcpPayController {
           success: false,
           message: '결제 세션이 만료되었습니다. 다시 시도해 주세요.',
           errorCode: 'EXPIRED',
+          returnUrl: this.resolveShopReturnUrl(req),
         }));
     }
 
@@ -435,6 +438,7 @@ class KcpPayController {
             success: false,
             message: failed.message,
             errorCode: resCd || '3001',
+            returnUrl: pending.request?.returnUrl || this.resolveShopReturnUrl(req),
           }));
       }
 
@@ -613,6 +617,7 @@ class KcpPayController {
           success: true,
           message: done.message,
           orderId: String(pending.request.orderId),
+          returnUrl: pending.request?.returnUrl || this.resolveShopReturnUrl(req),
         }));
     } catch (error) {
       console.error('❌ [KcpPayController] callback 오류:', error);
@@ -666,6 +671,7 @@ class KcpPayController {
           success: false,
           message: this.resolveClientErrorMessage(error),
           errorCode: this.resolveClientErrorCode(error),
+          returnUrl: pending?.request?.returnUrl || this.resolveShopReturnUrl(req),
         }));
     }
   }
@@ -1026,6 +1032,30 @@ class KcpPayController {
         error: cancelError.message,
       };
     }
+  }
+
+  resolveShopReturnUrl(req, raw) {
+    const fallback = 'https://bomiora.net/';
+    const value = String(raw || '').trim();
+    if (!value) return fallback;
+    let parsed;
+    try {
+      parsed = new URL(value);
+    } catch (_) {
+      return fallback;
+    }
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return fallback;
+    const host = parsed.hostname.toLowerCase();
+    const requestHost = String(req.get('host') || '').split(':')[0].toLowerCase();
+    const allowed = new Set([
+      'bomiora.net',
+      'www.bomiora.net',
+      'localhost',
+      '127.0.0.1',
+    ]);
+    if (requestHost) allowed.add(requestHost);
+    if (!allowed.has(host)) return fallback;
+    return `${parsed.origin}/`;
   }
 
   resolveCallbackUrl(req, configuredUrl) {

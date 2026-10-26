@@ -234,6 +234,7 @@ class KcpPayService {
     shopUserId,
     approvalKey,
     payUrl,
+    returnUrl = '',
   }) {
     const mobile = this.toMobilePayCodes(payMethodBits);
     const retUrl = (() => {
@@ -290,6 +291,7 @@ class KcpPayService {
       res_msg: '',
       tran_cd: '',
       use_pay_method: '',
+      encoding_trans: 'UTF-8',
     };
 
     const inputs = Object.entries(fields)
@@ -320,7 +322,16 @@ class KcpPayService {
   </form>
   <script>
     (function () {
+      var returnUrl = '${this.escape(returnUrl || '')}';
+      var postedKey = 'kcp_mobile_posted_${this.escape(token || '')}';
       function callPayForm() {
+        try {
+          if (sessionStorage.getItem(postedKey) === '1') {
+            if (returnUrl) window.location.replace(returnUrl);
+            return;
+          }
+          sessionStorage.setItem(postedKey, '1');
+        } catch (e0) {}
         var v_frm = document.order_info || document.getElementById('order_info');
         if (!v_frm) return;
         var payUrl = (v_frm.PayUrl && v_frm.PayUrl.value) || '';
@@ -335,6 +346,12 @@ class KcpPayService {
         if (!v_frm.action && payUrl) v_frm.action = payUrl;
         v_frm.method = 'post';
         v_frm.acceptCharset = 'UTF-8';
+        // iframe 안 POST는 KCP가 탑 창을 GET으로 바꿔 405 (no-cache) 를 낸다.
+        try {
+          if (window.top && window.top !== window) {
+            v_frm.target = '_top';
+          }
+        } catch (e3) {}
         v_frm.submit();
       }
       if (document.readyState === 'loading') {
@@ -602,11 +619,12 @@ class KcpPayService {
 </html>`;
   }
 
-  buildCallbackHtml({ token, success, message, orderId, errorCode }) {
+  buildCallbackHtml({ token, success, message, orderId, errorCode, returnUrl }) {
     const safeMessage = this.escape(message || '');
     const safeToken = this.escape(token || '');
     const safeOrderId = this.escape(orderId || '');
     const safeError = this.escape(errorCode || '');
+    const safeReturn = this.escape(returnUrl || '');
     return `<!doctype html>
 <html lang="ko">
 <head>
@@ -636,13 +654,26 @@ class KcpPayService {
           window.opener.postMessage(payload, '*');
         }
       } catch (e2) {}
+      var bridged = false;
       try {
         if (window.flutter_inappwebview && window.flutter_inappwebview.callHandler) {
           window.flutter_inappwebview.callHandler('kcpCallback', payload);
+          bridged = true;
         }
       } catch (e3) {}
+      try {
+        if (window.parent && window.parent !== window) bridged = true;
+      } catch (e4) {}
+      try {
+        if (window.opener && !window.opener.closed) bridged = true;
+      } catch (e5) {}
+      var returnUrl = '${safeReturn}';
+      if (!bridged && returnUrl) {
+        window.location.replace(returnUrl);
+        return;
+      }
       setTimeout(function() {
-        try { window.close(); } catch (e4) {}
+        try { window.close(); } catch (e6) {}
       }, 200);
     })();
   </script>
