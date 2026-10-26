@@ -110,11 +110,42 @@ class KcpPayController {
       const checkoutCoupons = couponResult.rows || [];
 
       const cartPrice = carts.reduce((sum, row) => sum + Number(row.ct_price || 0), 0);
-      const safeShippingCost = Number(shippingCost || 0);
       const safeUsedPoint = Number(usedPoint || 0);
+      const splitCoupons = this.splitCouponAmounts(checkoutCoupons);
+      const hasShippingSplit = Object.prototype.hasOwnProperty.call(
+        req.body || {},
+        'base_shipping_cost'
+      );
+      let baseShip = 0;
+      let extraShip = 0;
+      if (hasShippingSplit) {
+        const quote = await cartController.quoteShipping(carts, receiver?.zip);
+        const clientBase = Math.max(0, Number(req.body.base_shipping_cost || 0) || 0);
+        const clientExtra = Math.max(0, Number(req.body.extra_shipping_cost || 0) || 0);
+        if (clientBase !== quote.base || clientExtra !== quote.extra) {
+          return res.status(400).json({
+            success: false,
+            message: '배송비가 변경되었습니다. 다시 확인해 주세요.',
+            base_shipping_cost: quote.base,
+            extra_shipping_cost: quote.extra,
+          });
+        }
+        if (splitCoupons.sendCoupon > quote.base) {
+          return res.status(400).json({
+            success: false,
+            message: '배송비 쿠폰은 기본 배송비 안에서만 사용할 수 있습니다.',
+          });
+        }
+        baseShip = quote.base;
+        extraShip = quote.extra;
+      } else {
+        baseShip = Math.max(0, Number(shippingCost || 0) || 0);
+        extraShip = 0;
+      }
+      const grossShipping = baseShip + extraShip;
       const computedFinalAmount = Math.max(
         0,
-        cartPrice + safeShippingCost - safeCouponDiscount - safeUsedPoint
+        cartPrice + grossShipping - safeCouponDiscount - safeUsedPoint
       );
       const requestFinalAmount = Number(finalAmount || 0);
 
@@ -154,7 +185,12 @@ class KcpPayController {
           ...(receiver || {}),
           memo: deliveryMemo,
         }),
-        shippingCost: safeShippingCost,
+        shippingCost: grossShipping,
+        baseShipping: baseShip,
+        extraShipping: extraShip,
+        sendCoupon: hasShippingSplit ? splitCoupons.sendCoupon : 0,
+        cartCoupon: hasShippingSplit ? splitCoupons.cartCoupon : safeCouponDiscount,
+        orderCoupon: hasShippingSplit ? splitCoupons.orderCoupon : 0,
         couponDiscount: safeCouponDiscount,
         usedPoint: safeUsedPoint,
         coupons: checkoutCoupons,
@@ -504,10 +540,15 @@ class KcpPayController {
           memo: pending.request.receiver.memo,
           cartCount: pending.request.cartIds.length,
           cartPrice: pending.request.amount - pending.request.shippingCost + pending.request.couponDiscount + pending.request.usedPoint,
-          sendCost: pending.request.shippingCost,
-          sendCoupon: 0,
-          cartCoupon: pending.request.couponDiscount,
-          orderCoupon: 0,
+          sendCost: pending.request.baseShipping != null
+            ? pending.request.baseShipping
+            : pending.request.shippingCost,
+          sendCost2: pending.request.extraShipping || 0,
+          sendCoupon: pending.request.sendCoupon || 0,
+          cartCoupon: pending.request.cartCoupon != null
+            ? pending.request.cartCoupon
+            : pending.request.couponDiscount,
+          orderCoupon: pending.request.orderCoupon || 0,
           totalAmount: pending.request.amount,
           usedPoint: pending.request.usedPoint,
           bankAccount,
@@ -762,6 +803,20 @@ class KcpPayController {
       addr3: String(row.addr3 || '').trim(),
       memo: String(row.memo || '').trim(),
     };
+  }
+
+  splitCouponAmounts(coupons) {
+    let sendCoupon = 0;
+    let orderCoupon = 0;
+    let cartCoupon = 0;
+    for (const coupon of coupons || []) {
+      const discount = Math.max(0, Number(coupon.discount || 0) || 0);
+      const method = Number(coupon.cp_method);
+      if (method === 3) sendCoupon += discount;
+      else if (method === 2) orderCoupon += discount;
+      else cartCoupon += discount;
+    }
+    return { sendCoupon, orderCoupon, cartCoupon };
   }
 
   generateOrderId() {

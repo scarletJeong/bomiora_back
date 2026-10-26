@@ -460,7 +460,11 @@ class CouponRepository {
       }
       const discount = Math.max(0, Number(item.discount || 0) || 0);
       sum += discount;
-      resolved.push({ cp_id: item.cp_id, discount });
+      resolved.push({
+        cp_id: item.cp_id,
+        discount,
+        cp_method: Number(row.cp_method || 0),
+      });
     }
 
     if (claimed > 0 && sum !== claimed) {

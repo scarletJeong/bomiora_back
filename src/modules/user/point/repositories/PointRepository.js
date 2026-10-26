@@ -163,7 +163,8 @@ class PointRepository {
 
   /**
    * 수령확인 시 주문 적립 포인트 지급.
-   * - 앱 "예상 적립 포인트"와 동일: 결제금액(od_receipt_price) × de_point_rate%
+   * - 적립기준 = 실결제 - (기본배송비 + 추가지역배송비 + 기타배송비 - 배송비쿠폰)
+   * - 적립포인트 = 적립기준 × de_point_rate%
    * - 중복 방지: @shop_order / od_id / 수령확인 또는 기존 "주문번호 {od_id}%" 내역
    * @param {{ mbId: string, odId: string|number, conn?: import('mysql2/promise').PoolConnection }} params
    * @returns {Promise<{granted:boolean, code:string, poPoint?:number, poMbPoint?:number}>}
@@ -247,13 +248,17 @@ class PointRepository {
       }
 
       const order = orderRows[0];
+      const shippingNet =
+        Number(order.od_send_cost || 0) +
+        Number(order.od_send_cost2 || 0) +
+        Number(order.od_send_cost3 || 0) -
+        Number(order.od_send_coupon || 0);
       let base = Number(order.od_receipt_price || 0);
-      if (!Number.isFinite(base) || base <= 0) {
+      if (Number.isFinite(base) && base > 0) {
+        base -= shippingNet;
+      } else {
         base =
-          Number(order.od_cart_price || 0) +
-          Number(order.od_send_cost || 0) +
-          Number(order.od_send_cost2 || 0) -
-          Number(order.od_send_coupon || 0) -
+          Number(order.od_cart_price || 0) -
           Number(order.od_cart_coupon || 0) -
           Number(order.od_coupon || 0) -
           Number(order.od_receipt_point || 0);

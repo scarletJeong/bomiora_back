@@ -202,6 +202,21 @@ class KcpPayService {
   }
 
   /**
+   * 가상계좌 입금 마감. 서울 발급일 + 1일 23:59:59.
+   * PC는 vcnt_expire_term=1, 모바일은 ipgm_date 로 같은 기준을 보낸다.
+   */
+  virtualAccountDeadlineString() {
+    const seoulNow = new Date(Date.now() + 9 * 60 * 60 * 1000);
+    const next = new Date(Date.UTC(
+      seoulNow.getUTCFullYear(),
+      seoulNow.getUTCMonth(),
+      seoulNow.getUTCDate() + 1,
+    ));
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${next.getUTCFullYear()}${pad(next.getUTCMonth() + 1)}${pad(next.getUTCDate())}235959`;
+  }
+
+  /**
    * 모바일: PayUrl 로 order_info 자동 POST (payplus_web PC 레이어 미사용)
    */
   buildMobileRequestHtml({
@@ -261,6 +276,14 @@ class KcpPayService {
       param_opt_2: '',
       param_opt_3: '',
       kcp_token: token,
+      // 가상계좌만. 빠지면 KCP 가맹점 기본 마감(보통 7일)이 적용된다.
+      ...(mobile.payMethod === 'VCNT'
+        ? {
+            ipgm_date: this.virtualAccountDeadlineString(),
+            vcnt_expire_term: '1',
+            vcnt_expire_term_time: '235959',
+          }
+        : {}),
       enc_info: '',
       enc_data: '',
       res_cd: '',

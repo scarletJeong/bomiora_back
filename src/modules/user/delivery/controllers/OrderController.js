@@ -653,6 +653,7 @@ class OrderController {
         products,
         productPrice: this.toInt(row.od_cart_price),
         deliveryFee: this.toInt(row.od_send_cost) + this.toInt(row.od_send_cost2),
+        sendCoupon: this.toInt(row.od_send_coupon),
         discountAmount: couponDiscount + pointDiscount,
         couponDiscount,
         pointDiscount,

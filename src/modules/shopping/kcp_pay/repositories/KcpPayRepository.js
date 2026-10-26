@@ -72,7 +72,7 @@ class KcpPayRepository {
           ?, ?, '', ?, ?, ?, ?,
           ?, ?, ?, ?, ?, '',
           ?, ?, ?, ?, ?, ?, ?, ?, '',
-          ?, ?, ?, ?, ?, ?, 0, 0,
+          ?, ?, ?, ?, ?, ?, ?, 0,
           ?, ?, ?, ?, ?, ?, ?,
           'kcp', ?, ?, ?, 0, ?, ?, 0,
           ?, '', '', ?, ?, ?, ?, 0
@@ -103,6 +103,7 @@ class KcpPayRepository {
           payload.cartPrice,
           payload.sendCost,
           payload.sendCoupon,
+          payload.sendCost2 || 0,
           payload.cartCoupon,
           payload.orderCoupon,
           odReceiptPrice,

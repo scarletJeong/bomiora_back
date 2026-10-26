@@ -8,6 +8,7 @@ const CART_LIST_SELECT = `
          CAST(c.it_name AS CHAR) AS it_name,
          CAST(c.it_subject AS CHAR) AS it_subject,
          c.it_sc_type, c.it_sc_method, c.it_sc_price, c.it_sc_minimum, c.it_sc_qty,
+         c.ct_send_cost,
          CAST(c.ct_status AS CHAR) AS ct_status,
          c.ct_price, c.ct_qty, c.io_type, c.io_price, c.ct_select, c.ct_time,
          CAST(c.ct_option AS CHAR) AS ct_option,
@@ -28,6 +29,20 @@ const CART_LIST_SELECT = `
 `;
 
 class CartRepository {
+  async findSendcostByZip(zipNumber) {
+    const zip = Number(zipNumber);
+    if (!Number.isFinite(zip)) return null;
+    const [rows] = await pool.query(
+      `SELECT sc_id, sc_price
+       FROM bomiora_shop_sendcost
+       WHERE sc_zip1 <= ? AND sc_zip2 >= ?
+       ORDER BY sc_id ASC
+       LIMIT 1`,
+      [zip, zip]
+    );
+    return rows.length ? rows[0] : null;
+  }
+
   async findProductById(itId) {
     const [rows] = await pool.query(
       `SELECT it_id, it_name, it_subject, it_kind, it_brand, it_maker,

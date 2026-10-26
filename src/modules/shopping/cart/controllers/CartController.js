@@ -1,4 +1,5 @@
 const cartRepository = require('../repositories/CartRepository');
+const shopDefaultRepository = require('../../../common/shopdefault/repositories/ShopDefaultRepository');
 const healthProfileCartRepository = require('../repositories/HealthProfileCartRepository');
 const cartRecommendService = require('../services/CartRecommendService');
 const productController = require('../../product/controllers/ProductController');
@@ -178,6 +179,9 @@ class CartController {
       ? this.bufferToString(product.it_subject) || ''
       : '';
     const itSubject = cartSubject || productSubject || '';
+    const itMaker =
+      this.bufferToString(cart.product_it_maker) ||
+      (product ? this.bufferToString(product.it_maker) || '' : '');
     const itBrand =
       this.bufferToString(cart.product_it_brand) ||
       this.bufferToString(cart.product_it_maker) ||
@@ -226,6 +230,7 @@ class CartController {
       it_name: this.bufferToString(cart.it_name),
       it_subject: itSubject,
       it_brand: itBrand,
+      it_maker: itMaker,
       it_kind: itKind,
       product_kind: itKind,
       product_type: productType,
@@ -406,24 +411,58 @@ class CartController {
     if (type === 1) return 0;
     if (type === 2) return price >= minimum ? 0 : shipPrice;
     if (type === 3) return shipPrice;
-    if (type === 4) return scQty > 0 ? shipPrice * Math.ceil(qty / scQty) : 0;
+    if (type === 4) {
+      const unit = scQty > 0 ? scQty : 1;
+      return shipPrice * Math.ceil(qty / unit);
+    }
     return 0;
   }
 
-  calculateShippingCost(carts) {
+  splitSendCostNumbers(raw) {
+    return String(this.bufferToString(raw) || '')
+      .split(';')
+      .map((s) => String(s).trim())
+      .filter((s) => s !== '')
+      .map((s) => Number(String(s).replace(/[^0-9]/g, '')))
+      .map((n) => (Number.isFinite(n) ? n : 0));
+  }
+
+  /** it_sc_type=0 금액 합에 쇼핑몰 기본 구간 배송비를 한 번만 더한다. */
+  defaultTierShippingFee(priceSum, shopDefault) {
+    if (!shopDefault) return 0;
+    const caseStr = String(this.bufferToString(shopDefault.de_send_cost_case) || '').trim();
+    if (caseStr === '무료') return 0;
+    const limits = this.splitSendCostNumbers(shopDefault.de_send_cost_limit);
+    const fees = this.splitSendCostNumbers(shopDefault.de_send_cost_list);
+    for (let i = 0; i < limits.length; i += 1) {
+      if (limits[i] > 0 && priceSum < limits[i]) {
+        return fees[i] || 0;
+      }
+    }
+    return 0;
+  }
+
+  /**
+   * get_sendcost 와 같다.
+   * ct_send_cost=0(선불)만 보고, 상품별 배송비와 기본 구간 배송비를 따로 더한 뒤 한 값으로 반환한다.
+   */
+  calculateShippingCost(carts, shopDefault = null) {
     if (!carts.length) return 0;
     const group = {};
     carts.forEach((c) => {
-      if (!group[c.it_id]) group[c.it_id] = [];
-      group[c.it_id].push(c);
+      if (this.toInt(c.ct_send_cost) !== 0) return;
+      const key = String(c.it_id || '');
+      if (!group[key]) group[key] = [];
+      group[key].push(c);
     });
 
     let totalShipping = 0;
     let defaultPriceSum = 0;
-    let defaultCount = 0;
+    let hasDefaultType = false;
 
     Object.keys(group).forEach((itId) => {
       const productCarts = group[itId];
+      if (!productCarts.length) return;
       let productTotalPrice = 0;
       let productTotalQty = 0;
       productCarts.forEach((c) => {
@@ -431,20 +470,55 @@ class CartController {
         productTotalQty += this.toInt(c.ct_qty, 1);
       });
 
-      const shipping = this.calculateItemShippingCost(productTotalPrice, productTotalQty, productCarts[0]);
+      const shipping = this.calculateItemShippingCost(
+        productTotalPrice,
+        productTotalQty,
+        productCarts[0]
+      );
       if (shipping === -1) {
         defaultPriceSum += productTotalPrice;
-        defaultCount += 1;
+        hasDefaultType = true;
       } else if (shipping > 0) {
         totalShipping += shipping;
       }
     });
 
-    let defaultShipping = 0;
-    if (defaultCount > 0 && defaultPriceSum > 0) {
-      defaultShipping = defaultPriceSum < 30000 ? 3000 : 0;
+    if (hasDefaultType) {
+      totalShipping += this.defaultTierShippingFee(defaultPriceSum, shopDefault);
     }
-    return totalShipping + defaultShipping;
+    return totalShipping;
+  }
+
+  async ensureShopDefault() {
+    const now = Date.now();
+    if (this._shopDefault && now - (this._shopDefaultAt || 0) < 60_000) {
+      return this._shopDefault;
+    }
+    this._shopDefault = await shopDefaultRepository.findFirst();
+    this._shopDefaultAt = now;
+    return this._shopDefault;
+  }
+
+  zipDigits(raw) {
+    const digits = String(raw || '').replace(/\D/g, '');
+    if (!digits) return '';
+    return digits.length > 5 ? digits.slice(0, 5) : digits;
+  }
+
+  async lookupExtraShipping(zipRaw) {
+    const zip = this.zipDigits(zipRaw);
+    if (!zip) return 0;
+    const row = await cartRepository.findSendcostByZip(zip);
+    return row ? this.toInt(row.sc_price) : 0;
+  }
+
+  async quoteShipping(carts, zipRaw = '') {
+    const shopDefault = await this.ensureShopDefault();
+    const base = this.calculateShippingCost(carts, shopDefault);
+    const extra = await this.lookupExtraShipping(zipRaw);
+    const rateRaw = Number(this.bufferToString(shopDefault?.de_point_rate));
+    const pointRate = Number.isFinite(rateRaw) && rateRaw > 0 ? rateRaw : 1;
+    return { base, extra, pointRate };
   }
 
   async addToCart(req, res) {
@@ -611,11 +685,15 @@ class CartController {
         console.warn('[getCart] 행 스킵', c?.ct_id, rowErr?.message || rowErr);
       }
     }
+    const quote = await this.quoteShipping(carts);
     return {
       success: true,
       data,
       total: data.length,
-      shipping_cost: this.calculateShippingCost(carts),
+      shipping_cost: quote.base,
+      base_shipping_cost: quote.base,
+      extra_shipping_cost: 0,
+      point_rate: quote.pointRate,
       total_price: carts.reduce((sum, c) => sum + this.cartLineAmount(c), 0),
     };
   }
@@ -676,15 +754,26 @@ class CartController {
         req.query.ct_status || req.body?.ct_status
       );
       const ctIds = this.parseCtIds(req.query.ct_ids || req.body?.ct_ids);
+      const zip = req.query.zip || req.body?.zip || req.query.ad_zip1 || req.body?.ad_zip1 || '';
       if (!ctIds.length) {
-        return res.json({ success: true, shipping_cost: 0 });
+        return res.json({
+          success: true,
+          shipping_cost: 0,
+          base_shipping_cost: 0,
+          extra_shipping_cost: 0,
+          point_rate: 1,
+        });
       }
 
       const carts = await cartRepository.findByMbIdAndStatus(mbId, ctStatus);
       const selected = carts.filter((c) => ctIds.includes(Number(c.ct_id)));
+      const quote = await this.quoteShipping(selected, zip);
       return res.json({
         success: true,
-        shipping_cost: this.calculateShippingCost(selected),
+        shipping_cost: quote.base,
+        base_shipping_cost: quote.base,
+        extra_shipping_cost: quote.extra,
+        point_rate: quote.pointRate,
       });
     } catch (error) {
       console.error('[getShippingCost]', error);
