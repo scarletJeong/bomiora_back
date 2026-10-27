@@ -1226,6 +1226,7 @@ class CartController {
         ctKind,
         selectedCtIds
       });
+      this.invalidateCartListCache(mbId, ctStatus);
 
       const carts = await cartRepository.findByMbIdAndStatus(mbId, ctStatus);
       const scoped = ctKind
