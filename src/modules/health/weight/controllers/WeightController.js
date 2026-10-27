@@ -123,6 +123,14 @@ class WeightController {
         mbId: req.body.mb_id == null ? null : String(req.body.mb_id),
       };
 
+      const existing = await weightRepository.findById(recordId);
+      if (!existing) {
+        return res.status(404).json({
+          success: false,
+          message: '기록을 찾을 수 없습니다'
+        });
+      }
+
       if (Object.prototype.hasOwnProperty.call(req.body, 'weight')) {
         fields.weight = req.body.weight == null ? null : Number(req.body.weight);
       }
@@ -131,8 +139,12 @@ class WeightController {
         fields.height = req.body.height == null ? null : Number(req.body.height);
       }
 
-      if (Object.prototype.hasOwnProperty.call(fields, 'weight')) {
-        fields.bmi = Weight.calculateBMI(fields.weight, fields.height);
+      const weightChanged = Object.prototype.hasOwnProperty.call(fields, 'weight');
+      const heightChanged = Object.prototype.hasOwnProperty.call(fields, 'height');
+      if (weightChanged || heightChanged) {
+        const nextWeight = weightChanged ? fields.weight : existing.weight;
+        const nextHeight = heightChanged ? fields.height : existing.height;
+        fields.bmi = Weight.calculateBMI(nextWeight, nextHeight);
       }
 
       if (Object.prototype.hasOwnProperty.call(req.body, 'measured_at')) {
