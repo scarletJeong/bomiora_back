@@ -472,18 +472,14 @@ class OrderController {
         const odIds = rows.map((r) => this.toOdId(r.od_id)).filter(Boolean);
 
         // size=1(마이페이지 미리보기)은 헬스플래그 생략 → RTT 1회 절약
-        const completedOdIds = rows
-          .filter((r) => Number(r.delivery_completed || 0) === 1)
-          .map((r) => this.toOdId(r.od_id))
-          .filter(Boolean);
-
+        // 리뷰 버튼은 배송완료(delivery_completed)뿐 아니라 od_status=완료·자동확정 배송완료에도 붙는다.
         const [allCarts, healthFlags, reviewedByOrder] = await Promise.all([
           orderCartRepository.findByOdIds(odIds),
           lite || size <= 1
             ? Promise.resolve({})
             : orderRepository.getHealthProfileFlagsByOdIds(mbId, odIds),
-          !lite && completedOdIds.length
-            ? reviewRepository.findReviewedItIdsByOdIds(mbId, completedOdIds)
+          !lite && odIds.length
+            ? reviewRepository.findReviewedItIdsByOdIds(mbId, odIds)
             : Promise.resolve({}),
         ]);
 

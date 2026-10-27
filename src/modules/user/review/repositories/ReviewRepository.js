@@ -84,13 +84,13 @@ class ReviewRepository {
 
     const ph = ids.map(() => '?').join(', ');
     const [rows] = await pool.query(
-      `SELECT od_id, it_id
+      `SELECT CAST(od_id AS CHAR) AS od_id, CAST(it_id AS CHAR) AS it_id
        FROM bomiora_shop_item_use
        WHERE mb_id = ? AND od_id IN (${ph})`,
       [mbId, ...ids]
     );
     rows.forEach((row) => {
-      const odId = row.od_id != null ? String(row.od_id) : '';
+      const odId = row.od_id != null ? String(row.od_id).trim() : '';
       const itId = this.normalizeItId(row.it_id);
       if (!odId || !itId) return;
       if (!map[odId]) map[odId] = [];
