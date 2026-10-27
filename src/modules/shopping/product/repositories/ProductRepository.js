@@ -319,9 +319,14 @@ class ProductRepository {
     const params = [keyword, keyword];
     // NOTE: 일부 DB 스키마에서는 it_explain 컬럼이 없고 it_explan만 존재합니다.
     // 존재하지 않는 컬럼을 COALESCE에 넣어도 SQL 에러가 나므로 it_explan만 사용합니다.
+    // 인플루언서(ca_id 40, 이름에 (@) )가 it_order 앞자리를 차지하면
+    // LIMIT 안에 실제 비대면 상품이 들어오지 않는다.
     let where = `
       it_use = '1'
       AND ${LIST_VISIBLE_SQL}
+      AND (it_mb_inf IS NULL OR it_mb_inf = '')
+      AND it_name NOT LIKE '%(@%'
+      AND CAST(ca_id AS CHAR) <> '40'
       AND (
         it_name LIKE ?
         OR it_basic LIKE ?
