@@ -239,13 +239,15 @@ class ReviewController {
   }
 
   _reviewAuthorName(row, rvkind) {
+    const storedName = String(this.normalizeSqlUtf8(row.is_name) || '').trim();
+    const memberNick = String(this.normalizeSqlUtf8(row.member_nick) || '').trim();
     if (String(rvkind || '').trim().toLowerCase() === 'supporter') {
-      return this.normalizeSqlUtf8(row.is_name);
+      return memberNick || storedName || null;
     }
     const memberName = String(this.normalizeSqlUtf8(row.member_name) || '').trim();
     if (memberName) return memberName;
-    const memberNick = String(this.normalizeSqlUtf8(row.member_nick) || '').trim();
-    return memberNick || null;
+    if (memberNick) return memberNick;
+    return storedName || null;
   }
 
   toReviewResponse(row) {
