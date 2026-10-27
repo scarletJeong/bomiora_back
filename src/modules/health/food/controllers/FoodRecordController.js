@@ -152,6 +152,12 @@ function normalizePhotoPayload(body) {
   return { photo: path, photos: path ? [path] : [] };
 }
 
+function finiteNumber(value) {
+  if (value == null || value === '') return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
 function serializeFoodRecordRow(r, items = []) {
   if (!r) return null;
   const imagePaths = parsePhotosFromRow(r);
@@ -420,17 +426,22 @@ class FoodRecordController {
             { scenario }
           )
         : null;
+      const clientKcal = finiteNumber(req.body.energy);
+      const clientCarb = finiteNumber(req.body.carbohydrates);
+      const clientProtein = finiteNumber(req.body.protein);
+      const clientFat = finiteNumber(req.body.fat);
+      const clientOther = finiteNumber(req.body.other);
 
       await foodRecordRepository.addFoodItem({
         foodRecordId,
         foodCode,
         foodName: food ? food.foodName : req.body.food_name,
         servingQuantity: serving,
-        kcal: food ? converted.kcal : req.body.energy,
-        carbohydrate: food ? converted.carbohydrate : req.body.carbohydrates,
-        protein: food ? converted.protein : req.body.protein,
-        fat: food ? converted.fat : req.body.fat,
-        other: food ? converted.other : req.body.other
+        kcal: clientKcal ?? (converted ? converted.kcal : null),
+        carbohydrate: clientCarb ?? (converted ? converted.carbohydrate : null),
+        protein: clientProtein ?? (converted ? converted.protein : null),
+        fat: clientFat ?? (converted ? converted.fat : null),
+        other: clientOther ?? (converted ? converted.other : null)
       });
       const items = await foodRecordRepository.findFoodItemsByFoodRecordId(foodRecordId);
       return res.status(201).json({

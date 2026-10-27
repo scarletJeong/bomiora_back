@@ -194,8 +194,13 @@ function buildWeightPlan(source, dbType, baseQuantity) {
     return { single: oneServingWeight, daily: oneServingWeight * dailyIntakeCount, total: foodWeight ?? oneServingWeight };
   }
 
-  const mealWeight = foodWeight ?? resolveServingReference(source) ?? baseQuantity;
-  return { single: mealWeight, daily: mealWeight, total: mealWeight };
+  // 검색 화면은 영양성분 기준량(보통 100g) 칼로리를 보여 준다.
+  // food_weight 는 식품 전체 중량이라 1회 섭취량으로 쓰면 240 → 552 처럼 달라진다.
+  return {
+    single: baseQuantity,
+    daily: baseQuantity,
+    total: foodWeight ?? baseQuantity
+  };
 }
 
 function calculateConvertedNutrition(source, options = {}) {
