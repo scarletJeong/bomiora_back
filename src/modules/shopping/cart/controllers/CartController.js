@@ -374,18 +374,25 @@ class CartController {
     return '';
   }
 
-  /** 상품 종류 ct_kind (prescription|general) — 관계와 분리 */
+  /** 상품 종류 ct_kind (prescription|general) — 관계와 분리.
+   *  인플루언서 상품이어도 화면이 아니라 상품 마스터 it_kind를 따른다.
+   */
   resolveProductKind({ reqBody, product }) {
+    const productKind = String(
+      this.bufferToString(product && product.it_kind) || ''
+    )
+      .trim()
+      .toLowerCase();
+    if (productKind === 'prescription' || productKind === 'general') {
+      return productKind;
+    }
     const bodyKind = String(
       this.bufferToString(reqBody.ct_kind || reqBody.ctKind || '') || ''
     )
       .trim()
       .toLowerCase();
     if (bodyKind === 'prescription' || bodyKind === 'general') return bodyKind;
-    // legacy supply_add| 는 상품 종류로 쓰지 않음
-    return this.bufferToString(product.it_kind) === 'prescription'
-      ? 'prescription'
-      : 'general';
+    return 'general';
   }
 
   /** 장바구니 라인 결제금액 (ct_price 총액 규칙 + io_type 1~3의 io_price) */
@@ -1149,6 +1156,9 @@ class CartController {
         ct_time: new Date(),
         ct_point: this.calculatePoint(product || {}, cart.io_id, cart.io_price, quantity)
       });
+      const mbId = this.bufferToString(cart.mb_id);
+      const ctStatus = this.normalizeCartStatus(cart.ct_status);
+      this.invalidateCartListCache(mbId, ctStatus);
       return res.json({ success: true, message: '수량이 변경되었습니다.', data: await this.convertCartToMap(updated) });
     } catch (error) {
       return res.status(500).json({ success: false, message: '장바구니 수량 업데이트 중 오류가 발생했습니다.', error: error.message });
