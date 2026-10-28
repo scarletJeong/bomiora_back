@@ -220,6 +220,13 @@ app.listen(PORT, () => {
     console.warn('[AutoConfirmScheduler] 시작 스킵:', e.message);
   }
 
+  // 가상계좌 입금기한 초과 결제대기 주문 자동 취소 (매일 KST 00:30, 12:30)
+  try {
+    require('./src/modules/internal/jobs/DepositExpiryScheduler').startDepositExpiryScheduler();
+  } catch (e) {
+    console.warn('[DepositExpiryScheduler] 시작 스킵:', e.message);
+  }
+
   // 종속옵션·연결상품 스키마 보장
   try {
     require('./src/utils/ensureSupplyDepoptSchema')

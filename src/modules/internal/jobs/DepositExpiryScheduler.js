@@ -1,5 +1,9 @@
 const orderRepository = require('../../user/delivery/repositories/OrderRepository');
 const orderController = require('../../user/delivery/controllers/OrderController');
+const { kstHourMinute, kstDateYmd } = require('./dailyKstScheduler');
+
+/** 새벽 12:30, 낮 12:30 (KST) */
+const RUN_TIMES = new Set(['00:30', '12:30']);
 
 async function runExpiredDepositCancels() {
   let cancelled = 0;
@@ -18,23 +22,30 @@ async function runExpiredDepositCancels() {
   }
 }
 
-/** 입금기한은 23:59:59에 끝나므로 1분마다 지난 결제대기 주문을 취소한다. */
+/** 매일 KST 00:30, 12:30에만 입금기한이 지난 결제대기 주문을 취소한다. */
 function startDepositExpiryScheduler() {
   let running = false;
+  let lastRunKey = '';
   const tick = async () => {
-    if (running) return;
+    const hm = kstHourMinute();
+    if (!RUN_TIMES.has(hm)) return;
+    const runKey = `${kstDateYmd()} ${hm}`;
+    if (running || lastRunKey === runKey) return;
     running = true;
+    lastRunKey = runKey;
     try {
+      console.log(`[DepositExpiryScheduler] ${runKey} 잡 시작`);
       await runExpiredDepositCancels();
     } catch (error) {
       console.error('[DepositExpiryScheduler] 실패:', error?.message || error);
+      lastRunKey = '';
     } finally {
       running = false;
     }
   };
   setTimeout(tick, 5000);
   setInterval(tick, 60 * 1000);
-  console.log('[DepositExpiryScheduler] 시작 — 1분마다 입금기한 초과 주문 취소');
+  console.log('[DepositExpiryScheduler] 시작 — 매일 KST 00:30, 12:30 입금기한 초과 주문 취소');
 }
 
 module.exports = {
