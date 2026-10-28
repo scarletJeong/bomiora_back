@@ -1,5 +1,8 @@
 const pool = require('../../../../config/database');
 
+const reviewSourceIdCache = new Map();
+const REVIEW_SOURCE_TTL_MS = 60 * 1000;
+
 /**
  * 상품 전체 만족도(0.1~5, 0.1 단위). TINYINT 이면 3.1→3 으로 잘림 → sql/review_total_score_decimal.sql 실행.
  */
@@ -294,10 +297,30 @@ ${JOIN_SHOP_ITEM_NEW_SELECT}
   async getReviewSourceItIds(itId) {
     const self = this.normalizeItId(itId);
     if (!self) return [];
+    const hit = reviewSourceIdCache.get(self);
+    if (hit) {
+      if (hit.ids && Date.now() - hit.at < REVIEW_SOURCE_TTL_MS) return hit.ids;
+      if (hit.pending) return hit.pending;
+    }
+    const pending = this._loadReviewSourceItIds(self)
+      .then((ids) => {
+        reviewSourceIdCache.set(self, { ids, at: Date.now() });
+        return ids;
+      })
+      .catch((err) => {
+        const current = reviewSourceIdCache.get(self);
+        if (current && current.pending) reviewSourceIdCache.delete(self);
+        throw err;
+      });
+    reviewSourceIdCache.set(self, { pending });
+    return pending;
+  }
+
+  async _loadReviewSourceItIds(self) {
     try {
       const top = await this.resolvePhpReviewTop(self);
-      const pool = await this.collectShopItemIdsForReviewTop(top || self);
-      return pool.length ? pool : [self];
+      const poolIds = await this.collectShopItemIdsForReviewTop(top || self);
+      return poolIds.length ? poolIds : [self];
     } catch (err) {
       if (this.isUnknownColumnError(err, 'it_review_link')) return [self];
       throw err;
@@ -416,27 +439,73 @@ ${JOIN_SHOP_ITEM_NEW_SELECT}
     return { rows, total };
   }
 
+  _statNum(value) {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : 0;
+  }
+
+  _emptyProductStats() {
+    return {
+      totalCount: 0,
+      supporterCount: 0,
+      averageScore: 0,
+      score1Avg: 0,
+      score2Avg: 0,
+      score3Avg: 0,
+      score4Avg: 0,
+      supporterAverage: 0,
+      supporterScore1Avg: 0,
+      supporterScore2Avg: 0,
+      supporterScore3Avg: 0,
+      supporterScore4Avg: 0,
+    };
+  }
+
+  _mapProductStats(row) {
+    const src = row || {};
+    return {
+      totalCount: this._statNum(src.totalCount),
+      supporterCount: this._statNum(src.supporterCount),
+      averageScore: this._statNum(src.averageScore),
+      score1Avg: this._statNum(src.score1Avg),
+      score2Avg: this._statNum(src.score2Avg),
+      score3Avg: this._statNum(src.score3Avg),
+      score4Avg: this._statNum(src.score4Avg),
+      supporterAverage: this._statNum(src.supporterAverage),
+      supporterScore1Avg: this._statNum(src.supporterScore1Avg),
+      supporterScore2Avg: this._statNum(src.supporterScore2Avg),
+      supporterScore3Avg: this._statNum(src.supporterScore3Avg),
+      supporterScore4Avg: this._statNum(src.supporterScore4Avg),
+    };
+  }
+
   async getProductStats(itIds) {
     const ids = (Array.isArray(itIds) ? itIds : [itIds])
       .map((id) => this.normalizeItId(id))
       .filter(Boolean);
-    if (!ids.length) {
-      return { totalCount: 0, averageScore: 0 };
-    }
+    if (!ids.length) return this._emptyProductStats();
     const ph = ids.map(() => '?').join(', ');
-    const [countRows] = await pool.query(
-      `SELECT COUNT(*) AS totalCount FROM bomiora_shop_item_use WHERE it_id IN (${ph}) AND is_confirm = 1`,
+    const [rows] = await pool.query(
+      `SELECT
+         COUNT(*) AS totalCount,
+         SUM(CASE WHEN CAST(is_rvkind AS CHAR) = 'supporter' THEN 1 ELSE 0 END) AS supporterCount,
+         AVG((COALESCE(is_score1,0) + COALESCE(is_score2,0) + COALESCE(is_score3,0) + COALESCE(is_score4,0))/4.0) AS averageScore,
+         AVG(COALESCE(is_score1,0)) AS score1Avg,
+         AVG(COALESCE(is_score2,0)) AS score2Avg,
+         AVG(COALESCE(is_score3,0)) AS score3Avg,
+         AVG(COALESCE(is_score4,0)) AS score4Avg,
+         AVG(CASE WHEN CAST(is_rvkind AS CHAR) = 'supporter'
+           THEN (COALESCE(is_score1,0) + COALESCE(is_score2,0) + COALESCE(is_score3,0) + COALESCE(is_score4,0))/4.0
+           END) AS supporterAverage,
+         AVG(CASE WHEN CAST(is_rvkind AS CHAR) = 'supporter' THEN COALESCE(is_score1,0) END) AS supporterScore1Avg,
+         AVG(CASE WHEN CAST(is_rvkind AS CHAR) = 'supporter' THEN COALESCE(is_score2,0) END) AS supporterScore2Avg,
+         AVG(CASE WHEN CAST(is_rvkind AS CHAR) = 'supporter' THEN COALESCE(is_score3,0) END) AS supporterScore3Avg,
+         AVG(CASE WHEN CAST(is_rvkind AS CHAR) = 'supporter' THEN COALESCE(is_score4,0) END) AS supporterScore4Avg
+       FROM bomiora_shop_item_use
+       WHERE it_id IN (${ph}) AND is_confirm = 1`,
       ids
     );
-    const [avgRows] = await pool.query(
-      `SELECT AVG((COALESCE(is_score1,0) + COALESCE(is_score2,0) + COALESCE(is_score3,0) + COALESCE(is_score4,0))/4.0) AS averageScore
-       FROM bomiora_shop_item_use WHERE it_id IN (${ph}) AND is_confirm = 1`,
-      ids
-    );
-    return {
-      totalCount: Number(countRows[0].totalCount || 0),
-      averageScore: Number(avgRows[0].averageScore || 0)
-    };
+    return this._mapProductStats(rows[0]);
   }
 
   /**
