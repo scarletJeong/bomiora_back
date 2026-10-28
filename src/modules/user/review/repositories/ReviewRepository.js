@@ -266,40 +266,40 @@ ${JOIN_SHOP_ITEM_NEW_SELECT}
     return [...new Set(rows.map((r) => this.normalizeItId(r.it_id)).filter(Boolean))];
   }
 
-  _reviewPoolTopsFromProductRow(product, itId) {
-    const linkIds = this.parseReviewLinkIds(product?.it_review_link)
-      .map((p) => this.normalizeItId(p))
-      .filter(Boolean);
-    const orgNorm = this.normalizeItId(product?.it_org_id);
-    const self = this.normalizeItId(product?.it_id) || this.normalizeItId(itId);
-    if (linkIds.length) return [...new Set(linkIds)];
-    return [orgNorm || self].filter(Boolean);
+  rawReviewLink(product) {
+    if (!product || product.it_review_link == null) return '';
+    const raw = product.it_review_link;
+    const text = Buffer.isBuffer(raw) ? raw.toString('utf8') : String(raw);
+    return text.trim();
   }
 
   /**
-   * 상품 상세에 노출할 리뷰의 it_id 목록 (PHP it_review_link / it_org_id 확장과 동일한 방향)
+   * PHP get_it_review 와 같음.
+   * it_review_link 를 한 단계 더 올라가 최상위 상품을 고르고, 없으면 자기 자신.
+   */
+  async resolvePhpReviewTop(itId) {
+    const self = this.normalizeItId(itId);
+    const product = await this.getProductForReview(self);
+    const link1 = this.normalizeItId(this.rawReviewLink(product));
+    if (!link1) return self;
+    const parent = await this.getProductForReview(link1);
+    const link2 = this.normalizeItId(this.rawReviewLink(parent));
+    return link2 || link1;
+  }
+
+  /**
+   * 상품 상세에 노출할 리뷰의 it_id 목록.
+   * PHP: top 상품 + it_review_link 가 top 인 상품 + 링크가 비고 it_org_id 가 top 인 상품.
    */
   async getReviewSourceItIds(itId) {
-    const product = await this.getProductForReview(itId);
-    const orgNorm = this.normalizeItId(product?.it_org_id);
-    const self = this.normalizeItId(product?.it_id) || this.normalizeItId(itId);
-    const linkIds = this.parseReviewLinkIds(product?.it_review_link)
-      .map((p) => this.normalizeItId(p))
-      .filter(Boolean);
-    const legacyMerged = [...new Set([orgNorm || self, ...linkIds].filter(Boolean))];
-
-    const tops = this._reviewPoolTopsFromProductRow(product, itId);
-    if (!tops.length) return legacyMerged;
-
+    const self = this.normalizeItId(itId);
+    if (!self) return [];
     try {
-      const pool = new Set();
-      for (const top of tops) {
-        const batch = await this.collectShopItemIdsForReviewTop(top);
-        batch.forEach((id) => pool.add(id));
-      }
-      return pool.size ? [...pool] : legacyMerged;
+      const top = await this.resolvePhpReviewTop(self);
+      const pool = await this.collectShopItemIdsForReviewTop(top || self);
+      return pool.length ? pool : [self];
     } catch (err) {
-      if (this.isUnknownColumnError(err, 'it_review_link')) return legacyMerged;
+      if (this.isUnknownColumnError(err, 'it_review_link')) return [self];
       throw err;
     }
   }
@@ -493,13 +493,10 @@ ${JOIN_SHOP_ITEM_NEW_SELECT}
   async syncAggregatesForReviewItId(reviewItId) {
     const baseIds = await this.collectShopItemIdsToRefreshForReviewItId(reviewItId);
     const toRefresh = new Set(baseIds);
-    const product = await this.getProductForReview(reviewItId);
-    const tops = this._reviewPoolTopsFromProductRow(product, reviewItId);
     try {
-      for (const top of tops) {
-        const batch = await this.collectShopItemIdsForReviewTop(top);
-        batch.forEach((id) => toRefresh.add(id));
-      }
+      const top = await this.resolvePhpReviewTop(reviewItId);
+      const batch = await this.collectShopItemIdsForReviewTop(top);
+      batch.forEach((id) => toRefresh.add(id));
     } catch (err) {
       if (!this.isUnknownColumnError(err, 'it_review_link')) throw err;
     }

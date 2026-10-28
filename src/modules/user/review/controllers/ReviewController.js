@@ -721,8 +721,11 @@ class ReviewController {
           ]);
           const hasMore = rowsPlus.length > size;
           const rows = hasMore ? rowsPlus.slice(0, size) : rowsPlus;
-          const totalElements = page * size + rows.length + (hasMore ? 1 : 0);
-          const totalPages = hasMore ? page + 2 : page + 1;
+          const stats = this.toMainReviewStats(statsRow);
+          const totalElements = stats.totalCount;
+          const totalPages = totalElements > 0
+            ? Math.ceil(totalElements / size)
+            : 0;
           return {
             success: true,
             reviews: rows.map((r) => this.toMainReviewRow(r)),
@@ -730,7 +733,7 @@ class ReviewController {
             totalPages,
             totalElements,
             hasNext: hasMore,
-            stats: this.toMainReviewStats(statsRow),
+            stats,
           };
         },
         180_000
