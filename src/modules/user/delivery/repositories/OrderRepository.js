@@ -1,6 +1,7 @@
 const pool = require('../../../../config/database');
 const pointRepository = require('../../point/repositories/PointRepository');
 const { notifyPointEarned } = require('../../notification/services/MemberNotifyService');
+const { formatKstStamp } = require('../../../../utils/healthDateTime');
 
 class OrderRepository {
   _notifyReceiptPoint(mbId, pointResult) {
@@ -75,7 +76,7 @@ class OrderRepository {
       `SELECT od_id, mb_id, od_name, od_hp,
               od_addr1, od_addr2, od_addr3, od_status,
               od_cart_count, od_cart_price, od_send_cost, od_send_cost2,
-              od_receipt_price, od_settle_case,
+              od_receipt_price, od_settle_case, od_bank_account,
               NULLIF(od_time, '0000-00-00 00:00:00') AS od_time,
               delivery_completed, admin_completed,
               NULLIF(auto_confirm_at, '0000-00-00 00:00:00') AS auto_confirm_at
@@ -220,19 +221,31 @@ class OrderRepository {
         const [orphans] = await pool.query(
           `SELECT hp_no, hp_9, hp_10, hp_mdatetime,
               DATE_FORMAT(hp_rsvt_date, '%Y-%m-%d') AS hp_rsvt_date, hp_rsvt_stime, hp_rsvt_etime
-             FROM bomiora_shop_health_profiles_cart
-            WHERE mb_id = ?
-              AND it_id IN (${placeholders})
-              AND hp_rsvt_date IS NOT NULL
-              AND CAST(hp_rsvt_date AS CHAR) NOT IN ('', '0000-00-00')
+             FROM bomiora_shop_health_profiles_cart h
+            WHERE h.mb_id = ?
+              AND h.it_id IN (${placeholders})
+              AND h.hp_rsvt_date IS NOT NULL
+              AND CAST(h.hp_rsvt_date AS CHAR) NOT IN ('', '0000-00-00')
               AND (
-                od_id IS NULL OR od_id = '' OR od_id = '0'
-                OR REPLACE(REPLACE(CAST(od_id AS CHAR), ',', ''), ' ', '') NOT IN (
+                h.od_id IS NULL OR h.od_id = '' OR h.od_id = '0'
+                OR REPLACE(REPLACE(CAST(h.od_id AS CHAR), ',', ''), ' ', '') NOT IN (
                   SELECT o.od_id FROM bomiora_shop_order o WHERE o.mb_id = ?
                 )
               )
-            ORDER BY hp_no DESC`,
-          [mbId, ...itIds, mbId]
+              AND EXISTS (
+                SELECT 1
+                  FROM bomiora_shop_order ord
+                 WHERE ord.mb_id = ?
+                   AND ord.od_id = ?
+                   AND NULLIF(ord.od_time, '0000-00-00 00:00:00') IS NOT NULL
+                   AND h.hp_wdatetime < DATE_ADD(DATE(ord.od_time), INTERVAL 2 DAY)
+                   AND h.hp_wdatetime >= LEAST(
+                         DATE(ord.od_time),
+                         DATE_SUB(ord.od_time, INTERVAL 24 HOUR)
+                       )
+              )
+            ORDER BY h.hp_no DESC`,
+          [mbId, ...itIds, mbId, mbId, odIdStr]
         );
 
         if (Array.isArray(orphans) && orphans.length) {
@@ -300,9 +313,23 @@ class OrderRepository {
                      AND h.hp_mdatetime <> '0000-00-00 00:00:00'
                     THEN 1 ELSE 0
                   END) AS is_consultation_done,
-              SUBSTRING_INDEX(GROUP_CONCAT(DATE_FORMAT(h.hp_rsvt_date, '%Y-%m-%d') ORDER BY h.hp_no DESC), ',', 1) AS hp_rsvt_date,
-              SUBSTRING_INDEX(GROUP_CONCAT(h.hp_rsvt_stime ORDER BY h.hp_no DESC), ',', 1) AS hp_rsvt_stime,
-              SUBSTRING_INDEX(GROUP_CONCAT(h.hp_rsvt_etime ORDER BY h.hp_no DESC), ',', 1) AS hp_rsvt_etime
+              SUBSTRING_INDEX(GROUP_CONCAT(
+                CASE
+                  WHEN h.hp_rsvt_date IS NULL
+                    OR CAST(h.hp_rsvt_date AS CHAR) IN ('', '0000-00-00', '0000-00-00 00:00:00')
+                  THEN NULL
+                  ELSE DATE_FORMAT(h.hp_rsvt_date, '%Y-%m-%d')
+                END
+                ORDER BY h.hp_no DESC SEPARATOR ','
+              ), ',', 1) AS hp_rsvt_date,
+              SUBSTRING_INDEX(GROUP_CONCAT(
+                NULLIF(TRIM(CAST(h.hp_rsvt_stime AS CHAR)), '')
+                ORDER BY h.hp_no DESC SEPARATOR ','
+              ), ',', 1) AS hp_rsvt_stime,
+              SUBSTRING_INDEX(GROUP_CONCAT(
+                NULLIF(TRIM(CAST(h.hp_rsvt_etime AS CHAR)), '')
+                ORDER BY h.hp_no DESC SEPARATOR ','
+              ), ',', 1) AS hp_rsvt_etime
        FROM bomiora_shop_health_profiles_cart h
        WHERE h.mb_id = ? AND h.od_id IN (${placeholders})
        GROUP BY h.od_id`,
@@ -319,6 +346,135 @@ class OrderRepository {
       };
     });
     return map;
+  }
+
+  /**
+   * 결제 직후 예약 행의 od_id 가 아직 최종 주문번호가 아니면 목록에 예약시간이 빠진다.
+   * 같은 상품이고, 주문일 다음날 23:59까지 저장된 미연결 예약만 붙인다.
+   */
+  async fillMissingReservationFlags(mbId, healthFlags, cartsByOrder, orderTimesByOdId) {
+    const missing = Object.keys(orderTimesByOdId).filter((odId) => {
+      const flags = healthFlags[odId];
+      const date = String(flags?.hp_rsvt_date || '').trim();
+      const stime = String(flags?.hp_rsvt_stime || '').trim();
+      const etime = String(flags?.hp_rsvt_etime || '').trim();
+      const dateOk = date && date !== '0000-00-00';
+      return !dateOk && !stime && !etime;
+    });
+    if (!missing.length) return;
+
+    const itToOdIds = new Map();
+    const itIds = [];
+    for (const odId of missing) {
+      const ids = [...new Set(
+        (cartsByOrder[odId] || [])
+          .map((c) => String(c.it_id ?? '').trim())
+          .filter(Boolean)
+      )];
+      for (const itId of ids) {
+        if (!itToOdIds.has(itId)) {
+          itToOdIds.set(itId, []);
+          itIds.push(itId);
+        }
+        itToOdIds.get(itId).push(odId);
+      }
+    }
+    if (!itIds.length) return;
+
+    const placeholders = itIds.map(() => '?').join(', ');
+    const [rows] = await pool.query(
+      `SELECT hp_no, it_id, hp_9, hp_10, hp_mdatetime, hp_wdatetime,
+              DATE_FORMAT(hp_rsvt_date, '%Y-%m-%d') AS hp_rsvt_date,
+              hp_rsvt_stime, hp_rsvt_etime
+         FROM bomiora_shop_health_profiles_cart
+        WHERE mb_id = ?
+          AND it_id IN (${placeholders})
+          AND (
+            (hp_rsvt_date IS NOT NULL AND CAST(hp_rsvt_date AS CHAR) NOT IN ('', '0000-00-00', '0000-00-00 00:00:00'))
+            OR NULLIF(TRIM(CAST(hp_rsvt_stime AS CHAR)), '') IS NOT NULL
+            OR NULLIF(TRIM(CAST(hp_rsvt_etime AS CHAR)), '') IS NOT NULL
+          )
+          AND (
+            od_id IS NULL OR od_id = '' OR od_id = '0'
+            OR REPLACE(REPLACE(CAST(od_id AS CHAR), ',', ''), ' ', '') NOT IN (
+              SELECT o.od_id FROM bomiora_shop_order o WHERE o.mb_id = ?
+            )
+          )
+        ORDER BY hp_no DESC`,
+      [mbId, ...itIds, mbId]
+    );
+
+    const savedByNextDayEnd = (orderTime, profileTime) => {
+      const order = orderTime instanceof Date ? orderTime : new Date(orderTime);
+      const profile = profileTime instanceof Date ? profileTime : new Date(profileTime);
+      if (Number.isNaN(order.getTime()) || Number.isNaN(profile.getTime())) return false;
+      const kst = new Date(order.getTime() + 9 * 3600 * 1000);
+      const y = kst.getUTCFullYear();
+      const m = kst.getUTCMonth();
+      const day = kst.getUTCDate();
+      const end = Date.UTC(y, m, day + 1, 23, 59, 59, 999) - 9 * 3600 * 1000;
+      const dayStart = Date.UTC(y, m, day, 0, 0, 0, 0) - 9 * 3600 * 1000;
+      const start = Math.min(dayStart, order.getTime() - 24 * 3600 * 1000);
+      const at = profile.getTime();
+      return at >= start && at <= end;
+    };
+
+    const takenOrders = new Set();
+    const linkByOrder = new Map();
+    for (const row of Array.isArray(rows) ? rows : []) {
+      const itId = String(row.it_id ?? '').trim();
+      const owners = (itToOdIds.get(itId) || []).filter((odId) => !takenOrders.has(odId));
+      let best = null;
+      for (const odId of owners) {
+        if (!savedByNextDayEnd(orderTimesByOdId[odId], row.hp_wdatetime)) continue;
+        const gap = Math.abs(
+          (orderTimesByOdId[odId] instanceof Date
+            ? orderTimesByOdId[odId].getTime()
+            : new Date(orderTimesByOdId[odId]).getTime()) - (
+            row.hp_wdatetime instanceof Date
+              ? row.hp_wdatetime.getTime()
+              : new Date(row.hp_wdatetime).getTime()
+          )
+        );
+        if (!best || gap < best.gap) best = { odId, gap };
+      }
+      if (!best) continue;
+      takenOrders.add(best.odId);
+      const prev = healthFlags[best.odId] || {};
+      const hp9 = String(row.hp_9 || '').trim();
+      const hp10 = String(row.hp_10 || '').trim();
+      const md = row.hp_mdatetime;
+      const hasMd = md != null && String(md) !== '' && String(md) !== '0000-00-00 00:00:00';
+      healthFlags[best.odId] = {
+        isPrescriptionOrder: true,
+        isConsultationDone:
+          prev.isConsultationDone === true ||
+          (hp9 === 'prescription' && hp10 === 'completion' && hasMd),
+        hp_rsvt_date: row.hp_rsvt_date || null,
+        hp_rsvt_stime: row.hp_rsvt_stime || null,
+        hp_rsvt_etime: row.hp_rsvt_etime || null,
+      };
+      linkByOrder.set(best.odId, { itId, hpNo: Number(row.hp_no) });
+    }
+
+    for (const [odId, link] of linkByOrder) {
+      const hpNos = (Array.isArray(rows) ? rows : [])
+        .filter((row) => {
+          if (String(row.it_id ?? '').trim() !== link.itId) return false;
+          return savedByNextDayEnd(orderTimesByOdId[odId], row.hp_wdatetime);
+        })
+        .map((row) => Number(row.hp_no))
+        .filter((n) => n > 0);
+      if (!hpNos.length) continue;
+      const healPlaceholders = hpNos.map(() => '?').join(', ');
+      await pool.query(
+        `UPDATE bomiora_shop_health_profiles_cart
+            SET od_id = ?, hp_mdatetime = NOW()
+          WHERE mb_id = ?
+            AND hp_no IN (${healPlaceholders})`,
+        [odId, mbId, ...hpNos]
+      );
+    }
   }
 
   /** @deprecated use getHealthProfileFlagsByOdIds — 하위 호환 */
@@ -896,6 +1052,108 @@ class OrderRepository {
     const mi = String(d.getMinutes()).padStart(2, '0');
     const ss = String(d.getSeconds()).padStart(2, '0');
     return `${yyyy}-${mm}-${dd} ${hh}:${mi}:${ss}`;
+  }
+
+  /** `은행/계좌/YYYYMMDDHHmmss` 셋째 칸. 없으면 빈 문자열. */
+  depositDeadlineCompact(bankAccount) {
+    const raw = this.bufferToString(bankAccount);
+    const parts = raw.split('/').map((part) => part.trim()).filter(Boolean);
+    if (parts.length < 3) return '';
+    const digits = parts[2].replace(/\D/g, '');
+    if (digits.length < 12) return '';
+    return `${digits.slice(0, 12)}${digits.length >= 14 ? digits.slice(12, 14) : '00'}`;
+  }
+
+  kstNowCompact() {
+    const parts = new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Asia/Seoul',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    }).formatToParts(new Date());
+    const pick = (type) => parts.find((part) => part.type === type)?.value || '00';
+    const hour = pick('hour') === '24' ? '00' : pick('hour');
+    return `${pick('year')}${pick('month')}${pick('day')}${hour}${pick('minute')}${pick('second')}`;
+  }
+
+  /**
+   * 결제대기(od_status=주문)인데 가상계좌 입금기한이 지난 주문을 취소한다.
+   * 입금 통보로 이미 '입금'이 된 행은 WHERE 조건 때문에 건드리지 않는다.
+   */
+  async cancelExpiredUnpaidDeposits({ mbId = '', odId = '', limit = 100 } = {}) {
+    const nowCompact = this.kstNowCompact();
+    const params = [];
+    let where = `od_status = '주문' AND od_bank_account LIKE '%/%/%'`;
+    const memberId = String(mbId || '').trim();
+    const orderId = String(odId || '').trim();
+    if (memberId) {
+      where += ' AND mb_id = ?';
+      params.push(memberId);
+    }
+    if (orderId) {
+      where += ' AND od_id = ?';
+      params.push(orderId);
+    }
+    const safeLimit = Math.min(Math.max(Number(limit) || 100, 1), 200);
+    const [rows] = await pool.query(
+      `SELECT od_id, mb_id, od_bank_account, od_shop_memo,
+              od_receipt_price, od_cart_price, od_send_cost, od_send_cost2,
+              od_send_coupon, od_cart_coupon, od_coupon, od_receipt_point
+         FROM bomiora_shop_order
+        WHERE ${where}
+        ORDER BY od_id ASC
+        LIMIT ${safeLimit}`,
+      params
+    );
+
+    const cancelled = [];
+    for (const row of rows) {
+      const deadline = this.depositDeadlineCompact(row.od_bank_account);
+      if (!deadline || deadline >= nowCompact) continue;
+
+      const targetId = String(row.od_id);
+      const receipt = Number(row.od_receipt_price) || 0;
+      const computed = receipt > 0
+        ? receipt
+        : (Number(row.od_cart_price) || 0)
+          + (Number(row.od_send_cost) || 0)
+          + (Number(row.od_send_cost2) || 0)
+          - (Number(row.od_send_coupon) || 0)
+          - (Number(row.od_cart_coupon) || 0)
+          - (Number(row.od_coupon) || 0)
+          - (Number(row.od_receipt_point) || 0);
+      const cancelPrice = Math.max(0, computed);
+      const stamp = formatKstStamp(new Date());
+      const line = `(${stamp}) 시스템 자동 취소\n가상계좌 입금기한 초과`;
+      const prev = this.bufferToString(row.od_shop_memo).trim();
+      const memo = prev ? `${prev}\n${line}` : line;
+
+      const [updated] = await pool.query(
+        `UPDATE bomiora_shop_order
+            SET od_status = '취소',
+                od_cancel_price = ?,
+                status_changed_at = NOW(),
+                od_shop_memo = ?
+          WHERE od_id = ?
+            AND od_status = '주문'`,
+        [cancelPrice, memo, targetId]
+      );
+      if (!updated || Number(updated.affectedRows) < 1) continue;
+
+      await pool.query(
+        `UPDATE bomiora_shop_cart SET ct_status = '취소' WHERE od_id = ?`,
+        [targetId]
+      );
+      cancelled.push({
+        odId: targetId,
+        mbId: this.bufferToString(row.mb_id).trim(),
+      });
+    }
+    return cancelled;
   }
 }
 

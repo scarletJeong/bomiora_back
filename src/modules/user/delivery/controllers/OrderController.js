@@ -461,6 +461,11 @@ class OrderController {
         String(req.query.lite || '') === 'true';
       const cacheKey = `list:${mbId}:${period}:${status}:${page}:${size}:${lite ? 'lite' : 'full'}`;
 
+      if (mbId) {
+        const expired = await orderRepository.cancelExpiredUnpaidDeposits({ mbId });
+        if (expired.length) this.invalidateOrderListCache(mbId);
+      }
+
       const payload = await orderListCache.getOrSet(cacheKey, async () => {
         const { rows, total, hasMore } = await orderRepository.getOrders(
           mbId,
@@ -490,6 +495,21 @@ class OrderController {
           cartsByOrder[key].push(c);
         });
 
+        if (!lite && size > 1) {
+          const orderTimesByOdId = {};
+          rows.forEach((row) => {
+            const status = this.bufferToString(row.od_status) || '';
+            if (status === '취소' || status === '반품') return;
+            orderTimesByOdId[this.toOdId(row.od_id)] = row.od_time;
+          });
+          await orderRepository.fillMissingReservationFlags(
+            mbId,
+            healthFlags,
+            cartsByOrder,
+            orderTimesByOdId
+          );
+        }
+
         const imageUrlMap = {};
         allCarts.forEach((row) => {
           if (row.it_id && row.it_img1) imageUrlMap[row.it_id] = row.it_img1;
@@ -516,7 +536,7 @@ class OrderController {
               row.auto_confirm_at,
               isConsultationDone
             ),
-            odStatus: row.od_status,
+            odStatus: this.bufferToString(row.od_status) || '',
             totalPrice: this.computeOrderTotal(row),
             deliveryFee: this.toInt(row.od_send_cost) + this.toInt(row.od_send_cost2),
             recipientName: this.bufferToString(row.od_name) || '',
@@ -527,6 +547,7 @@ class OrderController {
             isPrescriptionOrder,
             isConsultationDone,
             canConfirmReceipt: this.canConfirmReceipt(row.od_status, row.delivery_completed),
+            odBankAccount: this.bufferToString(row.od_bank_account) || null,
             reservationDate: this.formatSqlDateForApi(flags.hp_rsvt_date),
             reservationTime: this.bufferToString(flags.hp_rsvt_stime) || null,
             reservationEndTime: this.bufferToString(flags.hp_rsvt_etime) || null,
@@ -597,6 +618,10 @@ class OrderController {
       const odId = this.toOdId(req.params.odId);
       if (!odId) return res.status(400).json({ error: '주문번호가 필요합니다.' });
       const mbId = req.query.mbId;
+      if (mbId && odId) {
+        const expired = await orderRepository.cancelExpiredUnpaidDeposits({ mbId, odId });
+        if (expired.length) this.invalidateOrderDetailCache(mbId, odId);
+      }
       const cacheKey = `detail:${mbId}:${odId}`;
       const cached = orderDetailCache.get(cacheKey);
       if (cached) {
