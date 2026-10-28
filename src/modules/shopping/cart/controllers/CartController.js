@@ -1198,6 +1198,53 @@ class CartController {
     }
   }
 
+  async removeCartItems(req, res) {
+    try {
+      const mbId = String(req.body?.mb_id || req.body?.mbId || '').trim();
+      const ctIds = this.parseCtIds(req.body?.ct_ids || req.body?.ctIds);
+      if (!mbId) {
+        return res.status(400).json({ success: false, message: 'mb_id가 필요합니다.' });
+      }
+      if (!ctIds.length) {
+        return res.json({ success: true, deleted: 0, message: '삭제할 상품이 없습니다.' });
+      }
+
+      const rows = await cartRepository.findByIds(ctIds);
+      const owned = rows.filter(
+        (row) => String(this.bufferToString(row.mb_id) || '').trim() === mbId
+      );
+      const parentItIds = [];
+      let ctStatus = '쇼핑';
+      for (const row of owned) {
+        ctStatus = this.normalizeCartStatus(row.ct_status);
+        const parent = this.normalizeParent(row.parent)
+          || this.parseLegacyParentFromCtKind(row.ct_kind);
+        if (parent) continue;
+        const itId = String(this.bufferToString(row.it_id) || '').trim();
+        if (itId) parentItIds.push(itId);
+      }
+
+      const deleted = await cartRepository.deleteManyForMember({
+        mbId,
+        ctIds,
+        parentItIds,
+        ctStatus,
+      });
+      this.invalidateCartListCache(mbId, ctStatus);
+      return res.json({
+        success: true,
+        deleted,
+        message: '장바구니에서 삭제되었습니다.',
+      });
+    } catch (error) {
+      return res.status(500).json({
+        success: false,
+        message: '장바구니 삭제 중 오류가 발생했습니다.',
+        error: error.message,
+      });
+    }
+  }
+
   normalizeCartKind(value) {
     const normalized = this.bufferToString(value);
     if (normalized == null) return null;

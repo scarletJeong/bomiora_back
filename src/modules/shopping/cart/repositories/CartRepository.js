@@ -215,6 +215,42 @@ class CartRepository {
     return result.affectedRows > 0;
   }
 
+  /**
+   * 회원 장바구니 여러 줄을 한 번에 삭제.
+   * parentItIds 본품을 지우면 그 추가상품도 같이 지운다.
+   */
+  async deleteManyForMember({ mbId, ctIds = [], parentItIds = [], ctStatus = '쇼핑' }) {
+    const ids = [...new Set(
+      (Array.isArray(ctIds) ? ctIds : [])
+        .map((id) => Number(id))
+        .filter((id) => Number.isFinite(id) && id > 0)
+    )];
+    const parents = [...new Set(
+      (Array.isArray(parentItIds) ? parentItIds : [])
+        .map((id) => String(id || '').trim())
+        .filter(Boolean)
+    )];
+    if (!ids.length && !parents.length) return 0;
+
+    const parts = [];
+    const params = [mbId];
+    if (ids.length) {
+      parts.push('ct_id IN (?)');
+      params.push(ids);
+    }
+    if (parents.length) {
+      parts.push(
+        '(ct_status = ? AND (TRIM(IFNULL(parent, \'\')) IN (?) OR ct_kind IN (?)))'
+      );
+      params.push(ctStatus, parents, parents.map((id) => `supply_add|${id}`));
+    }
+    const [result] = await pool.query(
+      `DELETE FROM bomiora_shop_cart WHERE mb_id = ? AND (${parts.join(' OR ')})`,
+      params
+    );
+    return result.affectedRows || 0;
+  }
+
   /** 본품 it_id를 parent로 가진 추가상품 삭제 (+ legacy supply_add|) */
   async deleteSupplyChildren(mbId, parentItId, ctStatus = '쇼핑') {
     const pid = String(parentItId || '').trim();
