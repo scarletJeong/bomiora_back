@@ -357,7 +357,11 @@ ${JOIN_SHOP_ITEM_NEW_SELECT}
     try {
       const top = await this.resolvePhpReviewTop(self);
       const poolIds = await this.collectShopItemIdsForReviewTop(top || self);
-      return poolIds.length ? poolIds : [self];
+      const ids = new Set(poolIds.length ? poolIds : []);
+      // 구매 상품 it_id 로 쓴 리뷰는 그 상품 상세에도 보여야 한다.
+      // 연동 최상위만 모으면 옵션 상품 자신은 빠진다.
+      ids.add(self);
+      return [...ids];
     } catch (err) {
       if (this.isUnknownColumnError(err, 'it_review_link')) return [self];
       throw err;
