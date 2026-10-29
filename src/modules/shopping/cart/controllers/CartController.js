@@ -507,9 +507,7 @@ class CartController {
   }
 
   zipDigits(raw) {
-    const digits = String(raw || '').replace(/\D/g, '');
-    if (!digits) return '';
-    return digits.length > 5 ? digits.slice(0, 5) : digits;
+    return String(raw || '').replace(/\D/g, '');
   }
 
   async lookupExtraShipping(zipRaw) {

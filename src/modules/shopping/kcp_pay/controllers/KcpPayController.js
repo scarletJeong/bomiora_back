@@ -119,7 +119,10 @@ class KcpPayController {
       let baseShip = 0;
       let extraShip = 0;
       if (hasShippingSplit) {
-        const quote = await cartController.quoteShipping(carts, receiver?.zip);
+        const postedZip = String(receiver?.zip || '').replace(/\D/g, '');
+        const splitZip = `${String(receiver?.zip1 || '').replace(/\D/g, '')}${String(receiver?.zip2 || '').replace(/\D/g, '')}`;
+        const zipForQuote = postedZip.length >= 5 ? postedZip : (splitZip || postedZip);
+        const quote = await cartController.quoteShipping(carts, zipForQuote);
         const clientBase = Math.max(0, Number(req.body.base_shipping_cost || 0) || 0);
         const clientExtra = Math.max(0, Number(req.body.extra_shipping_cost || 0) || 0);
         if (clientBase !== quote.base || clientExtra !== quote.extra) {

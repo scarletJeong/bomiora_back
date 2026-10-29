@@ -29,14 +29,13 @@ const CART_LIST_SELECT = `
 `;
 
 class CartRepository {
-  async findSendcostByZip(zipNumber) {
-    const zip = Number(zipNumber);
-    if (!Number.isFinite(zip)) return null;
+  async findSendcostByZip(zipcode) {
+    const zip = String(zipcode || '').replace(/\D/g, '');
+    if (!zip) return null;
     const [rows] = await pool.query(
       `SELECT sc_id, sc_price
        FROM bomiora_shop_sendcost
        WHERE sc_zip1 <= ? AND sc_zip2 >= ?
-       ORDER BY sc_id ASC
        LIMIT 1`,
       [zip, zip]
     );
