@@ -73,8 +73,8 @@ class KcpPayController {
 
       const parsedCoupons = couponRepository.parseCheckoutCoupons(req.body || {});
       const safeCouponDiscount = Number(couponDiscount || 0);
-      const [carts, stockCheck, couponResult] = await Promise.all([
-        kcpPayRepository.getCartItemsByIds(mbId, cartIds),
+      // 검증 중 io_type0 ct_price 보정이 있을 수 있어, 통과 후 장바구니를 다시 읽는다.
+      const [stockCheck, couponResult] = await Promise.all([
         cartController.validateCheckoutItems(mbId, cartIds),
         couponRepository
           .assertUsableCheckoutCoupons(mbId, parsedCoupons, safeCouponDiscount)
@@ -84,13 +84,6 @@ class KcpPayController {
             message: couponErr.message || '쿠폰 검증에 실패했습니다.',
           })),
       ]);
-
-      if (carts.length !== cartIds.length) {
-        return res.status(400).json({
-          success: false,
-          message: '유효하지 않은 장바구니 항목이 포함되어 있습니다.',
-        });
-      }
 
       if (!stockCheck.ok) {
         return res.status(400).json({
@@ -109,7 +102,18 @@ class KcpPayController {
       }
       const checkoutCoupons = couponResult.rows || [];
 
-      const cartPrice = carts.reduce((sum, row) => sum + Number(row.ct_price || 0), 0);
+      const carts = await kcpPayRepository.getCartItemsByIds(mbId, cartIds);
+      if (carts.length !== cartIds.length) {
+        return res.status(400).json({
+          success: false,
+          message: '유효하지 않은 장바구니 항목이 포함되어 있습니다.',
+        });
+      }
+
+      const cartPrice = carts.reduce(
+        (sum, row) => sum + cartController.cartLineAmount(row),
+        0
+      );
       const safeUsedPoint = Number(usedPoint || 0);
       const splitCoupons = this.splitCouponAmounts(checkoutCoupons);
       const hasShippingSplit = Object.prototype.hasOwnProperty.call(

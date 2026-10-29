@@ -405,8 +405,62 @@ class CartController {
     if (ioType === 1 || ioType === 2 || ioType === 3) {
       return ctPrice + ioPrice * ctQty;
     }
-    // io_type 0: 기존 클라가 본가(+옵션) 총액을 ct_price에 넣는 계약 유지
+    // io_type 0: 본가+옵션이 이미 ct_price에 들어간 계약
     return ctPrice;
+  }
+
+  /**
+   * io_type 0 저장용 ct_price 정규화.
+   * 본가(상품가*수량)만 오고 option_price가 따로 온 경우 옵션을 ct_price에 합친다.
+   * 이미 본가+옵션이거나 별도 판매가이면 그대로 둔다.
+   */
+  normalizeIoType0CtPrice({
+    price,
+    quantity,
+    optionPrice,
+    productBasePrice,
+  }) {
+    const qty = Math.max(this.toInt(quantity, 1), 1);
+    const option = Math.max(this.toInt(optionPrice, 0), 0);
+    const base = Math.max(this.toInt(productBasePrice, 0), 0);
+    let line = Math.max(this.toInt(price, 0), 0);
+    if (option <= 0) {
+      return line > 0 ? line : base * qty;
+    }
+    const unit = Math.floor(line / qty);
+    const baseLine = base * qty;
+    const fullLine = (base + option) * qty;
+    if (line <= 0 || line === baseLine || unit === base) {
+      return fullLine;
+    }
+    return line;
+  }
+
+  /** 열린 장바구니에 본가만 저장된 io_type 0 행을 ct_price에 옵션 포함으로 고친다. */
+  async repairIoType0CtPriceIfNeeded(cart, optionPriceOverride = null) {
+    const ioType = this.toInt(cart.io_type, 0);
+    if (ioType !== 0) return this.toInt(cart.ct_price, 0);
+    const qty = Math.max(this.toInt(cart.ct_qty, 1), 1);
+    const optionPrice = optionPriceOverride != null
+      ? this.toInt(optionPriceOverride, 0)
+      : this.toInt(cart.io_price, 0);
+    const productBase = this.toInt(cart.it_price, 0);
+    const current = this.toInt(cart.ct_price, 0);
+    const fixed = this.normalizeIoType0CtPrice({
+      price: current,
+      quantity: qty,
+      optionPrice,
+      productBasePrice: productBase,
+    });
+    if (fixed !== current && cart.ct_id) {
+      await cartRepository.updateCart(cart.ct_id, {
+        ct_price: fixed,
+        io_price: optionPrice,
+      });
+      cart.ct_price = fixed;
+      cart.io_price = optionPrice;
+    }
+    return fixed;
   }
 
   calculateItemShippingCost(price, qty, cart) {
@@ -560,14 +614,15 @@ class CartController {
       const isSupplyLine = Boolean(effectiveParent);
 
       // ct_price는 라인 총액(단가*수량). io_type 1~3은 본가 미포함(연결상품만 본가 총액).
-      if (!price) {
-        if (ioType === 1 || ioType === 2 || ioType === 3) {
-          price = isSupplyLine ? productBasePrice * quantity : 0;
-        } else {
-          price = productBasePrice * quantity;
-        }
-      } else if (ioType === 1 || ioType === 2 || ioType === 3) {
+      if (ioType === 1 || ioType === 2 || ioType === 3) {
         price = isSupplyLine ? productBasePrice * quantity : 0;
+      } else {
+        price = this.normalizeIoType0CtPrice({
+          price,
+          quantity,
+          optionPrice,
+          productBasePrice,
+        });
       }
 
       const itKindStr = this.bufferToString(product.it_kind);
@@ -582,15 +637,26 @@ class CartController {
       if (existing) {
         const newQty = this.toInt(existing.ct_qty, 0) + quantity;
         const prevQty = Math.max(this.toInt(existing.ct_qty, 1), 1);
-        const unitCt = Math.floor(this.toInt(existing.ct_price, 0) / prevQty);
+        const existingIoType = this.toInt(existing.io_type, ioType);
+        const existingIoPrice = this.toInt(existing.io_price, optionPrice);
+        let unitCt = Math.floor(this.toInt(existing.ct_price, 0) / prevQty);
+        if (existingIoType === 0) {
+          unitCt = this.normalizeIoType0CtPrice({
+            price: unitCt,
+            quantity: 1,
+            optionPrice: existingIoPrice,
+            productBasePrice,
+          });
+        }
         const updateFields = {
           ct_qty: newQty,
           ct_price: unitCt * newQty,
           ct_kind: resolvedKind,
           parent: effectiveParent,
-          io_type: this.toInt(existing.io_type, ioType),
+          io_type: existingIoType,
+          io_price: existingIoPrice,
           ct_time: new Date(),
-          ct_point: this.calculatePoint(product, optionId, optionPrice, newQty),
+          ct_point: this.calculatePoint(product, optionId, existingIoPrice, newQty),
           ct_select: 1,
           ct_select_time: new Date()
         };
@@ -679,6 +745,7 @@ class CartController {
     const data = [];
     for (const c of carts) {
       try {
+        await this.repairIoType0CtPriceIfNeeded(c);
         data.push(
           await this.convertCartToMap(c, {
             reservationMap,
@@ -1034,7 +1101,13 @@ class CartController {
           continue;
         }
 
-        const finalPrice = item.price || this.toInt(product.it_price, 0);
+        const productBasePrice = this.toInt(product.it_price, 0);
+        const finalPrice = this.normalizeIoType0CtPrice({
+          price: item.price || productBasePrice * item.quantity,
+          quantity: item.quantity,
+          optionPrice: item.optionPrice,
+          productBasePrice,
+        });
         const finalCtKind =
           item.ctKind || (this.bufferToString(product.it_kind) === 'prescription' ? 'prescription' : 'general');
 
@@ -1146,13 +1219,24 @@ class CartController {
 
       const cart = await cartRepository.findById(ctId);
       if (!cart) return res.status(404).json({ success: false, message: '장바구니 항목을 찾을 수 없습니다.' });
-      const unitPrice = Math.floor(this.toInt(cart.ct_price, 0) / Math.max(this.toInt(cart.ct_qty, 1), 1));
+      const prevQty = Math.max(this.toInt(cart.ct_qty, 1), 1);
+      let unitPrice = Math.floor(this.toInt(cart.ct_price, 0) / prevQty);
       const product = await cartRepository.findProductById(cart.it_id);
+      const ioType = this.toInt(cart.io_type, 0);
+      const ioPrice = this.toInt(cart.io_price, 0);
+      if (ioType === 0) {
+        unitPrice = this.normalizeIoType0CtPrice({
+          price: unitPrice,
+          quantity: 1,
+          optionPrice: ioPrice,
+          productBasePrice: this.toInt(product?.it_price, 0),
+        });
+      }
       const updated = await cartRepository.updateCart(ctId, {
         ct_qty: quantity,
         ct_price: unitPrice * quantity,
         ct_time: new Date(),
-        ct_point: this.calculatePoint(product || {}, cart.io_id, cart.io_price, quantity)
+        ct_point: this.calculatePoint(product || {}, cart.io_id, ioPrice, quantity)
       });
       const mbId = this.bufferToString(cart.mb_id);
       const ctStatus = this.normalizeCartStatus(cart.ct_status);
@@ -1472,6 +1556,11 @@ class CartController {
           continue;
         }
       }
+
+      const optionUnit = option != null
+        ? this.toInt(option.io_price, this.toInt(cart.io_price, 0))
+        : this.toInt(cart.io_price, 0);
+      await this.repairIoType0CtPriceIfNeeded(cart, optionUnit);
 
       const expected = this.expectedCheckoutLineAmount(cart, option);
       const stored = this.cartLineAmount(cart);

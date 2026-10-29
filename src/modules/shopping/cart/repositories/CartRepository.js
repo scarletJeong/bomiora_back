@@ -17,6 +17,7 @@ const CART_LIST_SELECT = `
          CAST(c.parent AS CHAR) AS parent,
          CAST(c.ct_mb_inf AS CHAR) AS ct_mb_inf,
          COALESCE(NULLIF(TRIM(CAST(c.it_subject AS CHAR)), ''), CAST(p.it_subject AS CHAR)) AS resolved_it_subject,
+         p.it_price,
          CAST(p.it_brand AS CHAR) AS product_it_brand,
          CAST(p.it_maker AS CHAR) AS product_it_maker,
          CAST(p.ca_id AS CHAR) AS product_ca_id,
