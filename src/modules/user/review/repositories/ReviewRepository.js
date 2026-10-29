@@ -58,6 +58,43 @@ class ReviewRepository {
     return Number(rows[0].count || 0) > 0;
   }
 
+  /** 해당 주문에서 이미 작성한 리뷰 본문 */
+  async findReviewsByMbIdAndOdId(mbId, odId) {
+    const [rows] = await pool.query(
+      `SELECT
+         r.is_id,
+         r.it_id,
+         r.mb_id,
+         r.is_name,
+         CAST(mem.mb_name AS CHAR) AS member_name,
+         CAST(mem.mb_nick AS CHAR) AS member_nick,
+         r.is_time,
+         r.is_confirm,
+         r.is_score1, r.is_score2, r.is_score3, r.is_score4, r.total_is_score,
+         r.is_rvkind,
+         r.is_recommend, r.is_good, r.cz_download,
+         r.is_positive_review_text,
+         r.is_negative_review_text,
+         r.is_more_review_text,
+         r.is_img1, r.is_img2, r.is_img3,
+         r.is_outage_num,
+         CAST(r.od_id AS CHAR) AS od_id,
+         n.it_subject,
+         COALESCE(n.it_name, n.it_subject) AS it_name,
+         n.it_kind,
+         n.it_flutter_image_url,
+         LEFT(IFNULL(n.it_img1, ''), 255) AS shop_it_img1,
+         LEFT(IFNULL(n.it_img1, ''), 255) AS it_img1
+       FROM bomiora_shop_item_use r
+       LEFT JOIN bomiora_member mem ON mem.mb_id = r.mb_id
+       LEFT JOIN bomiora_shop_item_new n ON n.it_id = r.it_id
+       WHERE r.mb_id = ? AND r.od_id = ?
+       ORDER BY r.is_id ASC`,
+      [mbId, odId]
+    );
+    return rows;
+  }
+
   /** 해당 주문에서 이미 리뷰 작성한 it_id 목록 */
   async findReviewedItIdsByOdId(mbId, odId) {
     const [rows] = await pool.query(

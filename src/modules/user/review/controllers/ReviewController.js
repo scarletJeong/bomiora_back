@@ -950,10 +950,13 @@ class ReviewController {
         mbId,
         odId
       );
+      const rows = await reviewRepository.findReviewsByMbIdAndOdId(mbId, odId);
+      const reviews = rows.map((row) => this.toReviewResponse(row));
       return res.json({
         success: true,
         exists: reviewedItIds.length > 0,
         reviewedItIds,
+        reviews,
       });
     } catch (error) {
       return res.json({
