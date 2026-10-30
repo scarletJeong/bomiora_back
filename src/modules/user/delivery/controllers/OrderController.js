@@ -2,6 +2,7 @@ const orderRepository = require('../repositories/OrderRepository');
 const orderCartRepository = require('../repositories/OrderCartRepository');
 const reviewRepository = require('../../review/repositories/ReviewRepository');
 const userRepository = require('../../../auth/repositories/UserRepository');
+const cartController = require('../../../shopping/cart/controllers/CartController');
 const kcpApprovalService = require('../../../shopping/kcp_pay/services/kcpApprovalService');
 const { logKcpPayProblem } = require('../../../shopping/kcp_pay/services/kcpPayLogger');
 const { TtlCache } = require('../../../../utils/ttlCache');
@@ -260,13 +261,9 @@ class OrderController {
       parent_it_id: parent || null,
       ioType,
       io_type: ioType,
-      // ct_price는  이미 라인 총액이다. io_type 0은 옵션가가 ct_price에 포함되어 있어
-      // io_price를 다시 더하면 주문완료 상품금액이 결제액보다 커진다.
-      // io_type 1~3만 io_price * 수량을 더한다. (장바구니 cartLineAmount와 동일)
-      totalPrice:
-        ioType === 1 || ioType === 2 || ioType === 3
-          ? ctPrice + ioPrice * ctQty
-          : ctPrice,
+      // ct_price / io_price 는 단가. PHP bomiora_cart_line_price_sql · cartLineAmount 와 동일.
+      // io_type 1: io×qty / io_type 0·2·3: (ct+io)×qty
+      totalPrice: cartController.cartLineAmount(cart),
       ctStatus,
       imageUrl: listImage || imageUrlMap[itId] || cart.it_img1 || ''
     };
