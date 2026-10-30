@@ -534,6 +534,89 @@ class CouponRepository {
     return ctx.nonInfluencerAmount;
   }
 
+  _pointRateForCart(cart) {
+    if (this._isInfluencerCart(cart)) return 0;
+    const kind = this._asText(cart?.ct_kind).toLowerCase();
+    if (kind === 'prescription') return 100;
+    if (kind === 'general') return 10;
+    return 100;
+  }
+
+  /**
+   * 혼합 주문: 인플루언서 라인은 포인트 대상에서 제외.
+   * 상한 = min(보유포인트, 비율합, 비인플 상품액-상품쿠폰, 최종≥3000, 5만) 의 100원 단위.
+   */
+  computeMaxCheckoutUsedPoint({
+    carts = [],
+    lineAmountOf,
+    productCouponDiscount = 0,
+    cartPrice = 0,
+    grossShipping = 0,
+    totalCouponDiscount = 0,
+    memberPoint = 0,
+    minPayableAmount = 3000,
+    maxPerOrder = 50000,
+  } = {}) {
+    const amountOf =
+      typeof lineAmountOf === 'function'
+        ? lineAmountOf
+        : (c) => Math.max(0, Number(c?.ct_price || 0) || 0);
+    const eligible = (Array.isArray(carts) ? carts : []).filter(
+      (c) => !this._isInfluencerCart(c)
+    );
+    const nonInfAmount = eligible.reduce(
+      (sum, c) => sum + Math.max(0, amountOf(c) || 0),
+      0
+    );
+    if (nonInfAmount <= 0) return 0;
+
+    const productCoupon = Math.max(0, Number(productCouponDiscount || 0) || 0);
+    const eligibleBase = Math.max(0, nonInfAmount - productCoupon);
+    if (eligibleBase <= 0) return 0;
+
+    let byRate = 0;
+    for (const c of eligible) {
+      const line = Math.max(0, amountOf(c) || 0);
+      const share = Math.floor((eligibleBase * line) / nonInfAmount);
+      const rate = this._pointRateForCart(c);
+      byRate += Math.floor((share * rate) / 100);
+    }
+
+    const byMinPayable = Math.max(
+      0,
+      Math.max(0, Number(cartPrice || 0) || 0) +
+        Math.max(0, Number(grossShipping || 0) || 0) -
+        Math.max(0, Number(totalCouponDiscount || 0) || 0) -
+        Math.max(0, Number(minPayableAmount || 0) || 0)
+    );
+    const raw = Math.min(
+      Math.max(0, Number(memberPoint || 0) || 0),
+      byRate,
+      eligibleBase,
+      byMinPayable,
+      Math.max(0, Number(maxPerOrder || 0) || 0)
+    );
+    return Math.floor(Math.max(0, raw) / 100) * 100;
+  }
+
+  assertUsableCheckoutPoints(usedPoint, maxAllowed) {
+    const used = Math.max(0, Number(usedPoint || 0) || 0);
+    const max = Math.max(0, Number(maxAllowed || 0) || 0);
+    if (used <= 0) return 0;
+    if (used % 100 !== 0) {
+      throw new Error('포인트는 100원 단위로만 사용할 수 있습니다.');
+    }
+    if (used > max) {
+      const err = new Error(
+        `사용 포인트가 허용 한도를 초과합니다. (요청 ${used} / 최대 ${max})`
+      );
+      err.code = 'POINT_LIMIT';
+      err.expected = { max_usable_point: max };
+      throw err;
+    }
+    return used;
+  }
+
   assertCouponStacking(resolvedRows) {
     const methods = resolvedRows.map((r) => Number(r.cp_method || 0));
     const count = (m) => methods.filter((x) => x === m).length;

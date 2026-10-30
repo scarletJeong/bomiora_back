@@ -5,6 +5,7 @@ const kcpApprovalService = require('../services/kcpApprovalService');
 const { logKcpPayProblem } = require('../services/kcpPayLogger');
 const cartController = require('../../cart/controllers/CartController');
 const couponRepository = require('../../../user/coupon/repositories/CouponRepository');
+const pointRepository = require('../../../user/point/repositories/PointRepository');
 
 const KCP_ERROR_MESSAGE_MAP = {
   '3001': '결제 요청 정보가 올바르지 않습니다.',
@@ -160,10 +161,41 @@ class KcpPayController {
         });
       }
       const grossShipping = baseShip + extraShip;
+      const productCouponDiscount =
+        Math.max(0, Number(splitCoupons.cartCoupon || 0) || 0) +
+        Math.max(0, Number(splitCoupons.orderCoupon || 0) || 0);
+      const memberPoint = await pointRepository.findLatestMbPointByUserId(mbId);
+      const maxUsablePoint = couponRepository.computeMaxCheckoutUsedPoint({
+        carts,
+        lineAmountOf: (row) => cartController.cartLineAmount(row),
+        productCouponDiscount,
+        cartPrice,
+        grossShipping,
+        totalCouponDiscount: safeCouponDiscount,
+        memberPoint,
+        minPayableAmount: 3000,
+        maxPerOrder: 50000,
+      });
+      let validatedUsedPoint = 0;
+      try {
+        validatedUsedPoint = couponRepository.assertUsableCheckoutPoints(
+          safeUsedPoint,
+          maxUsablePoint
+        );
+      } catch (pointErr) {
+        const payload = {
+          success: false,
+          message: pointErr.message || '포인트 검증에 실패했습니다.',
+        };
+        if (pointErr.code) payload.error_code = pointErr.code;
+        if (pointErr.expected) payload.expected = pointErr.expected;
+        return res.status(400).json(payload);
+      }
+
       const minPayableAmount = 3000;
       const computedFinalAmount = Math.max(
         0,
-        cartPrice + grossShipping - safeCouponDiscount - safeUsedPoint
+        cartPrice + grossShipping - safeCouponDiscount - validatedUsedPoint
       );
       if (computedFinalAmount < minPayableAmount) {
         return res.status(400).json({
@@ -221,7 +253,7 @@ class KcpPayController {
         cartCoupon: hasShippingSplit ? splitCoupons.cartCoupon : safeCouponDiscount,
         orderCoupon: hasShippingSplit ? splitCoupons.orderCoupon : 0,
         couponDiscount: safeCouponDiscount,
-        usedPoint: safeUsedPoint,
+        usedPoint: validatedUsedPoint,
         coupons: checkoutCoupons,
         returnUrl: this.resolveShopReturnUrl(req, req.body?.return_url),
       });
