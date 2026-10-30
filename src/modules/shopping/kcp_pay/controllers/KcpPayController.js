@@ -160,10 +160,22 @@ class KcpPayController {
         });
       }
       const grossShipping = baseShip + extraShip;
+      const minPayableAmount = 3000;
       const computedFinalAmount = Math.max(
         0,
         cartPrice + grossShipping - safeCouponDiscount - safeUsedPoint
       );
+      if (computedFinalAmount < minPayableAmount) {
+        return res.status(400).json({
+          success: false,
+          error_code: 'MIN_PAYABLE',
+          message: `최종 결제금액은 ${minPayableAmount.toLocaleString('ko-KR')}원 이상이어야 합니다.`,
+          expected: {
+            min_payable: minPayableAmount,
+            final_amount: computedFinalAmount,
+          },
+        });
+      }
       const requestFinalAmount = Number(finalAmount || 0);
 
       if (requestFinalAmount !== computedFinalAmount) {
