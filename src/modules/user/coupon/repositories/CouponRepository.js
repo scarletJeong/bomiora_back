@@ -430,7 +430,131 @@ class CouponRepository {
     return [...map.values()];
   }
 
-  async assertUsableCheckoutCoupons(mbId, checkoutCoupons, claimedDiscount) {
+  _asText(value) {
+    if (value == null) return '';
+    if (Buffer.isBuffer(value)) return value.toString('utf8').replace(/\0/g, '').trim();
+    return String(value).replace(/\0/g, '').trim();
+  }
+
+  _isInfluencerCart(cart) {
+    return this._asText(cart?.ct_mb_inf).length > 0;
+  }
+
+  _cartCategoryIds(cart) {
+    return [
+      cart?.product_ca_id ?? cart?.ca_id,
+      cart?.product_ca_id2 ?? cart?.ca_id2,
+      cart?.product_ca_id3 ?? cart?.ca_id3,
+    ]
+      .map((v) => this._asText(v).toLowerCase())
+      .filter((v) => v.length > 0);
+  }
+
+  _matchesCategoryTarget(cart, target) {
+    const t = this._asText(target).toLowerCase();
+    if (!t) return true;
+    return this._cartCategoryIds(cart).includes(t);
+  }
+
+  /**
+   * 영카트형 할인: cp_type=1 이면 비율(+trunc), 아니면 정액. cp_maximum 상한.
+   */
+  computeCouponDiscount(couponRow, baseAmount) {
+    const base = Math.max(0, Number(baseAmount || 0) || 0);
+    if (base <= 0) return 0;
+    const price = Math.max(0, Number(couponRow.cp_price || 0) || 0);
+    const type = Number(couponRow.cp_type || 0);
+    const trunc = Math.max(1, Number(couponRow.cp_trunc || 0) || 1);
+    const maximum = Math.max(0, Number(couponRow.cp_maximum || 0) || 0);
+    let discount = 0;
+    if (type === 1) {
+      discount = Math.floor((base * (price / 100)) / trunc) * trunc;
+    } else {
+      discount = price;
+    }
+    if (maximum > 0 && discount > maximum) discount = maximum;
+    if (discount > base) discount = base;
+    return discount < 0 ? 0 : discount;
+  }
+
+  /**
+   * @param {object} context
+   * @param {Array} context.carts 장바구니(+product_ca_id*)
+   * @param {(cart)=>number} context.lineAmountOf 라인 결제액
+   * @param {number} [context.baseShipping=0] 기본 배송비(배송비 쿠폰용)
+   */
+  buildCheckoutCouponContext(context = {}) {
+    const carts = Array.isArray(context.carts) ? context.carts : [];
+    const lineAmountOf =
+      typeof context.lineAmountOf === 'function'
+        ? context.lineAmountOf
+        : (c) => Math.max(0, Number(c?.ct_price || 0) || 0);
+    const baseShipping = Math.max(0, Number(context.baseShipping || 0) || 0);
+
+    const eligible = carts.filter((c) => !this._isInfluencerCart(c));
+    const nonInfluencerAmount = eligible.reduce(
+      (sum, c) => sum + Math.max(0, lineAmountOf(c) || 0),
+      0
+    );
+    const shippingGoodsAmount = eligible.reduce((sum, c) => {
+      const kind = this._asText(c.ct_kind).toLowerCase();
+      if (kind && kind !== 'general' && kind !== 'prescription') return sum;
+      return sum + Math.max(0, lineAmountOf(c) || 0);
+    }, 0);
+
+    return {
+      carts,
+      eligible,
+      lineAmountOf,
+      baseShipping,
+      nonInfluencerAmount,
+      shippingGoodsAmount,
+      couponPointDisabled: nonInfluencerAmount <= 0,
+    };
+  }
+
+  baseAmountForCoupon(couponRow, ctx) {
+    const method = Number(couponRow.cp_method || 0);
+    const target = this._asText(couponRow.cp_target);
+    if (method === 3) return ctx.baseShipping;
+    if (ctx.couponPointDisabled) return 0;
+    if (method === 0) {
+      if (!target) return ctx.nonInfluencerAmount;
+      return ctx.eligible
+        .filter((c) => this._asText(c.it_id) === target)
+        .reduce((sum, c) => sum + Math.max(0, ctx.lineAmountOf(c) || 0), 0);
+    }
+    if (method === 1) {
+      if (!target) return ctx.nonInfluencerAmount;
+      return ctx.eligible
+        .filter((c) => this._matchesCategoryTarget(c, target))
+        .reduce((sum, c) => sum + Math.max(0, ctx.lineAmountOf(c) || 0), 0);
+    }
+    // method 2 주문금액 등
+    return ctx.nonInfluencerAmount;
+  }
+
+  assertCouponStacking(resolvedRows) {
+    const methods = resolvedRows.map((r) => Number(r.cp_method || 0));
+    const count = (m) => methods.filter((x) => x === m).length;
+    if (count(3) > 1) throw new Error('배송비 쿠폰은 1장만 사용할 수 있습니다.');
+    if (count(1) > 2) throw new Error('카테고리 쿠폰은 최대 2장까지 사용할 수 있습니다.');
+    if (count(0) > 1) throw new Error('개별상품 쿠폰은 1장만 사용할 수 있습니다.');
+    if (count(2) > 1) throw new Error('주문금액 쿠폰은 1장만 사용할 수 있습니다.');
+    const hasProduct = count(0) > 0;
+    const hasCategory = count(1) > 0;
+    const hasOrder = count(2) > 0;
+    if ([hasProduct, hasCategory, hasOrder].filter(Boolean).length > 1) {
+      throw new Error('상품·카테고리·주문금액 쿠폰은 함께 사용할 수 없습니다.');
+    }
+  }
+
+  /**
+   * 체크아웃 쿠폰 최종 검증.
+   * 소유/기간/사용여부 + 대상/최소금액/인플루언서 제외 + 서버 할인 재계산.
+   * claimedDiscount 가 서버 합계와 다르면 거절한다(클라이언트 할인액 신뢰 금지).
+   */
+  async assertUsableCheckoutCoupons(mbId, checkoutCoupons, claimedDiscount, context = {}) {
     const list = Array.isArray(checkoutCoupons) ? checkoutCoupons : [];
     const claimed = Math.max(0, Number(claimedDiscount || 0) || 0);
     if (claimed > 0 && list.length === 0) {
@@ -438,14 +562,19 @@ class CouponRepository {
     }
     if (list.length === 0) return [];
 
+    const ctx = this.buildCheckoutCouponContext(context);
+    if (ctx.couponPointDisabled) {
+      throw new Error('인플루언서 상품에는 쿠폰을 사용할 수 없습니다.');
+    }
+
     const { coupons, usedMap } = await this.getMemberCouponBundle(mbId);
     const byId = new Map(coupons.map((c) => [String(c.cp_id || '').trim(), c]));
     const today = kstTodayYmd();
     const resolved = [];
-    let sum = 0;
 
     for (const item of list) {
-      const row = byId.get(item.cp_id);
+      const cpId = String(item.cp_id || '').trim();
+      const row = byId.get(cpId);
       if (!row) throw new Error('사용할 수 없는 쿠폰입니다.');
       if (String(row.mb_id || '').trim() !== String(mbId).trim()) {
         throw new Error('본인 쿠폰만 사용할 수 있습니다.');
@@ -458,33 +587,77 @@ class CouponRepository {
       if (!start || !end || start > today || end < today) {
         throw new Error('유효기간이 지난 쿠폰입니다.');
       }
-      const discount = Math.max(0, Number(item.discount || 0) || 0);
-      sum += discount;
+
+      const method = Number(row.cp_method || 0);
+      const minimum = Math.max(0, Number(row.cp_minimum || 0) || 0);
+
+      if (method === 3) {
+        if (ctx.baseShipping <= 0) {
+          throw new Error('배송비가 없어 배송비 쿠폰을 사용할 수 없습니다.');
+        }
+        if (ctx.shippingGoodsAmount < minimum) {
+          throw new Error('배송비 쿠폰 최소 주문금액에 미달합니다.');
+        }
+      } else {
+        const base = this.baseAmountForCoupon(row, ctx);
+        if (base <= 0) {
+          throw new Error('쿠폰 적용 대상 상품이 없습니다.');
+        }
+        if (base < minimum) {
+          throw new Error('쿠폰 최소 주문금액에 미달합니다.');
+        }
+      }
+
+      const baseAmount = this.baseAmountForCoupon(row, ctx);
+      const discount = this.computeCouponDiscount(row, baseAmount);
+      if (discount <= 0) {
+        throw new Error('쿠폰 할인 금액이 올바르지 않습니다.');
+      }
+
+      const clientDiscount = Math.max(0, Number(item.discount || 0) || 0);
+      if (clientDiscount > 0 && clientDiscount !== discount) {
+        const err = new Error(
+          `쿠폰 할인 금액이 서버 계산과 다릅니다. (쿠폰 ${cpId}, 요청 ${clientDiscount} / 서버 ${discount})`
+        );
+        err.code = 'COUPON_DISCOUNT_MISMATCH';
+        err.expected = { cp_id: cpId, discount };
+        throw err;
+      }
+
       resolved.push({
-        cp_id: item.cp_id,
+        cp_id: cpId,
         discount,
-        cp_method: Number(row.cp_method || 0),
+        cp_method: method,
       });
     }
 
-    if (claimed > 0 && sum !== claimed) {
-      const allZero = resolved.every((c) => c.discount === 0);
-      if (allZero || resolved.length === 1) {
-        resolved[0].discount = claimed;
-        for (let i = 1; i < resolved.length; i += 1) resolved[i].discount = 0;
-      } else if (sum > claimed) {
-        let extra = sum - claimed;
-        for (let i = resolved.length - 1; i >= 0 && extra > 0; i -= 1) {
-          const cut = Math.min(resolved[i].discount, extra);
-          resolved[i].discount -= cut;
-          extra -= cut;
-        }
-      } else {
-        throw new Error('쿠폰 할인 금액이 일치하지 않습니다.');
-      }
+    this.assertCouponStacking(resolved);
+
+    // 상품 쿠폰 합은 비인플 상품액, 배송비 쿠폰은 기본 배송비를 넘지 않게
+    let productSum = 0;
+    let shippingSum = 0;
+    for (const r of resolved) {
+      if (Number(r.cp_method) === 3) shippingSum += r.discount;
+      else productSum += r.discount;
+    }
+    if (productSum > ctx.nonInfluencerAmount) {
+      throw new Error('상품 쿠폰 할인 금액이 주문 금액을 초과합니다.');
+    }
+    if (shippingSum > ctx.baseShipping) {
+      throw new Error('배송비 쿠폰은 기본 배송비 안에서만 사용할 수 있습니다.');
     }
 
-    return resolved.filter((c) => c.cp_id);
+    const serverSum = productSum + shippingSum;
+    if (claimed !== serverSum) {
+      const err = new Error(
+        `쿠폰 할인 금액이 일치하지 않습니다. (요청 ${claimed} / 서버 ${serverSum})`
+      );
+      err.code = 'COUPON_DISCOUNT_MISMATCH';
+      err.expected = { coupon_discount: serverSum, coupons: resolved };
+      throw err;
+    }
+
+    return resolved;
   }
 
   async consumeCouponsForOrder(connection, { mbId, odId, coupons }) {

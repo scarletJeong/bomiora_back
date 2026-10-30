@@ -72,18 +72,9 @@ class KcpPayController {
       }
 
       const parsedCoupons = couponRepository.parseCheckoutCoupons(req.body || {});
-      const safeCouponDiscount = Number(couponDiscount || 0);
+      const claimedCouponDiscount = Math.max(0, Number(couponDiscount || 0) || 0);
       // 검증 중 io_type0 ct_price 보정이 있을 수 있어, 통과 후 장바구니를 다시 읽는다.
-      const [stockCheck, couponResult] = await Promise.all([
-        cartController.validateCheckoutItems(mbId, cartIds),
-        couponRepository
-          .assertUsableCheckoutCoupons(mbId, parsedCoupons, safeCouponDiscount)
-          .then((rows) => ({ ok: true, rows }))
-          .catch((couponErr) => ({
-            ok: false,
-            message: couponErr.message || '쿠폰 검증에 실패했습니다.',
-          })),
-      ]);
+      const stockCheck = await cartController.validateCheckoutItems(mbId, cartIds);
 
       if (!stockCheck.ok) {
         return res.status(400).json({
@@ -93,14 +84,6 @@ class KcpPayController {
           issues: stockCheck.issues,
         });
       }
-
-      if (!couponResult.ok) {
-        return res.status(400).json({
-          success: false,
-          message: couponResult.message,
-        });
-      }
-      const checkoutCoupons = couponResult.rows || [];
 
       const carts = await kcpPayRepository.getCartItemsByIds(mbId, cartIds);
       if (carts.length !== cartIds.length) {
@@ -115,7 +98,6 @@ class KcpPayController {
         0
       );
       const safeUsedPoint = Number(usedPoint || 0);
-      const splitCoupons = this.splitCouponAmounts(checkoutCoupons);
       const hasShippingSplit = Object.prototype.hasOwnProperty.call(
         req.body || {},
         'base_shipping_cost'
@@ -137,17 +119,45 @@ class KcpPayController {
             extra_shipping_cost: quote.extra,
           });
         }
-        if (splitCoupons.sendCoupon > quote.base) {
-          return res.status(400).json({
-            success: false,
-            message: '배송비 쿠폰은 기본 배송비 안에서만 사용할 수 있습니다.',
-          });
-        }
         baseShip = quote.base;
         extraShip = quote.extra;
       } else {
         baseShip = Math.max(0, Number(shippingCost || 0) || 0);
         extraShip = 0;
+      }
+
+      let checkoutCoupons = [];
+      try {
+        checkoutCoupons = await couponRepository.assertUsableCheckoutCoupons(
+          mbId,
+          parsedCoupons,
+          claimedCouponDiscount,
+          {
+            carts,
+            lineAmountOf: (row) => cartController.cartLineAmount(row),
+            baseShipping: baseShip,
+          }
+        );
+      } catch (couponErr) {
+        const payload = {
+          success: false,
+          message: couponErr.message || '쿠폰 검증에 실패했습니다.',
+        };
+        if (couponErr.code) payload.error_code = couponErr.code;
+        if (couponErr.expected) payload.expected = couponErr.expected;
+        return res.status(400).json(payload);
+      }
+
+      const safeCouponDiscount = checkoutCoupons.reduce(
+        (sum, c) => sum + Math.max(0, Number(c.discount || 0) || 0),
+        0
+      );
+      const splitCoupons = this.splitCouponAmounts(checkoutCoupons);
+      if (splitCoupons.sendCoupon > baseShip) {
+        return res.status(400).json({
+          success: false,
+          message: '배송비 쿠폰은 기본 배송비 안에서만 사용할 수 있습니다.',
+        });
       }
       const grossShipping = baseShip + extraShip;
       const computedFinalAmount = Math.max(

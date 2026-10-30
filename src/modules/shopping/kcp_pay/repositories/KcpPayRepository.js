@@ -6,11 +6,15 @@ class KcpPayRepository {
     if (!cartIds.length) return [];
     const placeholders = cartIds.map(() => '?').join(', ');
     const [rows] = await pool.query(
-      `SELECT *
-       FROM bomiora_shop_cart
-       WHERE mb_id = ?
-         AND ct_id IN (${placeholders})
-         AND ct_output = 'Y'`,
+      `SELECT c.*,
+              CAST(p.ca_id AS CHAR) AS product_ca_id,
+              CAST(p.ca_id2 AS CHAR) AS product_ca_id2,
+              CAST(p.ca_id3 AS CHAR) AS product_ca_id3
+       FROM bomiora_shop_cart c
+       LEFT JOIN bomiora_shop_item_new p ON p.it_id = c.it_id
+       WHERE c.mb_id = ?
+         AND c.ct_id IN (${placeholders})
+         AND c.ct_output = 'Y'`,
       [mbId, ...cartIds]
     );
     return rows;
