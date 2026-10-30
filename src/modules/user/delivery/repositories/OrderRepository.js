@@ -75,7 +75,8 @@ class OrderRepository {
     const [rows] = await pool.query(
       `SELECT od_id, mb_id, od_name, od_hp,
               od_addr1, od_addr2, od_addr3, od_status,
-              od_cart_count, od_cart_price, od_send_cost, od_send_cost2,
+              od_cart_count, od_cart_price, od_cart_coupon, od_send_cost, od_send_cost2,
+              od_send_coupon, od_coupon, od_receipt_point,
               od_receipt_price, od_settle_case, od_bank_account,
               NULLIF(od_time, '0000-00-00 00:00:00') AS od_time,
               delivery_completed, admin_completed,
