@@ -221,6 +221,18 @@ class CartController {
           : ctKindRaw;
     const kind = effectiveParent ? 'supply_add' : ctKindRaw;
     const attachReservation = ctKindRaw === 'prescription';
+    const caId =
+      clean(cart.product_ca_id) ||
+      (product ? clean(product.ca_id) : '') ||
+      '';
+    const caId2 =
+      clean(cart.product_ca_id2) ||
+      (product ? clean(product.ca_id2) : '') ||
+      '';
+    const caId3 =
+      clean(cart.product_ca_id3) ||
+      (product ? clean(product.ca_id3) : '') ||
+      '';
 
     return {
       ct_id: cart.ct_id,
@@ -234,6 +246,9 @@ class CartController {
       it_kind: itKind,
       product_kind: itKind,
       product_type: productType,
+      ca_id: caId,
+      ca_id2: caId2,
+      ca_id3: caId3,
       ct_status: this.bufferToString(cart.ct_status),
       ct_price: cart.ct_price,
       ct_option: this.bufferToString(cart.ct_option) || '',

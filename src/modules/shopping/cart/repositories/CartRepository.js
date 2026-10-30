@@ -21,6 +21,8 @@ const CART_LIST_SELECT = `
          CAST(p.it_brand AS CHAR) AS product_it_brand,
          CAST(p.it_maker AS CHAR) AS product_it_maker,
          CAST(p.ca_id AS CHAR) AS product_ca_id,
+         CAST(p.ca_id2 AS CHAR) AS product_ca_id2,
+         CAST(p.ca_id3 AS CHAR) AS product_ca_id3,
          CAST(p.it_kind AS CHAR) AS product_it_kind,
          CAST(LEFT(IFNULL(p.it_supply_items, ''), 500) AS CHAR) AS product_it_supply_items,
          CAST(p.it_flutter_image_url AS CHAR) AS it_flutter_image_url,
@@ -46,6 +48,7 @@ class CartRepository {
   async findProductById(itId) {
     const [rows] = await pool.query(
       `SELECT it_id, it_name, it_subject, it_kind, it_brand, it_maker,
+              ca_id, ca_id2, ca_id3,
               it_img1, it_flutter_image_url, it_mb_inf, it_inf_price,
               it_sc_type, it_sc_method, it_sc_price, it_sc_minimum, it_sc_qty,
               it_price, it_point_type, it_point, it_supply_point,
