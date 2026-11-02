@@ -6,6 +6,7 @@ const naverOAuthController = require('../controllers/NaverOAuthController');
 const kakaoOAuthController = require('../controllers/KakaoOAuthController');
 const appleOAuthController = require('../controllers/AppleOAuthController');
 const adminLoginTokenController = require('../controllers/AdminLoginTokenController');
+const influencerLoginTokenController = require('../controllers/InfluencerLoginTokenController');
 const kcpRoutes = require('./kcpRoutes');
 const otpRoutes = require('./otpRoutes');
 
@@ -47,6 +48,12 @@ router.post('/admin-login-token', (req, res) =>
 );
 router.post('/admin-login-token/consume', (req, res) =>
   adminLoginTokenController.consume(req, res)
+);
+router.post('/influencer-login-token', (req, res) =>
+  influencerLoginTokenController.issue(req, res)
+);
+router.post('/influencer-login-token/consume', (req, res) =>
+  influencerLoginTokenController.consume(req, res)
 );
 router.use('/kcp', kcpRoutes);
 router.use('/otp', otpRoutes);
