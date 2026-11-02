@@ -64,7 +64,6 @@ class ContentRepository {
       total: Number(countRows?.[0]?.total || 0),
       page: safePage,
       size: safeSize,
-      categories: [],
     };
   }
 

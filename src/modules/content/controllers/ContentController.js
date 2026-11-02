@@ -99,7 +99,6 @@ class ContentController {
         return {
           success: true,
           data: result.rows.map((row) => this.toListMap(row)),
-          categories: ['전체'],
           pagination: {
             total: result.total,
             page: result.page,
