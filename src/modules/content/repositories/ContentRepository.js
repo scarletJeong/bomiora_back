@@ -120,12 +120,12 @@ class ContentRepository {
   /**
    * 클라이언트가 보낸 추천 상태를 반영. 트랜잭션/카운트 SELECT 없이 빠르게 기록.
    */
-  async applyRecommendState(contentId, mbId, pfNo, wantOn) {
+  async applyRecommendState(contentId, mbId, wantOn) {
     if (wantOn) {
       const [ins] = await pool.query(
-        `INSERT IGNORE INTO bm_content_recommend_log (content_id, mb_id, pf_no)
-         VALUES (?, ?, ?)`,
-        [contentId, mbId, pfNo]
+        `INSERT IGNORE INTO bm_content_recommend_log (content_id, mb_id)
+         VALUES (?, ?)`,
+        [contentId, mbId]
       );
       if (ins.affectedRows > 0) {
         await pool.query(
@@ -141,17 +141,16 @@ class ContentRepository {
     }
     const [del] = await pool.query(
       `DELETE FROM bm_content_recommend_log
-        WHERE content_id = ? AND mb_id = ? AND pf_no = ?
-        LIMIT 1`,
-      [contentId, mbId, pfNo]
+        WHERE content_id = ? AND mb_id = ?`,
+      [contentId, mbId]
     );
     if (del.affectedRows > 0) {
       await pool.query(
         `UPDATE bm_content
-            SET recommend_count = GREATEST(IFNULL(recommend_count, 0) - 1, 0)
+            SET recommend_count = GREATEST(IFNULL(recommend_count, 0) - ?, 0)
           WHERE id = ?
             AND is_deleted = 0`,
-        [contentId]
+        [del.affectedRows, contentId]
       );
     }
   }
@@ -160,22 +159,22 @@ class ContentRepository {
    * 추천 토글. 본문 HTML을 읽지 않는다.
    * @returns {Promise<{ recommended: boolean, count: number } | null>}
    */
-  async toggleRecommend(contentId, mbId, pfNo) {
+  async toggleRecommend(contentId, mbId) {
     const [del] = await pool.query(
       `DELETE FROM bm_content_recommend_log
-        WHERE content_id = ? AND mb_id = ? AND pf_no = ?
-        LIMIT 1`,
-      [contentId, mbId, pfNo]
+        WHERE content_id = ? AND mb_id = ?`,
+      [contentId, mbId]
     );
-    const turningOn = del.affectedRows === 0;
+    const removed = del.affectedRows;
+    const turningOn = removed === 0;
     if (turningOn) {
       await pool.query(
-        `INSERT IGNORE INTO bm_content_recommend_log (content_id, mb_id, pf_no)
-         VALUES (?, ?, ?)`,
-        [contentId, mbId, pfNo]
+        `INSERT IGNORE INTO bm_content_recommend_log (content_id, mb_id)
+         VALUES (?, ?)`,
+        [contentId, mbId]
       );
     }
-    const delta = turningOn ? 1 : -1;
+    const delta = turningOn ? 1 : -removed;
     const [up] = await pool.query(
       `UPDATE bm_content
           SET recommend_count = LAST_INSERT_ID(GREATEST(IFNULL(recommend_count, 0) + ?, 0))
@@ -194,31 +193,16 @@ class ContentRepository {
   }
 
   /**
-   * 상세/목록 — 해당 회원·프로필이 이 글을 추천했는지
+   * 상세 — 이 회원이 이 글을 추천했는지. 회원당 글당 1회.
    */
-  async hasUserRecommended(contentId, mbId, pfNo) {
+  async hasUserRecommended(contentId, mbId) {
     const [rows] = await pool.query(
       `SELECT 1 AS ok
          FROM bm_content_recommend_log
         WHERE content_id = ?
           AND mb_id = ?
-          AND pf_no = ?
         LIMIT 1`,
-      [contentId, mbId, pfNo]
-    );
-    return rows.length > 0;
-  }
-
-  /** pf_no > 0 일 때 해당 회원 소유 문진인지 */
-  async isProfileOwnedByMember(pfNo, mbId) {
-    if (!pfNo || pfNo <= 0) return true;
-    const [rows] = await pool.query(
-      `SELECT 1 AS ok
-         FROM bomiora_member_health_profiles
-        WHERE pf_no = ?
-          AND mb_id = ?
-        LIMIT 1`,
-      [pfNo, mbId]
+      [contentId, mbId]
     );
     return rows.length > 0;
   }

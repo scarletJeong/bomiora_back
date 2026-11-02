@@ -35,15 +35,6 @@ class HealthProfileRepository {
     return rows.length ? rows[0] : null;
   }
 
-  /** 콘텐츠 추천용 — pf_no 만 */
-  async findPfNoByMbId(mbId) {
-    const [rows] = await pool.query(
-      'SELECT pf_no FROM bomiora_member_health_profiles WHERE mb_id = ? LIMIT 1',
-      [mbId]
-    );
-    return rows.length ? Number(rows[0].pf_no) || 0 : 0;
-  }
-
   async findByPfNoAndMbId(pfNo, mbId) {
     const [rows] = await pool.query(
       'SELECT * FROM bomiora_member_health_profiles WHERE pf_no = ? AND mb_id = ? LIMIT 1',

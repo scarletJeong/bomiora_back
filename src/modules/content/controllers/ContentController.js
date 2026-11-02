@@ -135,12 +135,6 @@ class ContentController {
     }
   }
 
-  parsePfNo(value) {
-    if (value === undefined || value === null || value === '') return 0;
-    const n = Number(value);
-    return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 0;
-  }
-
   async postRecommend(req, res) {
     try {
       const id = Number(req.params.id);
@@ -157,7 +151,6 @@ class ContentController {
           message: '로그인 후 추천할 수 있습니다.',
         });
       }
-      const pfNo = this.parsePfNo(req.body?.pf_no);
       const wantRaw = req.body?.recommended;
       const hasIntent = typeof wantRaw === 'boolean';
       const countHint = Number(req.body?.recommend_count);
@@ -166,7 +159,7 @@ class ContentController {
         contentListCache.remove(`detail:${id}`);
         contentListCache.remove(`detailFull:${id}`);
         contentListCache.remove(`adj:${id}`);
-        contentListCache.remove(`rec:${id}:${mbId}:${pfNo}`);
+        contentListCache.remove(`rec:${id}:${mbId}`);
       };
 
       if (hasIntent) {
@@ -179,7 +172,7 @@ class ContentController {
             : '추천이 해제되었습니다.',
         });
         contentRepository
-          .applyRecommendState(id, mbId, pfNo, wantRaw)
+          .applyRecommendState(id, mbId, wantRaw)
           .then(invalidateRecommend)
           .catch((err) => {
             console.warn('[content] recommend persist', err?.message || err);
@@ -187,7 +180,7 @@ class ContentController {
         return;
       }
 
-      const toggled = await contentRepository.toggleRecommend(id, mbId, pfNo);
+      const toggled = await contentRepository.toggleRecommend(id, mbId);
       if (!toggled) {
         return res.status(404).json({
           success: false,
@@ -221,7 +214,6 @@ class ContentController {
       }
 
       const mbIdQ = String(req.query.mb_id || '').trim();
-      const pfNoQ = this.parsePfNo(req.query.pf_no);
 
       const [payload, userRecommended] = await Promise.all([
         contentListCache.getOrSet(`detailFull:${id}`, async () => {
@@ -248,8 +240,8 @@ class ContentController {
         }),
         mbIdQ
           ? contentListCache.getOrSet(
-              `rec:${id}:${mbIdQ}:${pfNoQ}`,
-              () => contentRepository.hasUserRecommended(id, mbIdQ, pfNoQ),
+              `rec:${id}:${mbIdQ}`,
+              () => contentRepository.hasUserRecommended(id, mbIdQ),
               30_000
             )
           : Promise.resolve(undefined),

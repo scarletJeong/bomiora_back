@@ -1,19 +1,27 @@
--- 콘텐츠 추천: 회원결제 예정 목록(문진 프로필 = pf_no, 없으면 0)당 글당 1회
+-- 콘텐츠 추천: 회원당 글당 1회
 -- 기존 DB에 `bm_content_recommend`만 있을 때: RENAME TABLE bm_content_recommend TO bm_content_recommend_log;
 CREATE TABLE IF NOT EXISTS bm_content_recommend_log (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT 'PK',
   content_id BIGINT UNSIGNED NOT NULL COMMENT 'bm_content.id',
   mb_id VARCHAR(64) NOT NULL COMMENT '회원 ID',
-  pf_no INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '문진/건강프로필 pf_no, 없으면 0',
+  pf_no INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '미사용. 기본값 0',
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
-  UNIQUE KEY uk_content_member_profile (content_id, mb_id, pf_no),
+  UNIQUE KEY uk_content_member (content_id, mb_id),
   KEY idx_cr_mb (mb_id),
   KEY idx_cr_content (content_id)
 ) ENGINE=InnoDB
   DEFAULT CHARSET=utf8mb4
   COLLATE=utf8mb4_unicode_ci
-  COMMENT='콘텐츠 추천 이력(중복 방지)';
+  COMMENT='콘텐츠 추천 이력(회원당 글당 1회)';
+
+-- 이미 uk_content_member_profile (content_id, mb_id, pf_no) 로 만든 테이블:
+-- 같은 글·회원 줄이 둘 이상이면 회원당 한 줄만 남긴 뒤 실행한다.
+-- ALTER TABLE bm_content_recommend_log
+--   DROP INDEX uk_content_member_profile,
+--   ADD UNIQUE KEY uk_content_member (content_id, mb_id),
+--   MODIFY pf_no INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '미사용. 기본값 0',
+--   COMMENT = '콘텐츠 추천 이력(회원당 글당 1회)';
 
 
 
