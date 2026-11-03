@@ -43,17 +43,21 @@ class EventRepository {
     const keyword = `%${String(query || '').trim()}%`;
     const safeLimit = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 20;
     const safeOffset = Number.isFinite(Number(offset)) ? Math.max(0, Math.floor(Number(offset))) : 0;
+    // 종료·시작 전 이벤트는 상세로 들어가지 않으므로 검색에서도 뺀다.
+    const where = `title LIKE ?
+         AND DATE(begin_time) <= CURDATE()
+         AND DATE(end_time) >= CURDATE()`;
     const [[countRows], [rows]] = await Promise.all([
       pool.query(
         `SELECT COUNT(*) AS total
            FROM bm_event
-          WHERE title LIKE ?`,
+          WHERE ${where}`,
         [keyword]
       ),
       pool.query(
         `SELECT ${EVENT_LIST_COLUMNS}
            FROM bm_event
-          WHERE title LIKE ?
+          WHERE ${where}
           ORDER BY sort_order ASC, id DESC
           LIMIT ? OFFSET ?`,
         [keyword, safeLimit, safeOffset]
