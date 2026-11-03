@@ -1,6 +1,7 @@
 const productRepository = require('../../shopping/product/repositories/ProductRepository');
 const contentRepository = require('../../content/repositories/ContentRepository');
 const eventRepository = require('../../shopping/event/repositories/EventRepository');
+const announcementRepository = require('../../community/announcement/repositories/AnnouncementRepository');
 
 class SearchRepository {
   async searchProducts({ query, itKind, limit }) {
@@ -9,6 +10,10 @@ class SearchRepository {
 
   async searchEvents({ query, limit }) {
     return eventRepository.searchByTitle(query, limit);
+  }
+
+  async searchAnnouncements({ query, limit }) {
+    return announcementRepository.searchByTitle(query, limit);
   }
 
   async searchContents({ query, limit }) {

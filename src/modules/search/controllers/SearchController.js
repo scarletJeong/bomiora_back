@@ -2,6 +2,7 @@ const searchRepository = require('../repositories/SearchRepository');
 const productController = require('../../shopping/product/controllers/ProductController');
 const contentController = require('../../content/controllers/ContentController');
 const eventController = require('../../shopping/event/controllers/EventController');
+const announcementController = require('../../community/announcement/controllers/AnnouncementController');
 const { TtlCache } = require('../../../utils/ttlCache');
 const { registerPublicCache } = require('../../internal/cache/publicCacheRegistry');
 
@@ -33,10 +34,11 @@ class SearchController {
       const storeLimit = this._asPositiveInt(req.query.storeLimit, 20);
       const contentLimit = this._asPositiveInt(req.query.contentLimit, 20);
       const eventLimit = this._asPositiveInt(req.query.eventLimit, 20);
-      const cacheKey = `q:${query}:${prescriptionLimit}:${storeLimit}:${contentLimit}:${eventLimit}`;
+      const announcementLimit = this._asPositiveInt(req.query.announcementLimit, 20);
+      const cacheKey = `q:${query}:${prescriptionLimit}:${storeLimit}:${contentLimit}:${eventLimit}:${announcementLimit}`;
 
       const payload = await searchCache.getOrSet(cacheKey, async () => {
-        const [rxRows, storeRows, contentResult, eventRows, shopDefault] = await Promise.all([
+        const [rxRows, storeRows, contentResult, eventRows, announcementRows, shopDefault] = await Promise.all([
           searchRepository.searchProducts({
             query,
             itKind: 'prescription',
@@ -55,6 +57,10 @@ class SearchController {
             query,
             limit: eventLimit,
           }),
+          searchRepository.searchAnnouncements({
+            query,
+            limit: announcementLimit,
+          }),
           productController.getShopDefaultCached(),
         ]);
 
@@ -70,6 +76,9 @@ class SearchController {
           return item;
         });
         const eventItems = eventRows.map((r) => eventController.toMap(r));
+        const announcementItems = announcementRows.map((r) =>
+          announcementController.toMap(r)
+        );
 
         return {
           success: true,
@@ -86,6 +95,10 @@ class SearchController {
             event: {
               count: eventItems.length,
               items: eventItems,
+            },
+            announcement: {
+              count: announcementItems.length,
+              items: announcementItems,
             },
             content: {
               count: contentItems.length,
@@ -105,7 +118,8 @@ class SearchController {
             rxItemsSlim.length +
             storeItemsSlim.length +
             contentItems.length +
-            eventItems.length,
+            eventItems.length +
+            announcementItems.length,
         };
       });
 
