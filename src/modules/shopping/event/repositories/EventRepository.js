@@ -39,18 +39,30 @@ class EventRepository {
     return rows;
   }
 
-  async searchByTitle(query, limit = 20) {
+  async searchByTitle(query, limit = 20, offset = 0) {
     const keyword = `%${String(query || '').trim()}%`;
     const safeLimit = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 20;
-    const [rows] = await pool.query(
-      `SELECT ${EVENT_LIST_COLUMNS}
-        FROM bm_event
-        WHERE title LIKE ?
-        ORDER BY sort_order ASC, id DESC
-        LIMIT ?`,
-      [keyword, safeLimit]
-    );
-    return rows;
+    const safeOffset = Number.isFinite(Number(offset)) ? Math.max(0, Math.floor(Number(offset))) : 0;
+    const [[countRows], [rows]] = await Promise.all([
+      pool.query(
+        `SELECT COUNT(*) AS total
+           FROM bm_event
+          WHERE title LIKE ?`,
+        [keyword]
+      ),
+      pool.query(
+        `SELECT ${EVENT_LIST_COLUMNS}
+           FROM bm_event
+          WHERE title LIKE ?
+          ORDER BY sort_order ASC, id DESC
+          LIMIT ? OFFSET ?`,
+        [keyword, safeLimit, safeOffset]
+      ),
+    ]);
+    return {
+      rows,
+      total: Number(countRows?.[0]?.total || 0),
+    };
   }
 
   async findById(id) {

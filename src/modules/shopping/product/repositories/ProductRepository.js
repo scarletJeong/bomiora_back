@@ -307,11 +307,12 @@ class ProductRepository {
    * - it_kind: 'prescription' | 'general' 등
    * - limit: 최대 반환 개수
    */
-  async searchByKeyword(query, productKind, limit = 20) {
+  async searchByKeyword(query, productKind, limit = 20, offset = 0) {
     const q = String(query || '').trim();
-    if (!q) return [];
+    if (!q) return { rows: [], total: 0 };
 
     const safeLimit = Number.isFinite(Number(limit)) ? Math.max(1, Math.floor(Number(limit))) : 20;
+    const safeOffset = Number.isFinite(Number(offset)) ? Math.max(0, Math.floor(Number(offset))) : 0;
     const keyword = `%${q}%`;
 
     const hasKind = productKind != null && String(productKind).trim() !== '';
@@ -329,15 +330,26 @@ class ProductRepository {
     `;
     params.push(keyword);
 
-    const [rows] = await pool.query(
-      `SELECT ${LIST_COLUMNS}
-         FROM bomiora_shop_item_new
-        WHERE ${where}
-        ORDER BY it_order ASC, it_id DESC
-        LIMIT ?`,
-      [...params, safeLimit]
-    );
-    return rows;
+    const [[countRows], [rows]] = await Promise.all([
+      pool.query(
+        `SELECT COUNT(*) AS total
+           FROM bomiora_shop_item_new
+          WHERE ${where}`,
+        params
+      ),
+      pool.query(
+        `SELECT ${LIST_COLUMNS}
+           FROM bomiora_shop_item_new
+          WHERE ${where}
+          ORDER BY it_order ASC, it_id DESC
+          LIMIT ? OFFSET ?`,
+        [...params, safeLimit, safeOffset]
+      ),
+    ]);
+    return {
+      rows,
+      total: Number(countRows?.[0]?.total || 0),
+    };
   }
 }
 

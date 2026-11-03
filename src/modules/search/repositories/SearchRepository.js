@@ -4,28 +4,46 @@ const eventRepository = require('../../shopping/event/repositories/EventReposito
 const announcementRepository = require('../../community/announcement/repositories/AnnouncementRepository');
 
 class SearchRepository {
-  async searchProducts({ query, itKind, limit }) {
-    return productRepository.searchByKeyword(query, itKind, limit);
+  _pack(result, limit, offset) {
+    const rows = result?.rows || [];
+    const total = Number(result?.total || 0);
+    return {
+      rows,
+      total,
+      hasMore: offset + rows.length < total,
+    };
   }
 
-  async searchEvents({ query, limit }) {
-    return eventRepository.searchByTitle(query, limit);
+  async searchProducts({ query, itKind, limit, offset = 0 }) {
+    const result = await productRepository.searchByKeyword(query, itKind, limit, offset);
+    return this._pack(result, limit, offset);
   }
 
-  async searchAnnouncements({ query, limit }) {
-    return announcementRepository.searchByTitle(query, limit);
+  async searchEvents({ query, limit, offset = 0 }) {
+    const result = await eventRepository.searchByTitle(query, limit, offset);
+    return this._pack(result, limit, offset);
   }
 
-  async searchContents({ query, limit }) {
-    // ContentRepository는 page/size 기반
+  async searchAnnouncements({ query, limit, offset = 0 }) {
+    const result = await announcementRepository.searchByTitle(query, limit, offset);
+    return this._pack(result, limit, offset);
+  }
+
+  async searchContents({ query, limit, offset = 0 }) {
+    const size = limit;
+    const safeOffset = Math.max(0, offset);
+    const page = Math.floor(safeOffset / size) + 1;
     const result = await contentRepository.findList({
-      page: 1,
-      size: limit,
+      page,
+      size,
       query,
       category: '전체',
       titleOnly: true,
     });
-    return result;
+    return {
+      ...result,
+      hasMore: safeOffset + result.rows.length < result.total,
+    };
   }
 }
 

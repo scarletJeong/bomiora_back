@@ -62,29 +62,41 @@ class AnnouncementRepository {
     };
   }
 
-  async searchByTitle(query, limit = 20) {
+  async searchByTitle(query, limit = 20, offset = 0) {
     const keyword = `%${String(query || '').trim()}%`;
     const safeLimit = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 20;
-    const [rows] = await pool.query(
-      `SELECT
-          n.id,
-          n.title,
-          NULL AS content,
-          n.view_count,
-          n.is_notice,
-          n.writer_name,
-          n.created_at,
-          n.created_by,
-          n.updated_at,
-          n.updated_by,
-          n.image_path
-        FROM bm_notice n
-        WHERE n.is_deleted = 0 AND n.title LIKE ?
-        ORDER BY n.is_notice DESC, n.created_at DESC, n.id DESC
-        LIMIT ?`,
-      [keyword, safeLimit]
-    );
-    return rows;
+    const safeOffset = Number.isFinite(Number(offset)) ? Math.max(0, Math.floor(Number(offset))) : 0;
+    const [[countRows], [rows]] = await Promise.all([
+      pool.query(
+        `SELECT COUNT(*) AS total
+           FROM bm_notice n
+          WHERE n.is_deleted = 0 AND n.title LIKE ?`,
+        [keyword]
+      ),
+      pool.query(
+        `SELECT
+            n.id,
+            n.title,
+            NULL AS content,
+            n.view_count,
+            n.is_notice,
+            n.writer_name,
+            n.created_at,
+            n.created_by,
+            n.updated_at,
+            n.updated_by,
+            n.image_path
+          FROM bm_notice n
+          WHERE n.is_deleted = 0 AND n.title LIKE ?
+          ORDER BY n.is_notice DESC, n.created_at DESC, n.id DESC
+          LIMIT ? OFFSET ?`,
+        [keyword, safeLimit, safeOffset]
+      ),
+    ]);
+    return {
+      rows,
+      total: Number(countRows?.[0]?.total || 0),
+    };
   }
 
   async findById(id) {
