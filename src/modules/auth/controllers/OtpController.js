@@ -8,7 +8,28 @@ const RESEND_COOLDOWN_SECONDS = 5;
 const MAX_TRY_COUNT = Number(process.env.BOMIORA_OTP_MAX_TRY || 5);
 
 /** 알림톡 OTP 허용 용도 (DB `otp_purpose` VARCHAR — 값만 일치하면 저장 가능) */
-const OTP_PURPOSES = new Set(['id_find', 'password_find', 'profile_phone']);
+const OTP_PURPOSES = new Set([
+  'id_find',
+  'password_find',
+  'profile_phone',
+  'social_signup',
+]);
+
+function userOtpSendMessage(raw) {
+  const text = String(raw || '').trim();
+  const lower = text.toLowerCase();
+  if (lower.includes('invalidphonenumber') || lower.includes('k102')) {
+    return '휴대폰 번호를 올바르게 입력해 주세요.';
+  }
+  if (
+    !text ||
+    /\bK\d{3}\b/.test(text) ||
+    !/[가-힣]/.test(text)
+  ) {
+    return '인증번호 발송에 실패했습니다.';
+  }
+  return text;
+}
 
 function normalizePhoneHyphen(value) {
   const digits = String(value || '').replace(/[^0-9]/g, '');
@@ -101,10 +122,12 @@ class OtpController {
         try {
           await otpRepository.deleteById(otpId);
         } catch (_) {}
+        const vendorMessage = String(sendResult.errorMessage || '').trim();
+        console.error('[OTP SEND] 알림톡 발송 거절:', vendorMessage || 'empty');
         return res.status(502).json({
           success: false,
           code: 'BIZMSG_SEND_FAILED',
-          message: sendResult.errorMessage || '인증번호 발송에 실패했습니다.',
+          message: userOtpSendMessage(vendorMessage),
         });
       }
 
