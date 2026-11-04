@@ -258,7 +258,6 @@ class UserController {
       // 1. 이메일 중복 확인
       const exists = await userRepository.existsByEmail(normalizedEmail);
       if (exists) {
-        console.log('❌ [REGISTER] 이미 존재하는 이메일');
         return res.json({
           success: false,
           message: '이미 존재하는 이메일입니다.'
