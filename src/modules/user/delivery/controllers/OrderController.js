@@ -220,7 +220,44 @@ class OrderController {
     );
   }
 
-  toOrderItem(cart, imageUrlMap) {
+  /**
+   * 주문 줄 표시 금액.
+   * 지금 줄은 ct_price가 단가라 (단가+옵션)×수량이다.
+   * 예전 줄은 ct_price에 이미 줄 합계가 있다. 결제 당시 상품금액(od_cart_price)과
+   * 맞는 계산만 고른다. 수량을 뺀 값, 옵션까지 뺀 저장값 순서로 본다.
+   * 맞는 계산이 없으면 단가 계산을 유지한다.
+   */
+  lineAmountChoices(cart) {
+    const ioType = this.toInt(cart.io_type);
+    const ioPrice = this.toInt(cart.io_price);
+    const ctPrice = this.toInt(cart.ct_price);
+    const qty = Math.max(this.toInt(cart.ct_qty, 1), 1);
+    const itPrice = this.toInt(cart.it_price, 0);
+    const multiplied = ioType === 1 ? ioPrice * qty : (ctPrice + ioPrice) * qty;
+    const raw = ioType === 1 ? ioPrice : ctPrice + ioPrice;
+    const stored = ioType === 1 ? ioPrice : ctPrice;
+    let settled = multiplied;
+    if (ioType !== 1 && qty > 1 && itPrice > 0) {
+      if (ctPrice === (itPrice + ioPrice) * qty) settled = ctPrice;
+      else if (ctPrice === itPrice * qty) settled = ctPrice + ioPrice * qty;
+    }
+    return { multiplied, raw, settled, stored };
+  }
+
+  orderLineAmounts(carts, odCartPrice) {
+    const choices = (carts || []).map((cart) => this.lineAmountChoices(cart));
+    const sumOf = (key) => choices.reduce((sum, row) => sum + row[key], 0);
+    const target = this.toInt(odCartPrice);
+    let key = 'multiplied';
+    if (target > 0 && sumOf('multiplied') !== target) {
+      if (sumOf('settled') === target) key = 'settled';
+      else if (sumOf('raw') === target) key = 'raw';
+      else if (sumOf('stored') === target) key = 'stored';
+    }
+    return choices.map((row) => row[key]);
+  }
+
+  toOrderItem(cart, imageUrlMap, lineAmount) {
     const ctPrice = this.toInt(cart.ct_price);
     const ioPrice = this.toInt(cart.io_price);
     const ctQty = this.toInt(cart.ct_qty);
@@ -261,9 +298,9 @@ class OrderController {
       parent_it_id: parent || null,
       ioType,
       io_type: ioType,
-      // ct_price / io_price 는 단가. PHP bomiora_cart_line_price_sql · cartLineAmount 와 동일.
-      // io_type 1: io×qty / io_type 0·2·3: (ct+io)×qty
-      totalPrice: cartController.cartLineAmount(cart),
+      totalPrice: lineAmount != null
+        ? this.toInt(lineAmount)
+        : cartController.cartLineAmount(cart),
       ctStatus,
       imageUrl: listImage || imageUrlMap[itId] || cart.it_img1 || ''
     };
@@ -514,7 +551,9 @@ class OrderController {
 
         const orders = rows.map((row) => {
           const odId = this.toOdId(row.od_id);
-          const items = (cartsByOrder[odId] || []).map((c) => this.toOrderItem(c, imageUrlMap));
+          const orderCarts = cartsByOrder[odId] || [];
+          const lineAmounts = this.orderLineAmounts(orderCarts, row.od_cart_price);
+          const items = orderCarts.map((c, index) => this.toOrderItem(c, imageUrlMap, lineAmounts[index]));
           const flags = healthFlags[odId] || {};
           const isPrescriptionOrder = this.resolveIsPrescriptionOrder(
             items,
@@ -638,7 +677,8 @@ class OrderController {
       carts.forEach((c) => {
         if (c.it_id && c.it_img1) imageUrlMap[c.it_id] = c.it_img1;
       });
-      const products = carts.map((c) => this.toOrderItem(c, imageUrlMap));
+      const lineAmounts = this.orderLineAmounts(carts, row.od_cart_price);
+      const products = carts.map((c, index) => this.toOrderItem(c, imageUrlMap, lineAmounts[index]));
       const settleCase = this.bufferToString(row.od_settle_case) || '';
       const bankAccount = this.bufferToString(row.od_bank_account) || '';
       const depositName = this.bufferToString(row.od_deposit_name || '').trim() || null;
