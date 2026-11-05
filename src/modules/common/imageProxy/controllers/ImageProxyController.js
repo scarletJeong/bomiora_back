@@ -13,6 +13,7 @@ class ImageProxyController {
   constructor() {
     this._memCache = new Map();
     this._cacheDirReady = null;
+    this._originInflight = new Map();
   }
 
   isAllowedHost(hostname) {
@@ -247,30 +248,50 @@ class ImageProxyController {
         return this.sendCachedImage(res, cached.buf, cached.type);
       }
 
-      // localhost XAMPP 이미지는 로컬 파일에서 직접 읽어 반환
-      if (this.isLocalXamppUrl(String(targetUrl))) {
-        const filePath = this.resolveLocalFilePath(String(targetUrl));
-        if (!filePath) {
-          return res.sendStatus(400);
-        }
-        try {
-          const bytes = await fs.readFile(filePath);
-          const contentType = this.detectContentType(String(targetUrl), null);
-          res.setHeader('Content-Type', contentType);
-          this.setImageCacheHeaders(res);
-          this.writeProxyCache(key, bytes, contentType);
-          return res.status(200).send(bytes);
-        } catch (error) {
-          if (error && error.code === 'ENOENT') {
-            return res.sendStatus(404);
-          }
-          return res.sendStatus(500);
-        }
-      }
+      const origin = await this.loadOriginBytes(String(targetUrl));
+      if (!origin) return res.sendStatus(404);
+      if (origin.status) return res.sendStatus(origin.status);
+      return this.sendImageBytes(res, key, origin.buf, origin.type, thumbW);
+    } catch (error) {
+      return res.sendStatus(500);
+    }
+  }
 
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 20000);
-      const response = await fetch(targetUrl, {
+  async loadOriginBytes(targetUrl) {
+    const key = this.cacheKey(targetUrl);
+    const cached = await this.readProxyCache(key);
+    if (cached) return cached;
+
+    const pending = this._originInflight.get(key);
+    if (pending) return pending;
+
+    const job = this.fetchOriginBytes(targetUrl, key).finally(() => {
+      this._originInflight.delete(key);
+    });
+    this._originInflight.set(key, job);
+    return job;
+  }
+
+  async fetchOriginBytes(targetUrl, key) {
+    if (this.isLocalXamppUrl(targetUrl)) {
+      const filePath = this.resolveLocalFilePath(targetUrl);
+      if (!filePath) return { status: 400 };
+      try {
+        const bytes = await fs.readFile(filePath);
+        const contentType = this.detectContentType(targetUrl, null);
+        await this.writeProxyCache(key, bytes, contentType);
+        return { buf: bytes, type: contentType };
+      } catch (error) {
+        if (error && error.code === 'ENOENT') return { status: 404 };
+        return { status: 500 };
+      }
+    }
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 20000);
+    let response;
+    try {
+      response = await fetch(targetUrl, {
         method: 'GET',
         signal: controller.signal,
         headers: {
@@ -278,62 +299,64 @@ class ImageProxyController {
           Accept: 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
         },
       });
+    } catch (_) {
+      return { status: 500 };
+    } finally {
       clearTimeout(timeout);
-
-      if (!response.ok) {
-        const localBytes = await this.tryReadLocalDataEventFile(String(targetUrl));
-        if (localBytes) {
-          res.setHeader('Content-Type', this.detectContentType(String(targetUrl), null));
-          this.setImageCacheHeaders(res);
-          return res.status(200).send(localBytes);
-        }
-        return res.sendStatus(response.status);
-      }
-
-      const bytes = Buffer.from(await response.arrayBuffer());
-      const urlStr = String(targetUrl);
-      const urlLooksImage = this.urlLooksLikeImagePath(urlStr);
-
-      const sniffed = this.sniffImageMimeFromBuffer(bytes);
-      if (sniffed) {
-        return this.sendImageBytes(res, key, bytes, sniffed, thumbW);
-      }
-
-      const rawCt = response.headers.get('content-type') || '';
-      const base = rawCt.split(';')[0].trim().toLowerCase();
-      const isImage = base.startsWith('image/');
-      const isBinaryImage =
-        urlLooksImage &&
-        (base === '' ||
-          base === 'application/octet-stream' ||
-          base === 'binary/octet-stream');
-      const isBadDoc =
-        base.includes('html') ||
-        base === 'application/json' ||
-        base.startsWith('text/');
-
-      if (urlLooksImage && this.bufferLooksLikeHtml(bytes)) {
-        const localBytes = await this.tryReadLocalDataEventFile(urlStr);
-        if (localBytes) {
-          const sniffedLocal = this.sniffImageMimeFromBuffer(localBytes);
-          res.setHeader('Content-Type', sniffedLocal || this.detectContentType(urlStr, null));
-          this.setImageCacheHeaders(res);
-          return res.status(200).send(localBytes);
-        }
-        return res.sendStatus(415);
-      }
-
-      if (!isImage && !isBinaryImage) {
-        if (isBadDoc || !urlLooksImage) {
-          return res.sendStatus(415);
-        }
-      }
-
-      const contentType = this.detectContentType(urlStr, response.headers.get('content-type'));
-      return this.sendImageBytes(res, key, bytes, contentType, thumbW);
-    } catch (error) {
-      return res.sendStatus(500);
     }
+
+    if (!response.ok) {
+      const localBytes = await this.tryReadLocalDataEventFile(targetUrl);
+      if (localBytes) {
+        const type = this.detectContentType(targetUrl, null);
+        await this.writeProxyCache(key, localBytes, type);
+        return { buf: localBytes, type };
+      }
+      return { status: response.status };
+    }
+
+    const bytes = Buffer.from(await response.arrayBuffer());
+    const urlLooksImage = this.urlLooksLikeImagePath(targetUrl);
+    const sniffed = this.sniffImageMimeFromBuffer(bytes);
+    if (sniffed) {
+      await this.writeProxyCache(key, bytes, sniffed);
+      return { buf: bytes, type: sniffed };
+    }
+
+    const rawCt = response.headers.get('content-type') || '';
+    const base = rawCt.split(';')[0].trim().toLowerCase();
+    const isImage = base.startsWith('image/');
+    const isBinaryImage =
+      urlLooksImage &&
+      (base === '' ||
+        base === 'application/octet-stream' ||
+        base === 'binary/octet-stream');
+    const isBadDoc =
+      base.includes('html') ||
+      base === 'application/json' ||
+      base.startsWith('text/');
+
+    if (urlLooksImage && this.bufferLooksLikeHtml(bytes)) {
+      const localBytes = await this.tryReadLocalDataEventFile(targetUrl);
+      if (localBytes) {
+        const sniffedLocal = this.sniffImageMimeFromBuffer(localBytes);
+        const type = sniffedLocal || this.detectContentType(targetUrl, null);
+        await this.writeProxyCache(key, localBytes, type);
+        return { buf: localBytes, type };
+      }
+      return { status: 415 };
+    }
+
+    if (!isImage && !isBinaryImage && (isBadDoc || !urlLooksImage)) {
+      return { status: 415 };
+    }
+
+    const contentType = this.detectContentType(
+      targetUrl,
+      response.headers.get('content-type'),
+    );
+    await this.writeProxyCache(key, bytes, contentType);
+    return { buf: bytes, type: contentType };
   }
 }
 
