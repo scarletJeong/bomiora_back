@@ -1,5 +1,6 @@
 const orderRepository = require('../../user/delivery/repositories/OrderRepository');
 const orderController = require('../../user/delivery/controllers/OrderController');
+const couponController = require('../../user/coupon/controllers/CouponController');
 const { kstHourMinute, kstDateYmd } = require('./dailyKstScheduler');
 
 /** 새벽 12:30, 낮 12:30 (KST) */
@@ -16,7 +17,10 @@ async function runExpiredDepositCancels() {
     });
     if (batch.length < 100) break;
   }
-  members.forEach((mbId) => orderController.invalidateOrderListCache(mbId));
+  members.forEach((mbId) => {
+    orderController.invalidateOrderListCache(mbId);
+    couponController.invalidateForMember(mbId);
+  });
   if (cancelled) {
     console.log('[DepositExpiryScheduler] 입금기한 초과 취소', { cancelled });
   }

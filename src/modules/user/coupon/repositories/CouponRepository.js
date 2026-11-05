@@ -763,6 +763,31 @@ class CouponRepository {
     }
     this.invalidateMemberCoupons(mbId);
   }
+
+  /**
+   * 주문 취소 시 그 주문에 묶인 쿠폰만 사용 해제한다.
+   * 사용 기록과 주문번호를 지우면, 기간 안이면 사용 가능, 만료면 지난 쿠폰으로 기존 분류가 나눈다.
+   * 캐시는 커밋 뒤에 invalidateMemberCoupons로 지운다.
+   */
+  async releaseCouponsForOrder(connection, { mbId, odId }) {
+    const memberId = String(mbId || '').trim();
+    const orderId = String(odId || '').replace(/,/g, '').replace(/\s/g, '').trim();
+    if (!memberId || !orderId) return;
+    const q = connection || pool;
+    await q.query(
+      `DELETE FROM bomiora_shop_coupon_log
+        WHERE mb_id = ?
+          AND REPLACE(REPLACE(CAST(od_id AS CHAR), ',', ''), ' ', '') = ?`,
+      [memberId, orderId]
+    );
+    await q.query(
+      `UPDATE bomiora_shop_coupon
+          SET od_id = 0
+        WHERE mb_id = ?
+          AND REPLACE(REPLACE(CAST(od_id AS CHAR), ',', ''), ' ', '') = ?`,
+      [memberId, orderId]
+    );
+  }
 }
 
 module.exports = new CouponRepository();

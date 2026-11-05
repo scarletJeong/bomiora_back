@@ -1,5 +1,6 @@
 const pool = require('../../../../config/database');
 const pointRepository = require('../../point/repositories/PointRepository');
+const couponRepository = require('../../coupon/repositories/CouponRepository');
 const { notifyPointEarned } = require('../../notification/services/MemberNotifyService');
 const { formatKstStamp } = require('../../../../utils/healthDateTime');
 
@@ -165,6 +166,44 @@ class OrderRepository {
     if (!sets.length) return;
     values.push(odId);
     await pool.query(`UPDATE bomiora_shop_order SET ${sets.join(', ')} WHERE od_id = ?`, values);
+  }
+
+  /**
+   * 주문 취소와 그 주문 쿠폰 해제를 한 트랜잭션으로 처리한다.
+   * 쿠폰 해제가 실패하면 주문 상태도 롤백된다.
+   */
+  async cancelOrderReleasingCoupons(odId, mbId, fields) {
+    const sets = [];
+    const values = [];
+    Object.entries(fields).forEach(([key, value]) => {
+      sets.push(`${key} = ?`);
+      values.push(value);
+    });
+    if (!sets.length) return;
+    const connection = await pool.getConnection();
+    try {
+      await connection.beginTransaction();
+      values.push(odId);
+      const [updated] = await connection.query(
+        `UPDATE bomiora_shop_order SET ${sets.join(', ')} WHERE od_id = ? AND od_status <> '취소'`,
+        values
+      );
+      if (!updated || Number(updated.affectedRows) < 1) {
+        await connection.rollback();
+        const err = new Error('이미 취소된 주문입니다.');
+        err.code = 'ORDER_ALREADY_CANCELLED';
+        throw err;
+      }
+      await couponRepository.releaseCouponsForOrder(connection, { mbId, odId });
+      await connection.commit();
+    } catch (error) {
+      try {
+        await connection.rollback();
+      } catch (_) {}
+      throw error;
+    } finally {
+      connection.release();
+    }
   }
 
   async getItemImagesByItIds(itIds) {
@@ -1133,26 +1172,49 @@ class OrderRepository {
       const prev = this.bufferToString(row.od_shop_memo).trim();
       const memo = prev ? `${prev}\n${line}` : line;
 
-      const [updated] = await pool.query(
-        `UPDATE bomiora_shop_order
-            SET od_status = '취소',
-                od_cancel_price = ?,
-                status_changed_at = NOW(),
-                od_shop_memo = ?
-          WHERE od_id = ?
-            AND od_status = '주문'`,
-        [cancelPrice, memo, targetId]
-      );
-      if (!updated || Number(updated.affectedRows) < 1) continue;
-
-      await pool.query(
-        `UPDATE bomiora_shop_cart SET ct_status = '취소' WHERE od_id = ?`,
-        [targetId]
-      );
-      cancelled.push({
-        odId: targetId,
-        mbId: this.bufferToString(row.mb_id).trim(),
-      });
+      const memberId = this.bufferToString(row.mb_id).trim();
+      const connection = await pool.getConnection();
+      try {
+        await connection.beginTransaction();
+        const [updated] = await connection.query(
+          `UPDATE bomiora_shop_order
+              SET od_status = '취소',
+                  od_cancel_price = ?,
+                  status_changed_at = NOW(),
+                  od_shop_memo = ?
+            WHERE od_id = ?
+              AND od_status = '주문'`,
+          [cancelPrice, memo, targetId]
+        );
+        if (!updated || Number(updated.affectedRows) < 1) {
+          await connection.rollback();
+          continue;
+        }
+        await connection.query(
+          `UPDATE bomiora_shop_cart SET ct_status = '취소' WHERE od_id = ?`,
+          [targetId]
+        );
+        await couponRepository.releaseCouponsForOrder(connection, {
+          mbId: memberId,
+          odId: targetId,
+        });
+        await connection.commit();
+        couponRepository.invalidateMemberCoupons(memberId);
+        cancelled.push({
+          odId: targetId,
+          mbId: memberId,
+        });
+      } catch (error) {
+        try {
+          await connection.rollback();
+        } catch (_) {}
+        console.error('[Order] 입금기한 초과 취소 실패', {
+          odId: targetId,
+          message: error?.message || error,
+        });
+      } finally {
+        connection.release();
+      }
     }
     return cancelled;
   }

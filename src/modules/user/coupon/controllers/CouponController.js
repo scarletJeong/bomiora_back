@@ -42,6 +42,10 @@ class CouponController {
     }
   }
 
+  invalidateForMember(mbId) {
+    this._invalidate(mbId);
+  }
+
   async _tabsPayload(mbId) {
     return couponResponseCache.getOrSet(`tabs:${mbId}`, async () => {
       const [available, used, expired] = await Promise.all([

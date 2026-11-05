@@ -1,4 +1,5 @@
 const orderRepository = require('../repositories/OrderRepository');
+const couponController = require('../../coupon/controllers/CouponController');
 const orderCartRepository = require('../repositories/OrderCartRepository');
 const reviewRepository = require('../../review/repositories/ReviewRepository');
 const userRepository = require('../../../auth/repositories/UserRepository');
@@ -497,7 +498,10 @@ class OrderController {
 
       if (mbId) {
         const expired = await orderRepository.cancelExpiredUnpaidDeposits({ mbId });
-        if (expired.length) this.invalidateOrderListCache(mbId);
+        if (expired.length) {
+          this.invalidateOrderListCache(mbId);
+          couponController.invalidateForMember(mbId);
+        }
       }
 
       const payload = await orderListCache.getOrSet(cacheKey, async () => {
@@ -656,7 +660,10 @@ class OrderController {
       const mbId = req.query.mbId;
       if (mbId && odId) {
         const expired = await orderRepository.cancelExpiredUnpaidDeposits({ mbId, odId });
-        if (expired.length) this.invalidateOrderDetailCache(mbId, odId);
+        if (expired.length) {
+          this.invalidateOrderDetailCache(mbId, odId);
+          couponController.invalidateForMember(mbId);
+        }
       }
       const cacheKey = `detail:${mbId}:${odId}`;
       const cached = orderDetailCache.get(cacheKey);
@@ -929,12 +936,13 @@ class OrderController {
 
       const cancelMemo = this.buildCustomerCancelMemo(order.od_shop_memo, hasRefund ? refund : null);
       const cancelPrice = Math.max(receiptPrice, this.computeOrderTotal(order));
-      await orderRepository.updateOrder(odId, {
+      await orderRepository.cancelOrderReleasingCoupons(odId, mbId, {
         od_status: '취소',
         od_cancel_price: cancelPrice,
         status_changed_at: new Date(),
         od_shop_memo: cancelMemo,
       });
+      couponController.invalidateForMember(mbId);
       try {
         await orderCartRepository.markCancelledByOdId(odId);
       } catch (cartErr) {
