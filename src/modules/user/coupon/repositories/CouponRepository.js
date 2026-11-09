@@ -122,7 +122,7 @@ class CouponRepository {
       const cpId = String(row.cp_id || '').trim();
       if (cpId) usedMap.set(cpId, { cl_datetime: row.cl_datetime || null, od_id: row.od_id });
     }
-    this.attachAppliedProductLabelsFast(coupons);
+    await this.attachAppliedProductLabels(coupons);
     return { coupons, usedMap };
   }
 
