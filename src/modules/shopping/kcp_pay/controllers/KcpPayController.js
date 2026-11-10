@@ -42,6 +42,8 @@ class KcpPayController {
   }
 
   async request(req, res) {
+    let problemOrderId = '';
+    let problemCartIds = [];
     try {
       const {
         mb_id: mbId,
@@ -67,6 +69,7 @@ class KcpPayController {
       const cartIds = (Array.isArray(rawCartIds) ? rawCartIds : [])
         .map((v) => Number(v))
         .filter((v) => Number.isFinite(v) && v > 0);
+      problemCartIds = cartIds;
 
       if (!cartIds.length) {
         return res.status(400).json({ success: false, message: 'cart_ids가 비어 있습니다.' });
@@ -222,6 +225,7 @@ class KcpPayController {
       const config = kcpPayService.getConfig();
       const mapped = kcpPayService.mapMethod(paymentMethod, clientPayMethodBits);
       const orderId = this.generateOrderId();
+      problemOrderId = orderId;
       const orderedCarts = cartIds
         .map((id) => carts.find((c) => Number(c.ct_id) === id))
         .filter(Boolean);
@@ -367,6 +371,8 @@ class KcpPayController {
         action: '결제요청',
         who: String(req.body?.mb_id || req.body?.mbId || '').trim() || '알 수 없음',
         what: {
+          odId: problemOrderId,
+          cartIds: problemCartIds,
           amount: req.body?.final_amount,
         },
         how: {
@@ -472,6 +478,7 @@ class KcpPayController {
           who: pending.request?.mbId || '알 수 없음',
           what: {
             odId: pending.request?.orderId,
+            cartIds: pending.request?.cartIds,
             amount: pending.request?.amount,
             token,
             settleCase: pending.request?.paymentMethod,
@@ -695,6 +702,7 @@ class KcpPayController {
         who: pending.request?.mbId || '알 수 없음',
         what: {
           odId: pending.request?.orderId || String(req.body.order_no || req.body.ordr_idxx || '').trim(),
+          cartIds: pending.request?.cartIds,
           tno: String(error?.raw?.approval?.tno || req.body.tno || '').trim(),
           amount: pending.request?.amount,
           token,
@@ -998,7 +1006,11 @@ class KcpPayController {
         level: 'error',
         action: '자동취소',
         who: pendingRequest?.mbId || '알 수 없음',
-        what: { odId: orderId, amount: pendingRequest?.amount ?? approval?.amount },
+        what: {
+          odId: orderId,
+          cartIds: pendingRequest?.cartIds,
+          amount: pendingRequest?.amount ?? approval?.amount,
+        },
         how: {
           action: '결제 실패 후 KCP 자동 망취소 시도',
           modDesc: reason || 'AUTO_CANCEL',
@@ -1036,6 +1048,7 @@ class KcpPayController {
           who: pendingRequest?.mbId || '알 수 없음',
           what: {
             odId: orderId,
+            cartIds: pendingRequest?.cartIds,
             tno: txn,
             amount: pendingRequest?.amount ?? approval?.amount,
           },
@@ -1074,6 +1087,7 @@ class KcpPayController {
         who: pendingRequest?.mbId || '알 수 없음',
         what: {
           odId: orderId,
+          cartIds: pendingRequest?.cartIds,
           tno: txn,
           amount: pendingRequest?.amount ?? approval?.amount,
         },

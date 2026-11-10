@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const pool = require('../../../../config/database');
 
 const REDACT_KEY = /enc[_-]?data|enc[_-]?info|card[_-]?(no|num|number)|acct|account|cvv|cvc|passwd|password|site[_-]?key|refund[_-]?account/i;
 
@@ -97,6 +98,73 @@ function ensureDir(dir) {
   }
 }
 
+function unsignedId(value) {
+  const digits = String(value ?? '').replace(/\D/g, '');
+  if (!digits) return '0';
+  const asNumber = Number(digits);
+  if (!Number.isSafeInteger(asNumber) || asNumber <= 0) return '0';
+  return digits;
+}
+
+function cartIdList(value) {
+  const source = Array.isArray(value) ? value : [value];
+  const ids = [];
+  for (const item of source) {
+    const id = unsignedId(item);
+    if (id !== '0' && !ids.includes(id)) ids.push(id);
+  }
+  return ids;
+}
+
+function memberIdOf(who) {
+  if (!who || who === '알 수 없음' || who === 'KCP') return '';
+  if (typeof who === 'string') {
+    return who.split('(')[0].trim().slice(0, 20);
+  }
+  return String(who.mbId || who.mb_id || '').trim().slice(0, 20);
+}
+
+async function resolveCartId(odId, cartIds) {
+  if (cartIds.length) return cartIds[0];
+  if (odId === '0') return '0';
+  const [rows] = await pool.query(
+    `SELECT ct_id
+       FROM bomiora_shop_cart
+      WHERE REPLACE(REPLACE(CAST(od_id AS CHAR), ',', ''), ' ', '') = ?
+      ORDER BY ct_id ASC
+      LIMIT 1`,
+    [odId]
+  );
+  return unsignedId(rows[0]?.ct_id);
+}
+
+/** 결제 문제 한 건을 bomiora_shop_order_data 에 남긴다. 실패해도 결제는 막지 않는다. */
+async function saveShopOrderProblem(entry, when) {
+  const what = entry?.what || {};
+  const odId = unsignedId(what.odId || what.orderId || what.od_id);
+  const cartIds = cartIdList(what.cartIds || what.cart_ids || what.cartId || what.cart_id);
+  const cartId = await resolveCartId(odId, cartIds);
+  const payload = {
+    at: when.iso,
+    level: String(entry?.level || 'error'),
+    action: String(entry?.action || '결제'),
+    why: String(entry?.why || '원인 미상'),
+    how: sanitizeValue(entry?.how || {}),
+    what: sanitizeValue(what),
+    detail: sanitizeValue(entry?.detail || {}),
+    cartIds,
+  };
+  let dtData = JSON.stringify(payload);
+  if (dtData.length > 60000) dtData = dtData.slice(0, 60000);
+
+  await pool.query(
+    `INSERT INTO bomiora_shop_order_data
+       (od_id, cart_id, mb_id, dt_pg, dt_data, dt_time)
+     VALUES (?, ?, ?, 'kcp', ?, ?)`,
+    [odId, cartId, memberIdOf(entry?.who), dtData, when.stamp]
+  );
+}
+
 /**
  * KCP 결제/취소 문제 전용 파일 로그.
  * 경로: logs/kcp-pay/kcp-pay-YYYY-MM-DD.log (KCP_PAY_LOG_DIR 로 변경 가능)
@@ -154,6 +222,10 @@ function logKcpPayProblem(entry) {
   } else {
     console.warn(`[KCP-PAY-LOG] ${when.stamp} | ${action} | 누가=${who} | ${what} | 왜=${why}`);
   }
+
+  saveShopOrderProblem(entry, when).catch((err) => {
+    console.error('[kcpPayLogger] order_data 기록 실패:', err.message);
+  });
 }
 
 module.exports = {
