@@ -60,9 +60,9 @@ class MainReviewRepository {
     const safeSize = Math.min(Math.max(Number(size) || 5, 1), 50);
     const safePage = Math.max(Number(page) || 0, 0);
     const offset = safePage * safeSize;
-    // 목록/더보기: 본문·여분 이미지 제외 (홈 카드와 동일 컬럼)
+    // 베스트 목록만 본문(mr_content)과 사진 10장. 홈 그리드는 SELECT_MAIN_REVIEW_HOME.
     const [rows] = await pool.query(
-      `${SELECT_MAIN_REVIEW_HOME}
+      `${SELECT_MAIN_REVIEW}
        ${ORDER_CLAUSE}
        LIMIT ? OFFSET ?`,
       [safeSize, offset]

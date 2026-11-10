@@ -599,6 +599,25 @@ ${JOIN_SHOP_ITEM_NEW_SELECT}
     return [...affected];
   }
 
+  /** 이 회원이 이미 도움쿠폰을 받은 리뷰 is_id */
+  async findHelpCouponIssuedReviewIds(mbId, isIds) {
+    const id = String(mbId || '').trim();
+    const ids = [...new Set(
+      (Array.isArray(isIds) ? isIds : [])
+        .map((value) => Number(value))
+        .filter((value) => Number.isFinite(value) && value > 0)
+    )];
+    if (!id || ids.length === 0) return new Set();
+    const placeholders = ids.map(() => '?').join(',');
+    const [rows] = await pool.query(
+      `SELECT DISTINCT is_id
+         FROM bomiora_shop_coupon
+        WHERE mb_id = ? AND is_id IN (${placeholders})`,
+      [id, ...ids]
+    );
+    return new Set(rows.map((row) => Number(row.is_id)));
+  }
+
   /** 특정 리뷰 it_id 에 속한 리뷰가 바뀌었을 때 영향 받는 모든 상품 행 집계 동기화 */
   async syncAggregatesForReviewItId(reviewItId) {
     const baseIds = await this.collectShopItemIdsToRefreshForReviewItId(reviewItId);

@@ -530,8 +530,24 @@ class ReviewController {
           ...this.pagePayload(page, size, result.total),
         };
       });
-      res.set('Cache-Control', 'public, max-age=30');
-      return res.json(payload);
+      const mbId = String(req.query.mbId || req.query.mb_id || '').trim();
+      if (!mbId) {
+        res.set('Cache-Control', 'public, max-age=30');
+        return res.json(payload);
+      }
+      const reviews = Array.isArray(payload.reviews) ? payload.reviews : [];
+      const issued = await reviewRepository.findHelpCouponIssuedReviewIds(
+        mbId,
+        reviews.map((review) => review.isId)
+      );
+      res.set('Cache-Control', 'private, no-store');
+      return res.json({
+        ...payload,
+        reviews: reviews.map((review) => ({
+          ...review,
+          helpCouponIssued: issued.has(Number(review.isId)),
+        })),
+      });
     } catch (error) {
       return res.json({ success: false, message: `리뷰 목록 조회 중 오류가 발생했습니다: ${error.message}` });
     }
