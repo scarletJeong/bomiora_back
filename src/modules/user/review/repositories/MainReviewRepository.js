@@ -69,7 +69,7 @@ class MainReviewRepository {
     );
     return rows;
   }
-
+ 
   /** 정렬 기준상 몇 번째인지 (0-based). 없으면 -1 — 전체 로드 없이 COUNT */
   async findPublishedIndex(mrNo) {
     const target = Number(mrNo);
