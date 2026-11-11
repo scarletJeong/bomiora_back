@@ -536,15 +536,21 @@ class CouponRepository {
 
   _pointRateForCart(cart) {
     if (this._isInfluencerCart(cart)) return 0;
-    const kind = this._asText(cart?.ct_kind).toLowerCase();
-    if (kind === 'prescription') return 100;
-    if (kind === 'general') return 10;
-    return 100;
+    const raw = cart?.point_usage_rate ?? cart?.it_point_usage_rate;
+    if (raw == null || raw === '') {
+      const kind = this._asText(cart?.ct_kind || cart?.product_it_kind).toLowerCase();
+      return kind === 'prescription' ? 100 : 10;
+    }
+    const rate = Number(raw);
+    if (!Number.isFinite(rate) || rate < 0) return 0;
+    if (rate > 100) return 100;
+    return Math.floor(rate);
   }
 
   /**
    * 혼합 주문: 인플루언서 라인은 포인트 대상에서 제외.
-   * 상한 = min(보유포인트, 비율합, 비인플 상품액-상품쿠폰, 최종≥3000, 5만) 의 100원 단위.
+   * 기준 금액은 상품 쿠폰(정액·정률)을 뺀 남은 금액이고, 줄마다 point_usage_rate 를 적용한다.
+   * 상한 = min(보유포인트, 비율합, 남은 상품액, 쿠폰·배송비 반영 후 최종≥3000, 5만) 의 100원 단위.
    */
   computeMaxCheckoutUsedPoint({
     carts = [],
@@ -620,15 +626,13 @@ class CouponRepository {
   assertCouponStacking(resolvedRows) {
     const methods = resolvedRows.map((r) => Number(r.cp_method || 0));
     const count = (m) => methods.filter((x) => x === m).length;
-    if (count(3) > 1) throw new Error('배송비 쿠폰은 1장만 사용할 수 있습니다.');
     if (count(1) > 2) throw new Error('카테고리 쿠폰은 최대 2장까지 사용할 수 있습니다.');
     if (count(0) > 1) throw new Error('개별상품 쿠폰은 1장만 사용할 수 있습니다.');
     if (count(2) > 1) throw new Error('주문금액 쿠폰은 1장만 사용할 수 있습니다.');
-    const hasProduct = count(0) > 0;
-    const hasCategory = count(1) > 0;
-    const hasOrder = count(2) > 0;
-    if ([hasProduct, hasCategory, hasOrder].filter(Boolean).length > 1) {
-      throw new Error('상품·카테고리·주문금액 쿠폰은 함께 사용할 수 없습니다.');
+    if (count(3) > 1) throw new Error('배송비 쿠폰은 1장만 사용할 수 있습니다.');
+    const usedKinds = [0, 1, 2, 3].filter((method) => count(method) > 0);
+    if (usedKinds.length > 1) {
+      throw new Error('서로 다른 종류의 쿠폰은 함께 사용할 수 없습니다.');
     }
   }
 
@@ -711,6 +715,7 @@ class CouponRepository {
         cp_id: cpId,
         discount,
         cp_method: method,
+        cp_type: Number(row.cp_type || 0),
       });
     }
 
