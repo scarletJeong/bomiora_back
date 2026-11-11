@@ -99,10 +99,12 @@ function ensureDir(dir) {
 }
 
 function unsignedId(value) {
-  const digits = String(value ?? '').replace(/\D/g, '');
+  const digits = String(value ?? '').replace(/\D/g, '').replace(/^0+/, '');
   if (!digits) return '0';
-  const asNumber = Number(digits);
-  if (!Number.isSafeInteger(asNumber) || asNumber <= 0) return '0';
+  // od_id는 18자리. JS Number로 검사하면 안전 정수 범위를 넘어 0으로 떨어진다.
+  // MySQL BIGINT(부호 있음)에 들어가는 값만 남긴다.
+  if (digits.length > 19) return '0';
+  if (digits.length === 19 && digits > '9223372036854775807') return '0';
   return digits;
 }
 

@@ -235,8 +235,11 @@ class KcpPayService {
     approvalKey,
     payUrl,
     returnUrl = '',
+    basketLineCount,
+    goodInfo,
   }) {
     const mobile = this.toMobilePayCodes(payMethodBits);
+    const lineCount = Math.max(1, Number(basketLineCount) || 1);
     const retUrl = (() => {
       const base = String(callbackUrl || '').trim();
       if (!base) return '';
@@ -270,9 +273,11 @@ class KcpPayService {
       rcvr_add2: receiver?.addr2 || '',
       shop_user_id: String(shopUserId || '').trim(),
       tablet_size: '1.0',
-      escw_used: escrowUse ? 'Y' : 'N',
+      escw_used: 'Y',
       pay_mod: escrowUse ? 'O' : 'N',
       deli_term: '03',
+      bask_cntx: String(lineCount),
+      good_info: goodInfo || '',
       param_opt_1: token,
       param_opt_2: '',
       param_opt_3: '',
