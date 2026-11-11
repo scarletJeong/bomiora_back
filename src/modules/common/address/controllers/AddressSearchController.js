@@ -68,7 +68,7 @@ class AddressSearchController {
     res.removeHeader('Content-Security-Policy');
     res.setHeader(
       'Content-Security-Policy',
-      "default-src 'self' https: http: data: blob: 'unsafe-inline' 'unsafe-eval'; script-src 'self' https://t1.daumcdn.net https://*.daumcdn.net https://*.daum.net 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline' https: http:; img-src 'self' data: blob: https: http:; connect-src 'self' https: http:; frame-src 'self' https://postcode.map.kakao.com http://postcode.map.kakao.com https://*.daum.net http://*.daum.net https://*.kakao.com http://*.kakao.com; child-src 'self' https://postcode.map.kakao.com http://postcode.map.kakao.com https://*.daum.net http://*.daum.net; frame-ancestors *;"
+      "default-src 'self' https: http: data: blob: 'unsafe-inline' 'unsafe-eval'; script-src 'self' https://t1.kakaocdn.net https://*.kakaocdn.net https://*.kakao.com https://*.daum.net 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline' https: http:; img-src 'self' data: blob: https: http:; connect-src 'self' https: http:; frame-src 'self' https://postcode.map.kakao.com http://postcode.map.kakao.com https://*.daum.net http://*.daum.net https://*.kakao.com http://*.kakao.com; child-src 'self' https://postcode.map.kakao.com http://postcode.map.kakao.com https://*.daum.net http://*.daum.net; frame-ancestors *;"
     );
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     return res.send(`<!doctype html>
@@ -82,7 +82,7 @@ class AddressSearchController {
     #postcode-root { width: 100%; height: 100%; }
     #postcode-root iframe { width: 100% !important; height: 100% !important; border: 0; }
   </style>
-  <script src="https://t1.daumcdn.net/mapjsapi/bundle/postcode/prod/postcode.v2.js"></script>
+  <script src="https://t1.kakaocdn.net/mapjsapi/bundle/postcode/prod/postcode.v2.js"></script>
 </head>
 <body>
   <div id="postcode-root"></div>
