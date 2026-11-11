@@ -34,3 +34,4 @@ build/
 config/firebase-bomiora.json
 config/firebase-*.json
 !config/firebase-bomiora.json.example
+uploads
