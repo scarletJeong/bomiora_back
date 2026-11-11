@@ -34,9 +34,23 @@ class KcpPayService {
   }
 
   /**
-   * 영카트 `orderform.sub.php` (에스크로 good_info) 와 동일한 형식
+   * 장바구니 라인 결제금액. CartController.cartLineAmount 와 같다.
+   * io_type 1 은 옵션가만, 그 외는 (단가 + 옵션가) × 수량.
+   */
+  linePayAmount(row) {
+    const ioType = Math.trunc(Number(row?.io_type) || 0);
+    const ioPrice = Math.trunc(Number(row?.io_price) || 0);
+    const ctPrice = Math.trunc(Number(row?.ct_price) || 0);
+    const ctQty = Math.max(1, Math.trunc(Number(row?.ct_qty) || 1));
+    const amount = ioType === 1 ? ioPrice * ctQty : (ctPrice + ioPrice) * ctQty;
+    return Math.max(0, amount);
+  }
+
+  /**
+   * 영카트 `orderform.sub.php` (에스크로 good_info) 와 동일한 형식.
+   * good_amtx 는 그 줄의 결제 금액(단가 + 옵션 × 수량). good_mny(결제 총액)는 바꾸지 않는다.
    * @param {string} orderId
-   * @param {Array<{ it_name?: string, ct_qty?: number, ct_price?: number }>} cartRows
+   * @param {Array<{ it_name?: string, ct_qty?: number, ct_price?: number, io_price?: number, io_type?: number }>} cartRows
    */
   buildGoodInfo(orderId, cartRows) {
     if (!Array.isArray(cartRows) || !cartRows.length) return '';
@@ -52,7 +66,7 @@ class KcpPayService {
       if (i > 0) out += RS;
       const seq = i + 1;
       const quantity = Math.max(1, Math.min(99, Math.trunc(Number(row.ct_qty) || 1)));
-      const amount = Math.max(0, Math.trunc(Number(row.ct_price) || 0));
+      const amount = this.linePayAmount(row);
       out += `seq=${seq}${US}ordr_numb=${orderId}_${String(i).padStart(4, '0')}${US}good_name=${esc(row.it_name)}${US}good_cntx=${quantity}${US}good_amtx=${amount}`;
     });
     return out;
