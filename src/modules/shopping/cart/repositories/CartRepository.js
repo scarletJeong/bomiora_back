@@ -28,7 +28,8 @@ const CART_LIST_SELECT = `
          CAST(p.it_flutter_image_url AS CHAR) AS it_flutter_image_url,
          CAST(p.it_img1 AS CHAR) AS it_img1,
          CAST(p.it_soldout AS CHAR) AS product_it_soldout,
-         CAST(p.it_use AS CHAR) AS product_it_use
+         CAST(p.it_use AS CHAR) AS product_it_use,
+         p.point_usage_rate AS point_usage_rate
 `;
 
 class CartRepository {
@@ -52,7 +53,7 @@ class CartRepository {
               it_img1, it_flutter_image_url, it_mb_inf, it_inf_price,
               it_sc_type, it_sc_method, it_sc_price, it_sc_minimum, it_sc_qty,
               it_price, it_point_type, it_point, it_supply_point,
-              it_soldout, it_use
+              it_soldout, it_use, point_usage_rate
        FROM bomiora_shop_item_new WHERE it_id = ? LIMIT 1`,
       [itId]
     );
@@ -120,7 +121,7 @@ class CartRepository {
               it_img1, it_flutter_image_url, it_mb_inf, it_inf_price,
               it_sc_type, it_sc_method, it_sc_price, it_sc_minimum, it_sc_qty,
               it_price, it_point_type, it_point, it_supply_point,
-              it_soldout, it_use, it_stock_qty
+              it_soldout, it_use, it_stock_qty, point_usage_rate
        FROM bomiora_shop_item_new
        WHERE it_id IN (?)`,
       [ids]

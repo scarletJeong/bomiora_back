@@ -16,6 +16,17 @@ class CartController {
     return text || null;
   }
 
+  pointUsageRateOf(product, kind) {
+    const raw = product && (product.point_usage_rate ?? product.it_point_usage_rate);
+    if (raw == null || raw === '') {
+      return String(kind || '').trim().toLowerCase() === 'prescription' ? 100 : 10;
+    }
+    const rate = Number(raw);
+    if (!Number.isFinite(rate) || rate < 0) return 0;
+    if (rate > 100) return 100;
+    return Math.floor(rate);
+  }
+
   toInt(value, fallback = 0) {
     const n = Number(value);
     return Number.isFinite(n) ? n : fallback;
@@ -263,10 +274,7 @@ class CartController {
       parent_it_id: effectiveParent || null,
       it_supply_items: this.bufferToString(cart.product_it_supply_items) || '',
       ct_mb_inf: this.bufferToString(cart.ct_mb_inf) || '',
-      point_usage_rate: this.toInt(
-        (product && (product.point_usage_rate ?? product.it_point_usage_rate)) ?? 10,
-        10
-      ),
+      point_usage_rate: this.pointUsageRateOf(product, ctKindRaw),
       ct_time: cart.ct_time,
       image_url: imageUrl,
       it_img: imageUrl,
