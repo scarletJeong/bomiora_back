@@ -220,6 +220,12 @@ class KcpPayRepository {
         const orderController = require('../../../user/delivery/controllers/OrderController');
         orderController.invalidateOrderListCache(payload.mbId);
       } catch (_) {}
+      if (Array.isArray(payload.coupons) && payload.coupons.length) {
+        try {
+          const couponController = require('../../../user/coupon/controllers/CouponController');
+          couponController.invalidateForMember(payload.mbId);
+        } catch (_) {}
+      }
       return { success: true };
     } catch (error) {
       await connection.rollback();
