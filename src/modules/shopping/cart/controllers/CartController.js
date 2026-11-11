@@ -311,6 +311,13 @@ class CartController {
     if (use && use !== '1') {
       return { is_available: false, unavailable_reason: '판매중지' };
     }
+    const stockRaw = cart.product_it_stock_qty ?? product?.it_stock_qty;
+    if (stockRaw != null && String(stockRaw).trim() !== '') {
+      const stock = this.toInt(stockRaw, 0);
+      if (!this.isUnlimitedStock(stock) && stock <= 0) {
+        return { is_available: false, unavailable_reason: '품절' };
+      }
+    }
     if (!cart.it_id && !product) {
       return { is_available: false, unavailable_reason: '판매중지' };
     }

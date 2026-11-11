@@ -29,6 +29,7 @@ const CART_LIST_SELECT = `
          CAST(p.it_img1 AS CHAR) AS it_img1,
          CAST(p.it_soldout AS CHAR) AS product_it_soldout,
          CAST(p.it_use AS CHAR) AS product_it_use,
+         p.it_stock_qty AS product_it_stock_qty,
          p.point_usage_rate AS point_usage_rate
 `;
 

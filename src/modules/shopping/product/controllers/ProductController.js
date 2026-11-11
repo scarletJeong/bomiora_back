@@ -314,6 +314,8 @@ class ProductController {
       isNew: Number(row.it_type3 || 0) === 1,
       isBest: Number(row.it_type4 || 0) === 1,
       stock: row.it_stock_qty ?? 0,
+      it_soldout: this.bufferToString(row.it_soldout),
+      it_use: this.bufferToString(row.it_use),
       rating: row.it_use_avg != null ? Number(row.it_use_avg) : null,
       reviewCount: row.it_use_cnt ?? 0,
       additionalInfo: {

@@ -75,7 +75,7 @@ const DETAIL_COLUMNS = `
   CAST(it_weight AS CHAR) AS it_weight,
   it_point, it_point_type,
   CAST(it_mb_inf AS CHAR) AS it_mb_inf,
-  it_price, it_cust_price, it_stock_qty, it_use_avg, it_use_cnt,
+  it_price, it_cust_price, it_stock_qty, it_soldout, it_use, it_use_avg, it_use_cnt,
   it_type3, it_type4,
   CAST(ca_id AS CHAR) AS ca_id,
   CAST(it_kind AS CHAR) AS it_kind,
