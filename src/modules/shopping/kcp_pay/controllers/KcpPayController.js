@@ -321,6 +321,8 @@ class KcpPayController {
           approvalKey: trade.approvalKey,
           payUrl: trade.payUrl,
           returnUrl: pending.request.returnUrl,
+          basketLineCount,
+          goodInfo,
         });
         paymentChannel = 'mobile_smartpay';
         console.log('📱 [KcpPay] mobile trade registered', {
