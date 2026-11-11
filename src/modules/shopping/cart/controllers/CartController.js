@@ -18,13 +18,23 @@ class CartController {
 
   pointUsageRateOf(product, kind) {
     const raw = product && (product.point_usage_rate ?? product.it_point_usage_rate);
+    const itId = product && (product.it_id || product.product_it_id || '');
+    let rate;
+    let source;
     if (raw == null || raw === '') {
-      return String(kind || '').trim().toLowerCase() === 'prescription' ? 100 : 10;
+      rate = String(kind || '').trim().toLowerCase() === 'prescription' ? 100 : 10;
+      source = 'fallback';
+    } else {
+      const n = Number(raw);
+      if (!Number.isFinite(n) || n < 0) rate = 0;
+      else if (n > 100) rate = 100;
+      else rate = Math.floor(n);
+      source = 'column';
     }
-    const rate = Number(raw);
-    if (!Number.isFinite(rate) || rate < 0) return 0;
-    if (rate > 100) return 100;
-    return Math.floor(rate);
+    console.log(
+      `[point-rate] it=${itId} kind=${kind} raw=${raw == null ? 'null' : raw} source=${source} rate=${rate}`
+    );
+    return rate;
   }
 
   toInt(value, fallback = 0) {
