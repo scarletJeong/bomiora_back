@@ -42,12 +42,18 @@ class KcpPayService {
     if (!Array.isArray(cartRows) || !cartRows.length) return '';
     const RS = String.fromCharCode(30);
     const US = String.fromCharCode(31);
-    const esc = (s) => String(s ?? '').replace(/[\r\n\x1E\x1F]/g, ' ').replace(/"/g, "'");
+    const esc = (s) => [...String(s ?? '')
+      .replace(/[\r\n\x1E\x1F]/g, ' ')
+      .replace(/["<>]/g, "'")]
+      .slice(0, 30)
+      .join('');
     let out = '';
-    cartRows.forEach((row, i) => {
+    cartRows.slice(0, 40).forEach((row, i) => {
       if (i > 0) out += RS;
       const seq = i + 1;
-      out += `seq=${seq}${US}ordr_numb=${orderId}_${String(i).padStart(4, '0')}${US}good_name=${esc(row.it_name)}${US}good_cntx=${row.ct_qty ?? 1}${US}good_amtx=${row.ct_price ?? 0}${US}`;
+      const quantity = Math.max(1, Math.min(99, Math.trunc(Number(row.ct_qty) || 1)));
+      const amount = Math.max(0, Math.trunc(Number(row.ct_price) || 0));
+      out += `seq=${seq}${US}ordr_numb=${orderId}_${String(i).padStart(4, '0')}${US}good_name=${esc(row.it_name)}${US}good_cntx=${quantity}${US}good_amtx=${amount}`;
     });
     return out;
   }
@@ -239,7 +245,18 @@ class KcpPayService {
     goodInfo,
   }) {
     const mobile = this.toMobilePayCodes(payMethodBits);
-    const lineCount = Math.max(1, Number(basketLineCount) || 1);
+    const infoLineCount = String(goodInfo || '')
+      .split(String.fromCharCode(30))
+      .filter((row) => row.trim().length > 0)
+      .length;
+    const lineCount = Math.min(
+      40,
+      Math.max(1, infoLineCount || Number(basketLineCount) || 1)
+    );
+    // good_info의 chr(30)/chr(31)를 HTML 속성에 직접 넣으면 브라우저가
+    // 제어문자를 잃을 수 있어, 제출 직전에 원문으로 복원한다.
+    const encodedGoodInfo = encodeURIComponent(String(goodInfo || ''))
+      .replace(/'/g, '%27');
     const retUrl = (() => {
       const base = String(callbackUrl || '').trim();
       if (!base) return '';
@@ -273,11 +290,11 @@ class KcpPayService {
       rcvr_add2: receiver?.addr2 || '',
       shop_user_id: String(shopUserId || '').trim(),
       tablet_size: '1.0',
-      escw_used: 'Y',
-      pay_mod: escrowUse ? 'O' : 'N',
+      escw_used: escrowUse ? 'Y' : 'N',
+      pay_mod: escrowUse ? 'Y' : 'N',
       deli_term: '03',
       bask_cntx: String(lineCount),
-      good_info: goodInfo || '',
+      good_info: '',
       param_opt_1: token,
       param_opt_2: '',
       param_opt_3: '',
@@ -339,6 +356,9 @@ class KcpPayService {
         } catch (e0) {}
         var v_frm = document.order_info || document.getElementById('order_info');
         if (!v_frm) return;
+        if (v_frm.good_info) {
+          v_frm.good_info.value = decodeURIComponent('${encodedGoodInfo}');
+        }
         var payUrl = (v_frm.PayUrl && v_frm.PayUrl.value) || '';
         try {
           if (payUrl) {
