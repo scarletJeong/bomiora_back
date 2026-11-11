@@ -21,7 +21,8 @@ const COUPON_LIST_COLUMNS = `
   c.cp_minimum,
   c.cp_maximum,
   CAST(c.od_id AS CHAR) AS od_id,
-  c.cp_datetime
+  c.cp_datetime,
+  c.cp_cancel_restored
 `;
 
 const COUPON_ID_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ123456789';
@@ -70,7 +71,39 @@ function parseTargetIds(raw) {
     .filter((x) => x.length > 0);
 }
 
+let cancelRestoredColumnReady = null;
+
+function ensureCancelRestoredColumn() {
+  if (!cancelRestoredColumnReady) {
+    cancelRestoredColumnReady = (async () => {
+      const [rows] = await pool.query(
+        `SELECT 1 AS ok
+           FROM INFORMATION_SCHEMA.COLUMNS
+          WHERE TABLE_SCHEMA = DATABASE()
+            AND TABLE_NAME = 'bomiora_shop_coupon'
+            AND COLUMN_NAME = 'cp_cancel_restored'
+          LIMIT 1`
+      );
+      if (rows.length) return;
+      await pool.query(
+        `ALTER TABLE bomiora_shop_coupon
+            ADD COLUMN cp_cancel_restored TINYINT(1) NOT NULL DEFAULT 0
+            COMMENT '주문 취소로 복원됨'`
+      );
+      console.log('[SchemaEnsure] bomiora_shop_coupon.cp_cancel_restored 추가');
+    })().catch((error) => {
+      cancelRestoredColumnReady = null;
+      throw error;
+    });
+  }
+  return cancelRestoredColumnReady;
+}
+
 class CouponRepository {
+  ensureCancelRestoredColumn() {
+    return ensureCancelRestoredColumn();
+  }
+
   invalidateMemberCoupons(mbId) {
     const id = String(mbId || '').trim();
     if (id) couponBundleCache.store.delete(`bundle:${id}`);
@@ -80,8 +113,14 @@ class CouponRepository {
     return formatSqlDateOnlyForApi(value) || '';
   }
 
+  _activeOrderId(value) {
+    const text = String(value ?? '').replace(/,/g, '').replace(/\s/g, '').trim();
+    if (!text || text === '0' || text === 'null') return '';
+    return text;
+  }
+
   _isUsedRow(c, usedMap) {
-    if (Number(c.od_id || 0) > 0) return true;
+    if (this._activeOrderId(c.od_id)) return true;
     return usedMap.has(String(c.cp_id || ''));
   }
 
@@ -93,6 +132,7 @@ class CouponRepository {
   }
 
   async _loadMemberCouponBundle(userId) {
+    await ensureCancelRestoredColumn();
     const [couponRows, logRows] = await Promise.all([
       pool.query(
         `SELECT ${COUPON_LIST_COLUMNS}
@@ -585,7 +625,11 @@ class CouponRepository {
       const line = Math.max(0, amountOf(c) || 0);
       const share = Math.floor((eligibleBase * line) / nonInfAmount);
       const rate = this._pointRateForCart(c);
-      byRate += Math.floor((share * rate) / 100);
+      const linePoint = Math.floor((share * rate) / 100);
+      console.log(
+        `[point-rate] checkout it=${c?.it_id} kind=${c?.ct_kind} raw=${c?.point_usage_rate} share=${share} rate=${rate} point=${linePoint}`
+      );
+      byRate += linePoint;
     }
 
     const byMinPayable = Math.max(
@@ -751,6 +795,7 @@ class CouponRepository {
   async consumeCouponsForOrder(connection, { mbId, odId, coupons }) {
     const list = Array.isArray(coupons) ? coupons : [];
     if (!list.length) return;
+    await ensureCancelRestoredColumn();
     const q = connection || pool;
     for (const c of list) {
       const cpId = String(c.cp_id || '').trim();
@@ -762,7 +807,9 @@ class CouponRepository {
         [cpId, mbId, odId, discount]
       );
       await q.query(
-        `UPDATE bomiora_shop_coupon SET od_id = ? WHERE cp_id = ? AND mb_id = ?`,
+        `UPDATE bomiora_shop_coupon
+            SET od_id = ?, cp_cancel_restored = 0
+          WHERE cp_id = ? AND mb_id = ?`,
         [odId, cpId, mbId]
       );
     }
@@ -770,13 +817,14 @@ class CouponRepository {
 
   /**
    * 주문 취소 시 그 주문에 묶인 쿠폰만 사용 해제한다.
-   * 사용 기록과 주문번호를 지우면, 기간 안이면 사용 가능, 만료면 지난 쿠폰으로 기존 분류가 나눈다.
+   * 사용 로그는 지우고, cp_cancel_restored 로 취소 복원만 남긴다.
    * 캐시는 커밋 뒤에 invalidateMemberCoupons로 지운다.
    */
   async releaseCouponsForOrder(connection, { mbId, odId }) {
     const memberId = String(mbId || '').trim();
     const orderId = String(odId || '').replace(/,/g, '').replace(/\s/g, '').trim();
     if (!memberId || !orderId) return;
+    await ensureCancelRestoredColumn();
     const q = connection || pool;
     await q.query(
       `DELETE FROM bomiora_shop_coupon_log
@@ -786,7 +834,7 @@ class CouponRepository {
     );
     await q.query(
       `UPDATE bomiora_shop_coupon
-          SET od_id = 0
+          SET od_id = 0, cp_cancel_restored = 1
         WHERE mb_id = ?
           AND REPLACE(REPLACE(CAST(od_id AS CHAR), ',', ''), ' ', '') = ?`,
       [memberId, orderId]

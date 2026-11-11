@@ -34,7 +34,8 @@ class CouponController {
       // repository에서 DATE_FORMAT으로 문자열로 내려줌(타임존 변형 방지)
       cl_datetime: c.cl_datetime ?? null,
       cp_datetime: c.cp_datetime,
-      applied_product: c._applied_product ?? null
+      applied_product: c._applied_product ?? null,
+      cancel_restored: Number(c.cp_cancel_restored) === 1 ? 1 : 0
     };
   }
 
