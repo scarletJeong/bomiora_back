@@ -20,7 +20,7 @@ const COUPON_LIST_COLUMNS = `
   c.cp_trunc,
   c.cp_minimum,
   c.cp_maximum,
-  c.od_id,
+  CAST(c.od_id AS CHAR) AS od_id,
   c.cp_datetime
 `;
 
@@ -105,7 +105,7 @@ class CouponRepository {
         `SELECT
            cp_id,
            MAX(cl_datetime) AS cl_datetime,
-           MAX(od_id) AS od_id
+           CAST(MAX(od_id) AS CHAR) AS od_id
          FROM bomiora_shop_coupon_log
          WHERE mb_id = ?
          GROUP BY cp_id`,
@@ -761,7 +761,6 @@ class CouponRepository {
         [odId, cpId, mbId]
       );
     }
-    this.invalidateMemberCoupons(mbId);
   }
 
   /**

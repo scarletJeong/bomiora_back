@@ -6,6 +6,13 @@ const { formatSqlDateOnlyForApi } = require('../../../../utils/healthDateTime');
 const couponResponseCache = new TtlCache(180_000);
 
 class CouponController {
+  _orderIdText(value) {
+    if (value == null || value === '') return null;
+    const text = String(value).trim();
+    if (!text || text === '0' || text === 'null') return null;
+    return text;
+  }
+
   toMap(c) {
     return {
       cp_no: c.cp_no,
@@ -22,7 +29,7 @@ class CouponController {
       cp_trunc: c.cp_trunc,
       cp_minimum: c.cp_minimum,
       cp_maximum: c.cp_maximum,
-      od_id: c.od_id,
+      od_id: this._orderIdText(c.od_id),
       // 사용완료(사용한 쿠폰) 기준 시각: coupon_log.cl_datetime 우선
       // repository에서 DATE_FORMAT으로 문자열로 내려줌(타임존 변형 방지)
       cl_datetime: c.cl_datetime ?? null,
