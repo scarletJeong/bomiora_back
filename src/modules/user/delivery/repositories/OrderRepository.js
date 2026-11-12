@@ -168,6 +168,21 @@ class OrderRepository {
     await pool.query(`UPDATE bomiora_shop_order SET ${sets.join(', ')} WHERE od_id = ?`, values);
   }
 
+  async cancelHealthProfilesForOrder(connection, { mbId, odId }) {
+    const memberId = String(mbId || '').trim();
+    const orderId = String(odId || '').replace(/,/g, '').replace(/\s/g, '').trim();
+    if (!memberId || !orderId) return;
+    const q = connection || pool;
+    await q.query(
+      `UPDATE bomiora_shop_health_profiles_cart
+          SET hp_status = '취소', hp_mdatetime = NOW()
+        WHERE mb_id = ?
+          AND REPLACE(REPLACE(CAST(od_id AS CHAR), ',', ''), ' ', '') = ?
+          AND hp_status <> '취소'`,
+      [memberId, orderId]
+    );
+  }
+
   /**
    * 주문 취소와 그 주문 쿠폰 해제를 한 트랜잭션으로 처리한다.
    * 쿠폰 해제가 실패하면 주문 상태도 롤백된다.
@@ -195,7 +210,15 @@ class OrderRepository {
         throw err;
       }
       await couponRepository.releaseCouponsForOrder(connection, { mbId, odId });
+      await this.cancelHealthProfilesForOrder(connection, { mbId, odId });
+      await pointRepository.restoreCancelledOrderPoint(connection, {
+        mbId,
+        odId,
+        content: `주문번호 ${String(odId).trim()} 본인 취소`,
+        relAction: '본인취소',
+      });
       await connection.commit();
+      pointRepository.invalidateMemberPoint(mbId);
     } catch (error) {
       try {
         await connection.rollback();
@@ -1198,7 +1221,18 @@ class OrderRepository {
           mbId: memberId,
           odId: targetId,
         });
+        await this.cancelHealthProfilesForOrder(connection, {
+          mbId: memberId,
+          odId: targetId,
+        });
+        await pointRepository.restoreCancelledOrderPoint(connection, {
+          mbId: memberId,
+          odId: targetId,
+          content: `주문번호 ${targetId} 가상계좌 입금기한 초과 취소`,
+          relAction: '입금기한취소',
+        });
         await connection.commit();
+        pointRepository.invalidateMemberPoint(memberId);
         couponRepository.invalidateMemberCoupons(memberId);
         cancelled.push({
           odId: targetId,

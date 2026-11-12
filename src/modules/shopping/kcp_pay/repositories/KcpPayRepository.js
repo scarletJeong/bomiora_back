@@ -1,5 +1,6 @@
 const pool = require('../../../../config/database');
 const couponRepository = require('../../../user/coupon/repositories/CouponRepository');
+const pointRepository = require('../../../user/point/repositories/PointRepository');
 
 class KcpPayRepository {
   async getCartItemsByIds(mbId, cartIds) {
@@ -216,7 +217,14 @@ class KcpPayRepository {
         });
       }
 
+      await pointRepository.useCheckoutPoint(connection, {
+        mbId: payload.mbId,
+        odId: payload.orderId,
+        point: payload.usedPoint,
+      });
+
       await connection.commit();
+      pointRepository.invalidateMemberPoint(payload.mbId);
       try {
         const orderController = require('../../../user/delivery/controllers/OrderController');
         orderController.invalidateOrderListCache(payload.mbId);

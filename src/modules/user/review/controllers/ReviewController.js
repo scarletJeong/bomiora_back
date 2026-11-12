@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const { SUBDIRS, mirrorUploadedFile } = require('../../../../utils/cafe24ImageMirror');
 const reviewRepository = require('../repositories/ReviewRepository');
+const pointRepository = require('../../point/repositories/PointRepository');
 const mainReviewRepository = require('../repositories/MainReviewRepository');
 const { TtlCache } = require('../../../../utils/ttlCache');
 const { registerPublicCache } = require('../../../internal/cache/publicCacheRegistry');
@@ -501,6 +502,13 @@ class ReviewController {
       this._invalidateMemberReviewList(mbId);
       this._invalidateProductReviewList(itId);
       this._syncAggregatesLater(itId);
+      if (Number(saved && saved.is_confirm) === 1) {
+        try {
+          await pointRepository.grantFirstReviewPoint({ mbId, itId });
+        } catch (pointError) {
+          console.error('[Review] 첫 리뷰 포인트 실패:', pointError?.message || pointError);
+        }
+      }
       return res.json({
         success: true,
         message: '리뷰가 성공적으로 작성되었습니다.',
