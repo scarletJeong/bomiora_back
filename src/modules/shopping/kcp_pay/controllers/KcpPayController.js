@@ -216,8 +216,20 @@ class KcpPayController {
       if (requestFinalAmount !== computedFinalAmount) {
         return res.status(400).json({
           success: false,
+          error_code: 'AMOUNT_MISMATCH',
           message: '결제 금액 검증에 실패했습니다.',
-          expected: computedFinalAmount,
+          expected: {
+            cart_price: cartPrice,
+            base_shipping_cost: baseShip,
+            extra_shipping_cost: extraShip,
+            coupon_discount: productCouponDiscount,
+            shipping_coupon_discount: Math.max(
+              0,
+              Number(splitCoupons.sendCoupon || 0) || 0
+            ),
+            used_point: validatedUsedPoint,
+            final_amount: computedFinalAmount,
+          },
           received: requestFinalAmount,
         });
       }
