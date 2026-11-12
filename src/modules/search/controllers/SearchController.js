@@ -42,8 +42,9 @@ class SearchController {
       const pageLimit = this._asPositiveInt(req.query.limit, 20);
       const offset = section ? this._asOffset(req.query.offset) : 0;
       const cacheKey = `q:${query}:${section}:${pageLimit}:${offset}`;
+      const fresh = String(req.query.fresh || '') === '1';
 
-      const payload = await searchCache.getOrSet(cacheKey, async () => {
+      const loadPayload = async () => {
         const run = (name) => !section || section === name;
         const sectionOffset = (name) => (section === name ? offset : 0);
         const emptyPack = { rows: [], hasMore: false, total: 0, page: 1, size: pageLimit };
@@ -157,9 +158,13 @@ class SearchController {
             (eventPack.total || 0) +
             (announcementPack.total || 0),
         };
-      });
+      };
 
-      res.set('Cache-Control', 'public, max-age=30');
+      const payload = fresh
+        ? searchCache.set(cacheKey, await loadPayload())
+        : await searchCache.getOrSet(cacheKey, loadPayload);
+
+      res.set('Cache-Control', fresh ? 'no-store' : 'public, max-age=30');
       return res.json(payload);
     } catch (error) {
       return res.status(500).json({
