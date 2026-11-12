@@ -327,6 +327,290 @@ class PointRepository {
       if (ownConn) db.release();
     }
   }
+
+  /**
+   * 결제 성공 시 사용 포인트만큼 회원 포인트에서 뺀다.
+   * 같은 주문의 "주문번호 N 결제" 내역이 있으면 다시 빼지 않는다.
+   */
+  async useCheckoutPoint(conn, { mbId, odId, point }) {
+    const safeMbId = String(mbId || '').trim();
+    const safeOdId = String(odId || '').trim();
+    const amount = Math.trunc(Number(point) || 0);
+    if (!safeMbId || !safeOdId || amount <= 0) {
+      return { applied: false, code: 'ZERO' };
+    }
+
+    const content = `주문번호 ${safeOdId} 결제`;
+    const [dupRows] = await conn.query(
+      `SELECT po_id
+         FROM bomiora_point
+        WHERE mb_id = ?
+          AND po_point < 0
+          AND (
+            (po_rel_table = '@shop_order' AND po_rel_id = ? AND po_rel_action = '결제')
+            OR po_content = ?
+          )
+        LIMIT 1
+        FOR UPDATE`,
+      [safeMbId, safeOdId, content]
+    );
+    if (dupRows.length) return { applied: false, code: 'ALREADY' };
+
+    const [memberRows] = await conn.query(
+      `SELECT mb_point FROM bomiora_member WHERE mb_id = ? LIMIT 1 FOR UPDATE`,
+      [safeMbId]
+    );
+    if (!memberRows.length) {
+      const error = new Error('회원 포인트를 확인할 수 없습니다.');
+      error.code = 'MEMBER_NOT_FOUND';
+      throw error;
+    }
+
+    const currentPoint = Number(memberRows[0].mb_point || 0);
+    if (currentPoint < amount) {
+      const error = new Error('사용 포인트가 보유 포인트보다 큽니다.');
+      error.code = 'POINT_SHORT';
+      throw error;
+    }
+
+    const nextPoint = currentPoint - amount;
+    const now = getKstDateTimeString();
+    await conn.query(
+      `INSERT INTO bomiora_point
+       (
+         mb_id, po_datetime, po_content, po_point, po_use_point,
+         po_mb_point, po_expired, po_expire_date, po_rel_table, po_rel_id, po_rel_action
+       )
+       VALUES (?, ?, ?, ?, 0, ?, 1, ?, '@shop_order', ?, '결제')`,
+      [safeMbId, now, content, -amount, nextPoint, now, safeOdId]
+    );
+    await this.consumePointLots(conn, safeMbId, amount);
+    await conn.query(
+      `UPDATE bomiora_member SET mb_point = ? WHERE mb_id = ?`,
+      [nextPoint, safeMbId]
+    );
+    return { applied: true, code: 'OK', poPoint: -amount, poMbPoint: nextPoint };
+  }
+
+  /**
+   * 취소가 성공하면 주문에 기록된 사용 포인트를 다시 넣는다.
+   * 같은 내용의 되돌림 내역이 있으면 한 번만 처리한다.
+   */
+  async restoreCancelledOrderPoint(conn, { mbId, odId, content, relAction }) {
+    const safeMbId = String(mbId || '').trim();
+    const safeOdId = String(odId || '').trim();
+    const safeContent = String(content || '').trim();
+    const safeAction = String(relAction || '').trim();
+    if (!safeMbId || !safeOdId || !safeContent || !safeAction) {
+      return { applied: false, code: 'INVALID' };
+    }
+
+    const [dupRows] = await conn.query(
+      `SELECT po_id
+         FROM bomiora_point
+        WHERE mb_id = ?
+          AND po_point > 0
+          AND (
+            (po_rel_table = '@shop_order' AND po_rel_id = ? AND po_rel_action = ?)
+            OR po_content = ?
+          )
+        LIMIT 1
+        FOR UPDATE`,
+      [safeMbId, safeOdId, safeAction, safeContent]
+    );
+    if (dupRows.length) return { applied: false, code: 'ALREADY' };
+
+    const [usedRows] = await conn.query(
+      `SELECT po_id
+         FROM bomiora_point
+        WHERE mb_id = ?
+          AND po_point < 0
+          AND (
+            (po_rel_table = '@shop_order' AND po_rel_id = ? AND po_rel_action = '결제')
+            OR po_content = ?
+          )
+        LIMIT 1
+        FOR UPDATE`,
+      [safeMbId, safeOdId, `주문번호 ${safeOdId} 결제`]
+    );
+    if (!usedRows.length) return { applied: false, code: 'NOT_USED' };
+
+    const [orderRows] = await conn.query(
+      `SELECT od_receipt_point
+         FROM bomiora_shop_order
+        WHERE od_id = ? AND mb_id = ?
+        LIMIT 1
+        FOR UPDATE`,
+      [safeOdId, safeMbId]
+    );
+    const amount = Math.trunc(Number(orderRows[0]?.od_receipt_point) || 0);
+    if (amount <= 0) return { applied: false, code: 'ZERO' };
+
+    const [memberRows] = await conn.query(
+      `SELECT mb_point FROM bomiora_member WHERE mb_id = ? LIMIT 1 FOR UPDATE`,
+      [safeMbId]
+    );
+    if (!memberRows.length) {
+      const error = new Error('회원 포인트를 확인할 수 없습니다.');
+      error.code = 'MEMBER_NOT_FOUND';
+      throw error;
+    }
+
+    const currentPoint = Number(memberRows[0].mb_point || 0);
+    const nextPoint = currentPoint + amount;
+    const now = getKstDateTimeString();
+    await conn.query(
+      `INSERT INTO bomiora_point
+       (
+         mb_id, po_datetime, po_content, po_point, po_use_point,
+         po_mb_point, po_expired, po_expire_date, po_rel_table, po_rel_id, po_rel_action
+       )
+       VALUES (?, ?, ?, ?, 0, ?, 0, DATE_ADD(?, INTERVAL 1 YEAR), '@shop_order', ?, ?)`,
+      [safeMbId, now, safeContent, amount, nextPoint, now, safeOdId, safeAction]
+    );
+    await conn.query(
+      `UPDATE bomiora_member SET mb_point = ? WHERE mb_id = ?`,
+      [nextPoint, safeMbId]
+    );
+    return { applied: true, code: 'OK', poPoint: amount, poMbPoint: nextPoint };
+  }
+
+  async consumePointLots(conn, mbId, amount) {
+    let remain = Math.abs(Math.trunc(Number(amount) || 0));
+    if (!mbId || remain <= 0) return;
+    const [rows] = await conn.query(
+      `SELECT po_id, po_point, po_use_point
+         FROM bomiora_point
+        WHERE mb_id = ?
+          AND po_expired = '0'
+          AND po_point > po_use_point
+        ORDER BY po_expire_date ASC, po_id ASC
+        FOR UPDATE`,
+      [mbId]
+    );
+    const today = getKstDateTimeString().slice(0, 10);
+    for (const row of rows) {
+      if (remain <= 0) break;
+      const available = Number(row.po_point || 0) - Number(row.po_use_point || 0);
+      if (available <= 0) continue;
+      if (available > remain) {
+        await conn.query(
+          `UPDATE bomiora_point
+              SET po_use_point = po_use_point + ?,
+                  po_use_date = ?
+            WHERE po_id = ?`,
+          [remain, today, row.po_id]
+        );
+        break;
+      }
+      await conn.query(
+        `UPDATE bomiora_point
+            SET po_use_point = po_use_point + ?,
+                po_expired = '100',
+                po_use_date = ?
+          WHERE po_id = ?`,
+        [available, today, row.po_id]
+      );
+      remain -= available;
+    }
+  }
+
+  /**
+   * 웹 update_use_point()와 같은 첫 리뷰 포인트.
+   * bomiora_config.cf_1, 내용 ' 첫리뷰작성', @review / 리뷰작성.
+   * mb_1 = 'y' 이거나 이미 첫 리뷰 적립이 있으면 다시 주지 않는다.
+   */
+  async grantFirstReviewPoint({ mbId, itId }) {
+    const safeMbId = String(mbId || '').trim();
+    const safeItId = String(itId || '').trim();
+    if (!safeMbId || !safeItId) {
+      return { granted: false, code: 'INVALID' };
+    }
+
+    const conn = await pool.getConnection();
+    try {
+      await conn.beginTransaction();
+
+      const [memberRows] = await conn.query(
+        `SELECT mb_id, mb_point, mb_1
+         FROM bomiora_member
+         WHERE mb_id = ?
+         LIMIT 1
+         FOR UPDATE`,
+        [safeMbId]
+      );
+      if (!memberRows.length) {
+        await conn.rollback();
+        return { granted: false, code: 'NOT_FOUND' };
+      }
+
+      const alreadyFlag = String(memberRows[0].mb_1 || '').trim().toLowerCase() === 'y';
+      const [dupRows] = await conn.query(
+        `SELECT po_id
+         FROM bomiora_point
+         WHERE mb_id = ?
+           AND po_point > 0
+           AND po_rel_table = '@review'
+           AND po_rel_action = '리뷰작성'
+         LIMIT 1
+         FOR UPDATE`,
+        [safeMbId]
+      );
+      if (alreadyFlag || dupRows.length) {
+        if (!alreadyFlag) {
+          await conn.query(
+            `UPDATE bomiora_member SET mb_1 = 'y' WHERE mb_id = ?`,
+            [safeMbId]
+          );
+        }
+        await conn.commit();
+        return { granted: false, code: 'ALREADY' };
+      }
+
+      const [cfgRows] = await conn.query(
+        'SELECT cf_use_point, cf_1 FROM bomiora_config LIMIT 1'
+      );
+      const usePoint = !cfgRows.length || Number(cfgRows[0].cf_use_point) === 1;
+      const amount = Math.floor(Number(cfgRows[0] && cfgRows[0].cf_1));
+      if (!usePoint || !Number.isFinite(amount) || amount <= 0) {
+        await conn.commit();
+        return { granted: false, code: 'POINT_OFF' };
+      }
+
+      const currentPoint = Number(memberRows[0].mb_point || 0);
+      const nextPoint = currentPoint + amount;
+      const now = getKstDateTimeString();
+      const relId = `${safeMbId}/${safeItId}`.slice(0, 20);
+
+      await conn.query(
+        `INSERT INTO bomiora_point
+         (
+           mb_id, po_datetime, po_content, po_point, po_use_point,
+           po_mb_point, po_expired, po_expire_date, po_rel_table, po_rel_id, po_rel_action
+         )
+         VALUES (?, ?, ' 첫리뷰작성', ?, 0, ?, 0, DATE_ADD(?, INTERVAL 1 YEAR), '@review', ?, '리뷰작성')`,
+        [safeMbId, now, amount, nextPoint, now, relId]
+      );
+      await conn.query(
+        `UPDATE bomiora_member SET mb_point = ?, mb_1 = 'y' WHERE mb_id = ?`,
+        [nextPoint, safeMbId]
+      );
+
+      await conn.commit();
+      this.invalidateMemberPoint(safeMbId);
+      notifyPointEarned(safeMbId, amount).catch((e) => {
+        console.error('[Point] 첫 리뷰 적립 푸시 실패:', e?.message || e);
+      });
+      return { granted: true, code: 'OK', poPoint: amount, poMbPoint: nextPoint };
+    } catch (error) {
+      try {
+        await conn.rollback();
+      } catch (_) {}
+      throw error;
+    } finally {
+      conn.release();
+    }
+  }
 }
 
 module.exports = new PointRepository();
