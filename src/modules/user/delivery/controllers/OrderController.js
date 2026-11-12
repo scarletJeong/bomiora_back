@@ -601,6 +601,7 @@ class OrderController {
         });
 
         const totalPages = hasMore ? page + 2 : page + 1;
+        const statusCounts = await orderRepository.countOrderStatuses(mbId);
         return {
           orders,
           reviewedByOrder,
@@ -609,6 +610,7 @@ class OrderController {
           totalElements: total,
           totalItems: total,
           hasNext: !!hasMore,
+          statusCounts,
         };
       });
 

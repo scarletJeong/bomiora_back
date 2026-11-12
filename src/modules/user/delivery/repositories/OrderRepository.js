@@ -95,6 +95,146 @@ class OrderRepository {
     return { rows: pageRows, total, hasMore };
   }
 
+  /**
+   * 회원 주문 전체의 상태별 건수. 목록 페이지와 무관하다.
+   * open 은 처방·일반 주문 전체에서 취소·반품만 뺀 건수다.
+   */
+  async countOrderStatuses(mbId) {
+    const memberId = String(mbId || '').trim();
+    if (!memberId) {
+      return this._emptyStatusCounts();
+    }
+    const delivered = `(
+      IFNULL(o.delivery_completed, 0) = 1
+      OR (
+        IFNULL(o.admin_completed, 0) = 1
+        AND o.auto_confirm_at IS NOT NULL
+        AND o.auto_confirm_at <> '0000-00-00 00:00:00'
+        AND o.auto_confirm_at < NOW()
+      )
+    )`;
+    const [rows] = await pool.query(
+      `SELECT
+         SUM(o.od_status = '주문' AND NOT ${delivered}) AS payment_waiting,
+         SUM(
+           o.od_status IN ('입금', '준비')
+           AND IFNULL(c.done, 0) = 1
+           AND NOT ${delivered}
+         ) AS consultation_done,
+         SUM(
+           (
+             (o.od_status = '입금' AND IFNULL(c.done, 0) = 0)
+             OR (
+               o.od_status = '준비'
+               AND IFNULL(c.done, 0) = 0
+               AND IFNULL(c.rx, 0) = 1
+             )
+           )
+           AND NOT ${delivered}
+         ) AS paid,
+         SUM(
+           o.od_status = '준비'
+           AND IFNULL(c.done, 0) = 0
+           AND IFNULL(c.rx, 0) = 0
+           AND NOT ${delivered}
+         ) AS preparing,
+         SUM(o.od_status IN ('배송', '완료') AND NOT ${delivered}) AS delivering,
+         SUM(${delivered} AND o.od_status NOT IN ('취소', '반품')) AS completed,
+         SUM(o.od_status IN ('취소', '반품')) AS cancelled,
+         SUM(
+           IFNULL(k.rx, 0) = 0
+           AND IFNULL(k.gen, 0) = 1
+           AND o.od_status = '주문'
+           AND NOT ${delivered}
+         ) AS general_waiting,
+         SUM(
+           IFNULL(k.rx, 0) = 0
+           AND IFNULL(k.gen, 0) = 1
+           AND ${delivered}
+           AND o.od_status NOT IN ('취소', '반품')
+         ) AS general_completed
+       FROM bomiora_shop_order o
+       LEFT JOIN (
+         SELECT c.od_id,
+                MAX(
+                  CASE
+                    WHEN LOWER(IFNULL(NULLIF(c.ct_kind, ''), IFNULL(i.it_kind, ''))) = 'prescription'
+                     AND (c.parent IS NULL OR TRIM(CAST(c.parent AS CHAR)) = '')
+                    THEN 1 ELSE 0
+                  END
+                ) AS rx,
+                MAX(
+                  CASE
+                    WHEN LOWER(IFNULL(NULLIF(c.ct_kind, ''), IFNULL(i.it_kind, ''))) = 'general'
+                     AND (c.parent IS NULL OR TRIM(CAST(c.parent AS CHAR)) = '')
+                    THEN 1 ELSE 0
+                  END
+                ) AS gen
+           FROM bomiora_shop_cart c
+           LEFT JOIN bomiora_shop_item_new i ON i.it_id = c.it_id
+          GROUP BY c.od_id
+       ) k ON k.od_id = o.od_id
+       LEFT JOIN (
+         SELECT h.od_id,
+                MAX(
+                  CASE
+                    WHEN h.hp_9 = 'prescription'
+                     AND h.hp_10 = 'completion'
+                     AND h.hp_mdatetime IS NOT NULL
+                     AND h.hp_mdatetime <> '0000-00-00 00:00:00'
+                    THEN 1 ELSE 0
+                  END
+                ) AS done,
+                MAX(CASE WHEN h.hp_9 = 'prescription' THEN 1 ELSE 0 END) AS rx
+           FROM bomiora_shop_health_profiles_cart h
+          WHERE h.mb_id = ?
+          GROUP BY h.od_id
+       ) c ON c.od_id = o.od_id
+      WHERE o.mb_id = ?`,
+      [memberId, memberId]
+    );
+    const row = rows[0] || {};
+    const num = (key) => Number(row[key] || 0);
+    const paid = num('paid');
+    const consultationDone = num('consultation_done');
+    const preparing = num('preparing');
+    const delivering = num('delivering');
+    const paymentWaiting = num('payment_waiting');
+    const completed = num('completed');
+    return {
+      payment_waiting: paymentWaiting,
+      paid,
+      consultation_done: consultationDone,
+      preparing,
+      delivering,
+      completed,
+      cancelled: num('cancelled'),
+      general_waiting: num('general_waiting'),
+      general_completed: num('general_completed'),
+      open: paymentWaiting +
+        paid +
+        consultationDone +
+        preparing +
+        delivering +
+        completed,
+    };
+  }
+
+  _emptyStatusCounts() {
+    return {
+      payment_waiting: 0,
+      paid: 0,
+      consultation_done: 0,
+      preparing: 0,
+      delivering: 0,
+      completed: 0,
+      cancelled: 0,
+      general_waiting: 0,
+      general_completed: 0,
+      open: 0,
+    };
+  }
+
   async _countOrders(whereSql, whereParams) {
     const [countRows] = await pool.query(
       `SELECT COUNT(*) AS total FROM bomiora_shop_order WHERE ${whereSql}`,
