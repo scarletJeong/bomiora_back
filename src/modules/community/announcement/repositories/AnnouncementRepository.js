@@ -1,10 +1,10 @@
 const pool = require('../../../../config/database');
-const { visibleTitleSql } = require('../../../../utils/visibleSearchSql');
+const { visibleTitleSql, likeContainsPattern, likeEscapeSql } = require('../../../../utils/visibleSearchSql');
 
 class AnnouncementRepository {
   _buildWhereClause({ useKeyword = false }) {
     if (useKeyword) {
-      return 'WHERE n.is_deleted = 0 AND (n.title LIKE ? OR n.content LIKE ?)';
+      return `WHERE n.is_deleted = 0 AND (n.title LIKE ? ${likeEscapeSql} OR n.content LIKE ? ${likeEscapeSql})`;
     }
     return 'WHERE n.is_deleted = 0';
   }
@@ -26,7 +26,7 @@ class AnnouncementRepository {
     const safePage = Number.isFinite(page) && page > 0 ? page : 1;
     const safeSize = Number.isFinite(size) && size > 0 ? size : 10;
     const offset = (safePage - 1) * safeSize;
-    const keyword = `%${String(query || '').trim()}%`;
+    const keyword = likeContainsPattern(query);
     const useKeyword = String(query || '').trim().length > 0;
     const whereSql = this._buildWhereClause({ useKeyword });
     const listParams = useKeyword
@@ -64,14 +64,14 @@ class AnnouncementRepository {
   }
 
   async searchByTitle(query, limit = 20, offset = 0) {
-    const keyword = `%${String(query || '').trim()}%`;
+    const keyword = likeContainsPattern(query);
     const safeLimit = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 20;
     const safeOffset = Number.isFinite(Number(offset)) ? Math.max(0, Math.floor(Number(offset))) : 0;
     const [[countRows], [rows]] = await Promise.all([
       pool.query(
         `SELECT COUNT(*) AS total
            FROM bm_notice n
-          WHERE n.is_deleted = 0 AND ${visibleTitleSql('n.title')} LIKE ?`,
+          WHERE n.is_deleted = 0 AND ${visibleTitleSql('n.title')} LIKE ? ${likeEscapeSql}`,
         [keyword]
       ),
       pool.query(
@@ -88,7 +88,7 @@ class AnnouncementRepository {
             n.updated_by,
             n.image_path
           FROM bm_notice n
-          WHERE n.is_deleted = 0 AND ${visibleTitleSql('n.title')} LIKE ?
+          WHERE n.is_deleted = 0 AND ${visibleTitleSql('n.title')} LIKE ? ${likeEscapeSql}
           ORDER BY n.is_notice DESC, n.created_at DESC, n.id DESC
           LIMIT ? OFFSET ?`,
         [keyword, safeLimit, safeOffset]

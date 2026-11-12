@@ -5,4 +5,19 @@ function visibleTitleSql(columnSql) {
   return `TRIM(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(${withoutHandle}, '&nbsp;', ' '), '&amp;', '&'), '&lt;', '<'), '&gt;', '>'), '&quot;', '"'), '&#39;', ''''))`;
 }
 
-module.exports = { visibleTitleSql };
+/**
+ * 사용자 검색어를 LIKE 포함 패턴으로 만든다.
+ * `%` `_` `!` 는 와일드카드가 아니라 그 글자로 찾는다. `ESCAPE '!'` 와 같이 쓴다.
+ */
+function likeContainsPattern(raw) {
+  const text = String(raw ?? '')
+    .trim()
+    .replace(/!/g, '!!')
+    .replace(/%/g, '!%')
+    .replace(/_/g, '!_');
+  return `%${text}%`;
+}
+
+const likeEscapeSql = "ESCAPE '!'";
+
+module.exports = { visibleTitleSql, likeContainsPattern, likeEscapeSql };

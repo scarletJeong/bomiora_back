@@ -1,5 +1,5 @@
 const pool = require('../../../config/database');
-const { visibleTitleSql } = require('../../../utils/visibleSearchSql');
+const { visibleTitleSql, likeContainsPattern, likeEscapeSql } = require('../../../utils/visibleSearchSql');
 
 class ContentRepository {
   async findList({ page = 1, size = 20, query = '', category = '전체', titleOnly = false }) {
@@ -7,7 +7,7 @@ class ContentRepository {
     const safeSize = Number.isFinite(size) && size > 0 ? size : 20;
     const offset = (safePage - 1) * safeSize;
 
-    const keyword = `%${String(query || '').trim()}%`;
+    const keyword = likeContainsPattern(query);
     const normalizedCategory = String(category || '').trim();
     const useQuery = String(query || '').trim().length > 0;
     const useCategory =
@@ -23,10 +23,10 @@ class ContentRepository {
 
     if (useQuery) {
       if (titleOnly) {
-        whereParts.push(`${visibleTitleSql('title')} LIKE ?`);
+        whereParts.push(`${visibleTitleSql('title')} LIKE ? ${likeEscapeSql}`);
         params.push(keyword);
       } else {
-        whereParts.push('(title LIKE ? OR content LIKE ?)');
+        whereParts.push(`(title LIKE ? ${likeEscapeSql} OR content LIKE ? ${likeEscapeSql})`);
         params.push(keyword, keyword);
       }
     }

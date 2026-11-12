@@ -1,5 +1,5 @@
 const pool = require('../../../../config/database');
-const { visibleTitleSql } = require('../../../../utils/visibleSearchSql');
+const { visibleTitleSql, likeContainsPattern, likeEscapeSql } = require('../../../../utils/visibleSearchSql');
 
 /** 홈 신상품/베스트/MD — 카드에 쓰는 작은 컬럼만 (LONGTEXT·설명 제외) */
 const HOME_CARD_COLUMNS = `
@@ -314,7 +314,7 @@ class ProductRepository {
 
     const safeLimit = Number.isFinite(Number(limit)) ? Math.max(1, Math.floor(Number(limit))) : 20;
     const safeOffset = Number.isFinite(Number(offset)) ? Math.max(0, Math.floor(Number(offset))) : 0;
-    const keyword = `%${q}%`;
+    const keyword = likeContainsPattern(q);
 
     const hasKind = productKind != null && String(productKind).trim() !== '';
     // 판매중 → 종류 → 목록노출 → 카테고리 순으로 인덱스를 타게 둔다.
@@ -330,7 +330,7 @@ class ProductRepository {
       AND ca_id <> '40'
       AND (it_mb_inf IS NULL OR it_mb_inf = '' OR it_mb_inf = '0')
       AND CAST(it_name AS CHAR) NOT LIKE '%(@%'
-      AND ${visibleName} LIKE ?
+      AND ${visibleName} LIKE ? ${likeEscapeSql}
     `;
     params.push(keyword);
 
