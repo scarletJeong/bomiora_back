@@ -516,8 +516,8 @@ class PointRepository {
   }
 
   /**
-   * 웹 update_use_point()와 같은 첫 리뷰 포인트.
-   * bomiora_config.cf_1, 내용 ' 첫리뷰작성', @review / 리뷰작성.
+   * 웹 update_use_point()와 같은 첫 리뷰 포인트. 금액은 2,000점.
+   * 내용 ' 첫리뷰작성', @review / 리뷰작성.
    * mb_1 = 'y' 이거나 이미 첫 리뷰 적립이 있으면 다시 주지 않는다.
    */
   async grantFirstReviewPoint({ mbId, itId }) {
@@ -568,11 +568,11 @@ class PointRepository {
       }
 
       const [cfgRows] = await conn.query(
-        'SELECT cf_use_point, cf_1 FROM bomiora_config LIMIT 1'
+        'SELECT cf_use_point FROM bomiora_config LIMIT 1'
       );
       const usePoint = !cfgRows.length || Number(cfgRows[0].cf_use_point) === 1;
-      const amount = Math.floor(Number(cfgRows[0] && cfgRows[0].cf_1));
-      if (!usePoint || !Number.isFinite(amount) || amount <= 0) {
+      const amount = 2000;
+      if (!usePoint) {
         await conn.commit();
         return { granted: false, code: 'POINT_OFF' };
       }
@@ -610,6 +610,22 @@ class PointRepository {
     } finally {
       conn.release();
     }
+  }
+
+  /**
+   * 첫 리뷰를 지워도 첫 리뷰 자격은 다시 주지 않는다.
+   * 포인트는 빼지 않고, 이미 받은 표시만 남긴다.
+   */
+  async markFirstReviewUsed(mbId) {
+    const safeMbId = String(mbId || '').trim();
+    if (!safeMbId) return;
+    await pool.query(
+      `UPDATE bomiora_member
+          SET mb_1 = 'y'
+        WHERE mb_id = ?
+          AND (mb_1 IS NULL OR mb_1 <> 'y')`,
+      [safeMbId]
+    );
   }
 }
 

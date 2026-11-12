@@ -197,6 +197,21 @@ ${JOIN_SHOP_ITEM_NEW_SELECT}
     return result.affectedRows > 0;
   }
 
+  async isEarliestReview(mbId, isId) {
+    const memberId = String(mbId || '').trim();
+    const reviewId = Number(isId);
+    if (!memberId || !Number.isFinite(reviewId)) return false;
+    const [rows] = await pool.query(
+      `SELECT is_id
+         FROM bomiora_shop_item_use
+        WHERE mb_id = ?
+        ORDER BY is_id ASC
+        LIMIT 1`,
+      [memberId]
+    );
+    return rows.length > 0 && Number(rows[0].is_id) === reviewId;
+  }
+
   async deleteByIdAndMbId(isId, mbId) {
     const [result] = await pool.query(
       'DELETE FROM bomiora_shop_item_use WHERE is_id = ? AND mb_id = ?',

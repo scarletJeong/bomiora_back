@@ -941,6 +941,7 @@ class ReviewController {
       }
       let reviewItId = String(req.query.itId || req.query.it_id || '').trim();
       if (!reviewItId) reviewItId = this._findCachedReviewItId(mbId, isId);
+      const wasFirstReview = await reviewRepository.isEarliestReview(mbId, isId);
 
       const deleted = await reviewRepository.deleteByIdAndMbId(isId, mbId);
       if (!deleted) {
@@ -952,6 +953,13 @@ class ReviewController {
       this._invalidateMemberReviewList(mbId);
       this._invalidateProductReviewList(reviewItId);
       this._syncAggregatesLater(reviewItId);
+      if (wasFirstReview) {
+        try {
+          await pointRepository.markFirstReviewUsed(mbId);
+        } catch (pointError) {
+          console.error('[Review] 첫 리뷰 사용 표시 실패:', pointError?.message || pointError);
+        }
+      }
       return res.json({ success: true, message: '리뷰가 성공적으로 삭제되었습니다.' });
     } catch (error) {
       return res.json({ success: false, message: `리뷰 삭제 중 오류가 발생했습니다: ${error.message}` });
