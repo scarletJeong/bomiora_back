@@ -1,4 +1,5 @@
 const pool = require('../../../../config/database');
+const { visibleTitleSql } = require('../../../../utils/visibleSearchSql');
 
 /** 홈 신상품/베스트/MD — 카드에 쓰는 작은 컬럼만 (LONGTEXT·설명 제외) */
 const HOME_CARD_COLUMNS = `
@@ -323,10 +324,13 @@ class ProductRepository {
       where += ' AND it_kind = ?';
       params.push(productKind);
     }
+    const visibleName = visibleTitleSql('it_name');
     where += `
       AND it_nolist = 0
       AND ca_id <> '40'
-      AND it_name LIKE ?
+      AND (it_mb_inf IS NULL OR it_mb_inf = '' OR it_mb_inf = '0')
+      AND CAST(it_name AS CHAR) NOT LIKE '%(@%'
+      AND ${visibleName} LIKE ?
     `;
     params.push(keyword);
 

@@ -1,4 +1,5 @@
 const pool = require('../../../config/database');
+const { visibleTitleSql } = require('../../../utils/visibleSearchSql');
 
 class ContentRepository {
   async findList({ page = 1, size = 20, query = '', category = '전체', titleOnly = false }) {
@@ -22,7 +23,7 @@ class ContentRepository {
 
     if (useQuery) {
       if (titleOnly) {
-        whereParts.push('title LIKE ?');
+        whereParts.push(`${visibleTitleSql('title')} LIKE ?`);
         params.push(keyword);
       } else {
         whereParts.push('(title LIKE ? OR content LIKE ?)');

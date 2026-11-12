@@ -1,4 +1,5 @@
 const pool = require('../../../../config/database');
+const { visibleTitleSql } = require('../../../../utils/visibleSearchSql');
 
 class AnnouncementRepository {
   _buildWhereClause({ useKeyword = false }) {
@@ -70,7 +71,7 @@ class AnnouncementRepository {
       pool.query(
         `SELECT COUNT(*) AS total
            FROM bm_notice n
-          WHERE n.is_deleted = 0 AND n.title LIKE ?`,
+          WHERE n.is_deleted = 0 AND ${visibleTitleSql('n.title')} LIKE ?`,
         [keyword]
       ),
       pool.query(
@@ -87,7 +88,7 @@ class AnnouncementRepository {
             n.updated_by,
             n.image_path
           FROM bm_notice n
-          WHERE n.is_deleted = 0 AND n.title LIKE ?
+          WHERE n.is_deleted = 0 AND ${visibleTitleSql('n.title')} LIKE ?
           ORDER BY n.is_notice DESC, n.created_at DESC, n.id DESC
           LIMIT ? OFFSET ?`,
         [keyword, safeLimit, safeOffset]
