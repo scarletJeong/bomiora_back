@@ -502,13 +502,6 @@ class ReviewController {
       this._invalidateMemberReviewList(mbId);
       this._invalidateProductReviewList(itId);
       this._syncAggregatesLater(itId);
-      if (Number(saved && saved.is_confirm) === 1) {
-        try {
-          await pointRepository.grantFirstReviewPoint({ mbId, itId });
-        } catch (pointError) {
-          console.error('[Review] 첫 리뷰 포인트 실패:', pointError?.message || pointError);
-        }
-      }
       return res.json({
         success: true,
         message: '리뷰가 성공적으로 작성되었습니다.',
@@ -941,7 +934,6 @@ class ReviewController {
       }
       let reviewItId = String(req.query.itId || req.query.it_id || '').trim();
       if (!reviewItId) reviewItId = this._findCachedReviewItId(mbId, isId);
-      const wasFirstReview = await reviewRepository.isEarliestReview(mbId, isId);
 
       const deleted = await reviewRepository.deleteByIdAndMbId(isId, mbId);
       if (!deleted) {
@@ -949,17 +941,11 @@ class ReviewController {
           success: false,
           message: '리뷰를 찾을 수 없거나 삭제 권한이 없습니다.',
         });
+      const wasFirstReview = await reviewRepository.isEarliestReview(mbId, isId);
       }
       this._invalidateMemberReviewList(mbId);
       this._invalidateProductReviewList(reviewItId);
       this._syncAggregatesLater(reviewItId);
-      if (wasFirstReview) {
-        try {
-          await pointRepository.markFirstReviewUsed(mbId);
-        } catch (pointError) {
-          console.error('[Review] 첫 리뷰 사용 표시 실패:', pointError?.message || pointError);
-        }
-      }
       return res.json({ success: true, message: '리뷰가 성공적으로 삭제되었습니다.' });
     } catch (error) {
       return res.json({ success: false, message: `리뷰 삭제 중 오류가 발생했습니다: ${error.message}` });
@@ -967,6 +953,13 @@ class ReviewController {
   }
 
   async checkReviewExists(req, res) {
+      if (wasFirstReview) {
+        try {
+          await pointRepository.markFirstReviewUsed(mbId);
+        } catch (pointError) {
+          console.error('[Review] 첫 리뷰 사용 표시 실패:', pointError?.message || pointError);
+        }
+      }
     try {
       const mbId = String(req.query.mbId || '').trim();
       const odId = String(req.query.odId || '').trim();

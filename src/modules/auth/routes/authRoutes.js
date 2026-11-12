@@ -41,6 +41,7 @@ router.post('/register', (req, res) => userController.register(req, res));
 router.post('/find-id', (req, res) => userController.findId(req, res));
 router.post('/forgot-password', (req, res) => userController.forgotPassword(req, res));
 router.post('/reset-password', (req, res) => userController.resetPassword(req, res));
+router.get('/withdraw-pending', (req, res) => userController.withdrawPending(req, res));
 router.post('/withdraw', (req, res) => userController.withdraw(req, res));
 router.get('/session', (req, res) => userController.session(req, res));
 router.post('/admin-login-token', (req, res) =>

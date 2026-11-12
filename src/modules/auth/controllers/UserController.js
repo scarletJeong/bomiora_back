@@ -1,4 +1,5 @@
 const userRepository = require('../repositories/UserRepository');
+const orderRepository = require('../../user/delivery/repositories/OrderRepository');
 const pointRepository = require('../../user/point/repositories/PointRepository');
 const otpRepository = require('../repositories/OtpRepository');
 const { verifyPBKDF2Password, mysqlPassword, createPBKDF2Password } = require('../../../utils/passwordUtil');
@@ -880,6 +881,29 @@ class UserController {
       return res.status(500).json({
         success: false,
         message: '환불계좌 저장 중 오류가 발생했습니다.',
+      });
+    }
+  }
+
+  /**
+   * 탈퇴 전 진행 중 주문·상담·예약 건수
+   */
+  async withdrawPending(req, res) {
+    try {
+      const mbId = String(req.query?.mbId || req.query?.mb_id || '').trim();
+      if (!mbId) {
+        return res.status(400).json({
+          success: false,
+          message: 'mbId가 필요합니다.',
+        });
+      }
+      const progress = await orderRepository.countWithdrawProgress(mbId);
+      return res.json({ success: true, ...progress });
+    } catch (error) {
+      console.error('❌ [WITHDRAW PENDING] 오류:', error);
+      return res.status(500).json({
+        success: false,
+        message: '진행 중인 내역을 불러오지 못했습니다.',
       });
     }
   }

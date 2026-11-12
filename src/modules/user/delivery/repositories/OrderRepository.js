@@ -1392,6 +1392,102 @@ class OrderRepository {
     }
     return cancelled;
   }
+
+  /**
+   * 탈퇴 안내 화면용. 결제대기·결제완료·배송준비, 상담완료, 진행 중 예약.
+   */
+  async countWithdrawProgress(mbId) {
+    const memberId = String(mbId || '').trim();
+    const empty = {
+      paymentWaiting: 0,
+      paid: 0,
+      preparing: 0,
+      consultationDone: 0,
+      ongoingReservation: 0,
+    };
+    if (!memberId) return empty;
+
+    const statuses = await this.countOrderStatuses(memberId);
+    const [rows] = await pool.query(
+      `SELECT
+         COUNT(DISTINCT CASE
+           WHEN IFNULL(h.hp_status, '') <> '취소'
+            AND (
+              IFNULL(h.hp_status, '') = '상담완료'
+              OR (
+                h.hp_9 = 'prescription'
+                AND h.hp_10 = 'completion'
+                AND h.hp_mdatetime IS NOT NULL
+                AND h.hp_mdatetime <> '0000-00-00 00:00:00'
+              )
+            )
+           THEN IF(TRIM(CAST(h.od_id AS CHAR)) = '', h.hp_no, h.od_id)
+         END) AS consultation_done,
+         COUNT(DISTINCT CASE
+           WHEN IFNULL(h.hp_status, '') NOT IN ('취소', '상담완료')
+            AND NOT (
+              h.hp_9 = 'prescription'
+              AND h.hp_10 = 'completion'
+              AND h.hp_mdatetime IS NOT NULL
+              AND h.hp_mdatetime <> '0000-00-00 00:00:00'
+            )
+            AND (
+              (
+                h.hp_rsvt_date IS NOT NULL
+                AND CAST(h.hp_rsvt_date AS CHAR) NOT IN ('', '0000-00-00', '0000-00-00 00:00:00')
+              )
+              OR IFNULL(h.hp_status, '') IN ('쇼핑', '입금', '준비')
+            )
+           THEN IF(TRIM(CAST(h.od_id AS CHAR)) = '', h.hp_no, h.od_id)
+         END) AS ongoing_reservation
+       FROM bomiora_shop_health_profiles_cart h
+       WHERE h.mb_id = ?`,
+      [memberId]
+    );
+    const row = rows[0] || {};
+    return {
+      paymentWaiting: Number(statuses.payment_waiting || 0),
+      paid: Number(statuses.paid || 0),
+      preparing: Number(statuses.preparing || 0),
+      consultationDone: Number(row.consultation_done || 0),
+      ongoingReservation: Number(row.ongoing_reservation || 0),
+    };
+  }
+
+  /** 탈퇴 시 끝나지 않은 예약을 취소하고 사유를 회원탈퇴로 남긴다. */
+  async cancelOngoingReservationsForWithdraw(connection, mbId) {
+    const memberId = String(mbId || '').trim();
+    if (!memberId) return 0;
+    const q = connection || pool;
+    const [result] = await q.query(
+      `UPDATE bomiora_shop_health_profiles_cart
+          SET hp_status = '취소',
+              hp_output = 'N',
+              hp_mdatetime = NOW(),
+              hp_memo = CASE
+                WHEN TRIM(IFNULL(hp_memo, '')) = '' THEN '회원탈퇴'
+                WHEN TRIM(hp_memo) LIKE '회원탈퇴%' THEN hp_memo
+                ELSE CONCAT('회원탈퇴', '\n', hp_memo)
+              END
+        WHERE mb_id = ?
+          AND IFNULL(hp_status, '') NOT IN ('취소', '상담완료')
+          AND NOT (
+            hp_9 = 'prescription'
+            AND hp_10 = 'completion'
+            AND hp_mdatetime IS NOT NULL
+            AND hp_mdatetime <> '0000-00-00 00:00:00'
+          )
+          AND (
+            (
+              hp_rsvt_date IS NOT NULL
+              AND CAST(hp_rsvt_date AS CHAR) NOT IN ('', '0000-00-00', '0000-00-00 00:00:00')
+            )
+            OR IFNULL(hp_status, '') IN ('쇼핑', '입금', '준비')
+          )`,
+      [memberId]
+    );
+    return Number(result?.affectedRows || 0);
+  }
 }
 
 module.exports = new OrderRepository();

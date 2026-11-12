@@ -591,6 +591,9 @@ class UserRepository {
       const oldMemo = String(member.mb_memo || '').trim();
       const nextMemo = oldMemo ? `${leaveLine}\n${oldMemo}` : leaveLine;
 
+      const orderRepository = require('../../user/delivery/repositories/OrderRepository');
+      await orderRepository.cancelOngoingReservationsForWithdraw(conn, mbId);
+
       await conn.query(
         `UPDATE bomiora_member
          SET mb_leave_date = ?,
