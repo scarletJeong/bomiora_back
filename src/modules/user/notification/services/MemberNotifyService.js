@@ -69,6 +69,13 @@ async function sendToMember(mbId, options = {}) {
       return { success: false, skipped: true, reason: 'member_not_found' };
     }
 
+    if (type === 'coupon' || type === 'review') {
+      const settings = await notificationRepository.findSettingsByMbId(safeMbId);
+      if (!settings || !readBool(settings.mb_notif_marketing)) {
+        return { success: true, skipped: true, reason: 'marketing_agree_off' };
+      }
+    }
+
     if (!bypassAppPushAgree) {
       const settings = await notificationRepository.findSettingsByMbId(safeMbId);
       if (settings && !readBool(settings.mb_notif_app_push)) {

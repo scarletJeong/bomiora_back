@@ -56,6 +56,17 @@ class InternalNotifyController {
         return res.json({ success: true, data: result });
       }
 
+      if (type === 'coupon' || type === 'review') {
+        const settings = await notificationRepository.findSettingsByMbId(mbId);
+        if (!settings || !readBool(settings.mb_notif_marketing)) {
+          return res.json({
+            success: true,
+            skipped: true,
+            reason: 'marketing_agree_off',
+          });
+        }
+      }
+
       const isServiceType =
         type === 'contact' || type === 'inquiry' || type === 'qna' || type === 'coupon';
 
