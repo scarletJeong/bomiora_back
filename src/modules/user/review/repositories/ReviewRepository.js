@@ -421,11 +421,30 @@ ${JOIN_SHOP_ITEM_NEW_SELECT}
     return { rows, total: countRows[0].count };
   }
 
-  async findByMember(mbId, page, size) {
-    const offset = page * size;
+  async findByMember(mbId, page, size, keyword = '') {
     const take = Math.max(1, Number(size) || 20);
-    const [rows] = await pool.query(
-      `SELECT
+    const offset = Math.max(0, Number(page) || 0) * take;
+    const q = String(keyword || '').trim().slice(0, 100);
+    const where = ['r.mb_id = ?'];
+    const params = [mbId];
+    if (q) {
+      const like = `%${q.replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`;
+      where.push(
+        `LOWER(CASE WHEN TRIM(COALESCE(n.it_name, n.it_subject, '')) = '' THEN '상품명 없음' ELSE COALESCE(n.it_name, n.it_subject, '') END) LIKE LOWER(?) ESCAPE '\\\\'`
+      );
+      params.push(like);
+    }
+    const whereSql = where.join(' AND ');
+    const [[countRows], [rows]] = await Promise.all([
+      pool.query(
+        `SELECT COUNT(DISTINCT r.is_id) AS count
+         FROM bomiora_shop_item_use r
+         LEFT JOIN bomiora_shop_item_new n ON n.it_id = r.it_id
+         WHERE ${whereSql}`,
+        params
+      ),
+      pool.query(
+        `SELECT
          r.is_id,
          r.it_id,
          r.mb_id,
@@ -454,15 +473,15 @@ ${JOIN_SHOP_ITEM_NEW_SELECT}
        FROM bomiora_shop_item_use r
        LEFT JOIN bomiora_member mem ON mem.mb_id = r.mb_id
        LEFT JOIN bomiora_shop_item_new n ON n.it_id = r.it_id
-       WHERE r.mb_id = ?
+       WHERE ${whereSql}
        ORDER BY r.is_id DESC
        LIMIT ? OFFSET ?`,
-      [mbId, take + 1, offset]
-    );
-    const hasMore = rows.length > take;
-    const pageRows = hasMore ? rows.slice(0, take) : rows;
-    const total = offset + pageRows.length + (hasMore ? 1 : 0);
-    return { rows: pageRows, total, hasMore };
+        [...params, take, offset]
+      ),
+    ]);
+    const total = Number(countRows[0]?.count) || 0;
+    const hasMore = offset + rows.length < total;
+    return { rows, total, hasMore };
   }
 
   async findAll(rvkind, page, size) {

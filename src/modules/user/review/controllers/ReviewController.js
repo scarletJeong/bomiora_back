@@ -30,6 +30,13 @@ class ReviewController {
     return Math.round(n * 10) / 10;
   }
 
+  /** 처방 세부 별점. 0.1 단위를 유지하고 0~5로 맞춘다. */
+  _clampTenthScore(value) {
+    const n = this._normalizeTenthScore(value);
+    if (n == null || n <= 0) return 0;
+    return Math.min(5, n);
+  }
+
   /** DB total_is_score — null/빈값만 미설정. 0도 유효 값으로 취급 */
   _parseStoredTotal(rowOrValue) {
     const totalRaw =
@@ -421,10 +428,10 @@ class ReviewController {
 
       const images = this._normalizeReviewImages(req.body.images);
       const imageOrEmpty = (index) => images[index] || '';
-      const s1 = this._normalizeTenthScore(req.body.isScore1) ?? 0;
-      const s2 = this._normalizeTenthScore(req.body.isScore2) ?? 0;
-      const s3 = this._normalizeTenthScore(req.body.isScore3) ?? 0;
-      const s4 = this._normalizeTenthScore(req.body.isScore4) ?? 0;
+      const s1 = this._clampTenthScore(req.body.isScore1);
+      const s2 = this._clampTenthScore(req.body.isScore2);
+      const s3 = this._clampTenthScore(req.body.isScore3);
+      const s4 = this._clampTenthScore(req.body.isScore4);
       const isPrescription =
         String(req.body.isRvkind || '').toLowerCase() === 'prescription';
       // 처방: 효과·가성비·향/맛·편리함 평균 → total_is_score (is_score1~4 는 그대로 저장)
@@ -439,13 +446,6 @@ class ReviewController {
         }
       }
 
-      // DB is_score1~4 는 INT — 0.1 단위는 반올림해 저장 (기존 데이터와 동일)
-      const scoreInt = (v) => {
-        const n = Number(v);
-        if (!Number.isFinite(n) || n <= 0) return 0;
-        return Math.min(5, Math.max(0, Math.round(n)));
-      };
-
       const rvkind = String(req.body.isRvkind || 'general').trim().toLowerCase();
       const memberDisplayName = rvkind === 'supporter'
         ? ''
@@ -458,10 +458,10 @@ class ReviewController {
           ? (req.body.isName || mbId)
           : memberDisplayName,
         is_confirm: 1,
-        is_score1: scoreInt(s1),
-        is_score2: scoreInt(s2),
-        is_score3: scoreInt(s3),
-        is_score4: scoreInt(s4),
+        is_score1: s1,
+        is_score2: s2,
+        is_score3: s3,
+        is_score4: s4,
         total_is_score: total,
         is_rvkind: req.body.isRvkind || 'general',
         is_recommend: req.body.isRecommend || 'y',
@@ -558,9 +558,10 @@ class ReviewController {
     try {
       const { page, size } = this._reviewListPagination(req);
       const mbId = String(req.params.mbId || '').trim();
-      const cacheKey = `member:${mbId}:${page}:${size}`;
+      const itName = String(req.query.itName || '').trim().slice(0, 100);
+      const cacheKey = `member:${mbId}:${page}:${size}:${itName}`;
       const payload = await memberReviewListCache.getOrSet(cacheKey, async () => {
-        const result = await reviewRepository.findByMember(mbId, page, size);
+        const result = await reviewRepository.findByMember(mbId, page, size, itName);
         return {
           success: true,
           reviews: result.rows.map((r) => this.toReviewResponse(r)),
@@ -818,19 +819,14 @@ class ReviewController {
         String(req.body.isRvkind || '').toLowerCase() === 'general';
 
       if (!isGeneralProduct) {
-        const scoreInt = (v) => {
-          const n = Number(v);
-          if (!Number.isFinite(n) || n <= 0) return 0;
-          return Math.min(5, Math.max(0, Math.round(n)));
-        };
-        if (req.body.isScore1 != null) fields.is_score1 = scoreInt(req.body.isScore1);
-        if (req.body.isScore2 != null) fields.is_score2 = scoreInt(req.body.isScore2);
-        if (req.body.isScore3 != null) fields.is_score3 = scoreInt(req.body.isScore3);
-        if (req.body.isScore4 != null) fields.is_score4 = scoreInt(req.body.isScore4);
-        const s1 = fields.is_score1 ?? req.body.isScore1;
-        const s2 = fields.is_score2 ?? req.body.isScore2;
-        const s3 = fields.is_score3 ?? req.body.isScore3;
-        const s4 = fields.is_score4 ?? req.body.isScore4;
+        if (req.body.isScore1 != null) fields.is_score1 = this._clampTenthScore(req.body.isScore1);
+        if (req.body.isScore2 != null) fields.is_score2 = this._clampTenthScore(req.body.isScore2);
+        if (req.body.isScore3 != null) fields.is_score3 = this._clampTenthScore(req.body.isScore3);
+        if (req.body.isScore4 != null) fields.is_score4 = this._clampTenthScore(req.body.isScore4);
+        const s1 = fields.is_score1 ?? this._clampTenthScore(req.body.isScore1);
+        const s2 = fields.is_score2 ?? this._clampTenthScore(req.body.isScore2);
+        const s3 = fields.is_score3 ?? this._clampTenthScore(req.body.isScore3);
+        const s4 = fields.is_score4 ?? this._clampTenthScore(req.body.isScore4);
         fields.total_is_score = this._avgFourScores(s1, s2, s3, s4);
       } else if (req.body.totalIsScore !== undefined && req.body.totalIsScore !== null) {
         fields.total_is_score = this._normalizeTenthScore(req.body.totalIsScore);
