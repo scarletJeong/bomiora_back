@@ -1,4 +1,5 @@
 const announcementRepository = require('../repositories/AnnouncementRepository');
+const imageProxyController = require('../../../common/imageProxy/controllers/ImageProxyController');
 const { TtlCache } = require('../../../../utils/ttlCache');
 const { registerPublicCache } = require('../../../internal/cache/publicCacheRegistry');
 
@@ -8,6 +9,61 @@ registerPublicCache('announcement', announcementListCache);
 registerPublicCache('announcement', announcementDetailCache);
 
 class AnnouncementController {
+  async listPayload(page, size, query = '') {
+    const cacheKey = `list:${page}:${size}:${String(query).trim()}`;
+    const payload = await announcementListCache.getOrSetStale(cacheKey, async () => {
+      const result = await announcementRepository.findList({ page, size, query });
+      return {
+        success: true,
+        data: result.rows.map((row) => this.toMap(row)),
+        pagination: {
+          total: result.total,
+          page: result.page,
+          size: result.size,
+          totalPages: result.size > 0 ? Math.ceil(result.total / result.size) : 0,
+        },
+      };
+    });
+    this.primeDetailCaches(payload.data);
+    return payload;
+  }
+
+  primeDetailCaches(items) {
+    if (!Array.isArray(items)) return;
+    for (let i = 0; i < items.length; i += 1) {
+      const item = items[i];
+      if (!item?.id) continue;
+      announcementDetailCache.set(`detail:${item.id}`, {
+        success: true,
+        data: item,
+        prev: i > 0
+          ? { id: items[i - 1].id, title: items[i - 1].title }
+          : null,
+        next: i + 1 < items.length
+          ? { id: items[i + 1].id, title: items[i + 1].title }
+          : null,
+      });
+    }
+  }
+
+  announcementImageUrl(raw) {
+    const value = String(raw || '').trim().replace(/^\/+/, '');
+    if (!value) return '';
+    if (/^https?:\/\//i.test(value)) return value;
+    const path = value.toLowerCase().startsWith('data/')
+      ? value
+      : `data/${value}`;
+    return `https://bomiora0.mycafe24.com/${path}`;
+  }
+
+  async warmPublicCaches() {
+    const payload = await this.listPayload(1, 10, '');
+    for (const item of payload.data || []) {
+      const url = this.announcementImageUrl(item.image_path);
+      if (url) imageProxyController.warmThumb(url, 1200).catch(() => {});
+    }
+  }
+
   normalizeText(value) {
     if (value == null) return null;
     if (Buffer.isBuffer(value)) return value.toString('utf8');
@@ -38,21 +94,7 @@ class AnnouncementController {
       const page = Number(req.query.page || 1);
       const size = Number(req.query.size || 10);
       const query = req.query.query || '';
-      const cacheKey = `list:${page}:${size}:${String(query).trim()}`;
-
-      const payload = await announcementListCache.getOrSetStale(cacheKey, async () => {
-        const result = await announcementRepository.findList({ page, size, query });
-        return {
-          success: true,
-          data: result.rows.map((row) => this.toMap(row)),
-          pagination: {
-            total: result.total,
-            page: result.page,
-            size: result.size,
-            totalPages: result.size > 0 ? Math.ceil(result.total / result.size) : 0,
-          },
-        };
-      });
+      const payload = await this.listPayload(page, size, query);
 
       res.set('Cache-Control', 'public, max-age=30');
       return res.json(payload);
