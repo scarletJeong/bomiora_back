@@ -30,7 +30,7 @@ class PointRepository {
       return fallback.length ? Number(fallback[0].po_mb_point || 0) : 0;
     });
   }
-
+ 
   async findHistoryByUserId(userId, limit = 50, offset = 0) {
     const id = String(userId || '').trim();
     if (!id) return { rows: [], hasMore: false };

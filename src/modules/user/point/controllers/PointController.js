@@ -59,7 +59,7 @@ class PointController {
         .json({ success: false, message: `첫 로그인 포인트 지급 실패: ${error.message}` });
     }
   }
-
+ 
   async getPointHistory(req, res) {
     try {
       const userId = String(req.query.mb_id || '').trim();
