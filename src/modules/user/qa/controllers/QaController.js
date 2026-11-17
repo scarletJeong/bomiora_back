@@ -280,10 +280,12 @@ class QaController {
         mbId: req.query.mb_id || req.query.mbId,
         mbEmail: req.query.mb_email || req.query.mbEmail,
       };
-      const contacts = await qaRepository.findThreadsByIdentity(identity);
-      qaRepository.autoCloseExpiredForIdentity(identity).catch((err) => {
+      try {
+        await qaRepository.autoCloseExpiredForIdentity(identity);
+      } catch (err) {
         console.warn('[QA] 일괄 자동종료 스킵:', err?.message || err);
-      });
+      }
+      const contacts = await qaRepository.findThreadsByIdentity(identity);
       return res.json({
         success: true,
         data: contacts.map((c) => this.toListMap(c)),

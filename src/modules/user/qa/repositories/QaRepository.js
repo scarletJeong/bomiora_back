@@ -89,7 +89,7 @@ class QaRepository {
     return rows;
   }
 
-  /** 답변 후 2일 경과 원글을 한 번에 종료. 목록 응답을 막지 않도록 호출측에서 fire-and-forget. */
+  /** 답변 후 2일 경과 원글을 한 번에 종료. 목록 조회 전에 끝낸다. */
   async autoCloseExpiredForIdentity({ mbId, mbEmail }) {
     const { where, args } = this._identityWhere({ mbId, mbEmail, alias: 'root' });
     if (!where) return 0;
