@@ -511,7 +511,7 @@ class ReviewController {
       console.error('[ReviewController.createReview]', error);
       return res.json({
         success: false,
-        message: `리뷰 작성 중 오류가 발생했습니다: ${error.message}`,
+        message: '리뷰 작성 중 오류가 발생했습니다.',
       });
     }
   }
@@ -908,7 +908,7 @@ class ReviewController {
         review: this.toReviewResponse(merged),
       });
     } catch (error) {
-      return res.json({ success: false, message: `리뷰 수정 중 오류가 발생했습니다: ${error.message}` });
+      return res.json({ success: false, message: '리뷰 수정 중 오류가 발생했습니다.' });
     }
   }
 
