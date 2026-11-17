@@ -564,7 +564,14 @@ ${JOIN_SHOP_ITEM_NEW_SELECT}
       `SELECT
          COUNT(*) AS totalCount,
          SUM(CASE WHEN CAST(is_rvkind AS CHAR) = 'supporter' THEN 1 ELSE 0 END) AS supporterCount,
-         AVG((COALESCE(is_score1,0) + COALESCE(is_score2,0) + COALESCE(is_score3,0) + COALESCE(is_score4,0))/4.0) AS averageScore,
+         AVG(
+           CASE
+             WHEN COALESCE(total_is_score, 0) > 0 THEN total_is_score
+             WHEN (COALESCE(is_score1,0) + COALESCE(is_score2,0) + COALESCE(is_score3,0) + COALESCE(is_score4,0)) > 0
+               THEN (COALESCE(is_score1,0) + COALESCE(is_score2,0) + COALESCE(is_score3,0) + COALESCE(is_score4,0)) / 4.0
+             ELSE NULL
+           END
+         ) AS averageScore,
          AVG(COALESCE(is_score1,0)) AS score1Avg,
          AVG(COALESCE(is_score2,0)) AS score2Avg,
          AVG(COALESCE(is_score3,0)) AS score3Avg,
