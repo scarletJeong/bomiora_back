@@ -31,27 +31,35 @@ class PointRepository {
     });
   }
 
-  async findHistoryByUserId(userId, limit = 50) {
+  async findHistoryByUserId(userId, limit = 50, offset = 0) {
     const id = String(userId || '').trim();
-    if (!id) return [];
+    if (!id) return { rows: [], hasMore: false };
     const safeLimit = Math.min(Math.max(Number(limit) || 50, 1), 100);
-    return pointReadCache.getOrSet(`history:${id}:${safeLimit}`, async () => {
-      const [rows] = await pool.query(
-        `SELECT
-           po_id,
-           po_datetime,
-           LEFT(IFNULL(po_content, ''), 80) AS po_content,
-           po_point,
-           po_use_point,
-           po_expire_date
-         FROM bomiora_point
-         WHERE mb_id = ?
-         ORDER BY po_id DESC
-         LIMIT ?`,
-        [id, safeLimit]
-      );
-      return rows;
-    });
+    const safeOffset = Math.max(parseInt(offset, 10) || 0, 0);
+    return pointReadCache.getOrSet(
+      `history:${id}:${safeLimit}:${safeOffset}`,
+      async () => {
+        const [rows] = await pool.query(
+          `SELECT
+             po_id,
+             po_datetime,
+             LEFT(IFNULL(po_content, ''), 80) AS po_content,
+             po_point,
+             po_use_point,
+             po_expire_date
+           FROM bomiora_point
+           WHERE mb_id = ?
+           ORDER BY po_id DESC
+           LIMIT ? OFFSET ?`,
+          [id, safeLimit + 1, safeOffset]
+        );
+        const hasMore = rows.length > safeLimit;
+        return {
+          rows: hasMore ? rows.slice(0, safeLimit) : rows,
+          hasMore,
+        };
+      }
+    );
   }
 
   async grantDailyFirstLoginPoint({ mbId, ip = '' }) {

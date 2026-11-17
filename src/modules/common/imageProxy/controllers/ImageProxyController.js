@@ -166,17 +166,18 @@ class ImageProxyController {
   thumbWidth(raw) {
     const n = Number(raw);
     if (!Number.isFinite(n) || n <= 0) return 0;
-    return Math.min(480, Math.max(32, Math.round(n)));
+    return Math.min(1200, Math.max(32, Math.round(n)));
   }
 
   /** 검색 썸네일용. 원본이 10MB가 넘어도 가로만 줄여 jpeg로 보낸다. */
   async resizeForThumb(buf, width) {
     if (!width || !buf || !buf.length) return null;
+    const large = width > 480;
     try {
       return await sharp(buf, { failOn: 'none', limitInputPixels: false, sequentialRead: true })
         .rotate()
-        .resize({ width, withoutEnlargement: true, fastShrinkOnLoad: true })
-        .jpeg({ quality: 60, mozjpeg: false, progressive: false })
+        .resize({ width, withoutEnlargement: true, fastShrinkOnLoad: !large })
+        .jpeg({ quality: large ? 85 : 60, mozjpeg: false, progressive: false })
         .toBuffer();
     } catch (_) {
       return null;
@@ -266,6 +267,21 @@ class ImageProxyController {
     this.setImageCacheHeaders(res, shortLived);
     this.writeProxyCache(key, out, outType);
     return res.status(200).send(out);
+  }
+
+  async warmThumb(targetUrl, width) {
+    if (!this.isAllowedUrl(targetUrl)) return false;
+    const thumbW = this.thumbWidth(width);
+    if (!thumbW) return false;
+    const key = this.cacheKey(`${targetUrl}|w=${thumbW}`);
+    const cached = await this.readProxyCache(key, this.cacheTtlFor(targetUrl));
+    if (cached) return true;
+    const origin = await this.loadOriginBytes(targetUrl);
+    if (!origin || origin.status || !origin.buf) return false;
+    const resized = await this.resizeForThumb(origin.buf, thumbW);
+    if (!resized) return false;
+    await this.writeProxyCache(key, resized, 'image/jpeg');
+    return true;
   }
 
   async sendOptimizedWebp(res, key, bytes) {

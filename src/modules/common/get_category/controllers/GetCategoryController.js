@@ -38,7 +38,7 @@ class GetCategoryController {
         });
       }
 
-      const payload = await categoryCache.getOrSet(`grp:${grp}`, async () => {
+      const payload = await categoryCache.getOrSetStale(`grp:${grp}`, async () => {
         const rows = await getCategoryRepository.findByGroup(grp);
         return {
           success: true,

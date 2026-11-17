@@ -67,9 +67,14 @@ class PointController {
         return res.status(400).json({ success: false, message: 'mb_id가 필요합니다.' });
       }
       const limit = Math.min(Math.max(Number(req.query.size) || 50, 1), 100);
-      const history = await pointRepository.findHistoryByUserId(userId, limit);
+      const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
+      const page = await pointRepository.findHistoryByUserId(userId, limit, offset);
       res.set('Cache-Control', 'private, max-age=30');
-      return res.json({ success: true, data: history });
+      return res.json({
+        success: true,
+        data: page.rows,
+        hasMore: page.hasMore === true,
+      });
     } catch (error) {
       return res.status(500).json({ success: false, message: `포인트 내역 조회 실패: ${error.message}` });
     }

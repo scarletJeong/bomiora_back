@@ -1,4 +1,5 @@
 const eventRepository = require('../repositories/EventRepository');
+const imageProxyController = require('../../../common/imageProxy/controllers/ImageProxyController');
 const { TtlCache } = require('../../../../utils/ttlCache');
 const { registerPublicCache } = require('../../../internal/cache/publicCacheRegistry');
 
@@ -8,6 +9,44 @@ registerPublicCache('event', eventListCache);
 registerPublicCache('event', eventDetailCache);
 
 class EventController {
+  async activePayload() {
+    return eventListCache.getOrSetStale('active', async () => {
+      const rows = await eventRepository.findActiveEvents();
+      return { success: true, data: rows.map((row) => this.toMap(row)) };
+    });
+  }
+
+  async endedPayload() {
+    return eventListCache.getOrSetStale('ended', async () => {
+      const rows = await eventRepository.findEndedEvents();
+      return { success: true, data: rows.map((row) => this.toMap(row)) };
+    });
+  }
+
+  eventImageUrl(raw) {
+    const value = String(raw || '').trim().replace(/^\/+/, '');
+    if (!value) return '';
+    if (/^https?:\/\//i.test(value)) return value;
+    if (value.toLowerCase().startsWith('data/event/')) {
+      return `https://bomiora0.mycafe24.com/${value}`;
+    }
+    const path = value.toLowerCase().startsWith('event/')
+      ? value
+      : `event/${value}`;
+    return `https://bomiora0.mycafe24.com/data/${path}`;
+  }
+
+  async warmPublicCaches() {
+    const [active, ended] = await Promise.all([
+      this.activePayload(),
+      this.endedPayload(),
+    ]);
+    for (const item of [...(active.data || []), ...(ended.data || [])]) {
+      const url = this.eventImageUrl(item.image_path);
+      if (url) imageProxyController.warmThumb(url, 1200).catch(() => {});
+    }
+  }
+
   normalizeText(value) {
     if (value == null) return null;
     if (Buffer.isBuffer(value)) return value.toString('utf8');
@@ -95,13 +134,7 @@ class EventController {
 
   async getActiveEvents(req, res) {
     try {
-      const payload = await eventListCache.getOrSet('active', async () => {
-        const rows = await eventRepository.findActiveEvents();
-        return {
-          success: true,
-          data: rows.map((row) => this.toMap(row)),
-        };
-      });
+      const payload = await this.activePayload();
       res.set('Cache-Control', 'public, max-age=60');
       return res.json(payload);
     } catch (error) {
@@ -114,13 +147,7 @@ class EventController {
 
   async getEndedEvents(req, res) {
     try {
-      const payload = await eventListCache.getOrSet('ended', async () => {
-        const rows = await eventRepository.findEndedEvents();
-        return {
-          success: true,
-          data: rows.map((row) => this.toMap(row)),
-        };
-      });
+      const payload = await this.endedPayload();
       res.set('Cache-Control', 'public, max-age=60');
       return res.json(payload);
     } catch (error) {
@@ -141,7 +168,7 @@ class EventController {
         });
       }
 
-      const payload = await eventDetailCache.getOrSet(`detail:${id}`, async () => {
+      const payload = await eventDetailCache.getOrSetStale(`detail:${id}`, async () => {
         const row = await eventRepository.findById(id);
         if (!row) {
           return { success: false, status: 404, message: '이벤트를 찾을 수 없습니다.' };

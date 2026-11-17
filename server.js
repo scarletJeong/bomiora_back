@@ -189,9 +189,11 @@ app.listen(PORT, () => {
   try {
     const productController = require('./src/modules/shopping/product/controllers/ProductController');
     const bannerController = require('./src/modules/home/banner/controllers/BannerController');
+    const eventController = require('./src/modules/shopping/event/controllers/EventController');
     Promise.all([
       productController.warmHomeProductCaches(),
       bannerController.warmMainBanners(),
+      eventController.warmPublicCaches(),
     ]).catch((e) => {
       console.warn('[HomeWarm] 스킵:', e.message);
     });
@@ -225,6 +227,14 @@ app.listen(PORT, () => {
     require('./src/modules/internal/jobs/DepositExpiryScheduler').startDepositExpiryScheduler();
   } catch (e) {
     console.warn('[DepositExpiryScheduler] 시작 스킵:', e.message);
+  }
+
+  try {
+    require('./src/modules/user/coupon/repositories/CouponRepository')
+      .ensureCancelRestoredColumn()
+      .catch((e) => console.warn('[SchemaEnsure] cp_cancel_restored 스킵:', e.message));
+  } catch (e) {
+    console.warn('[SchemaEnsure] cp_cancel_restored 로드 스킵:', e.message);
   }
 
   // 종속옵션·연결상품 스키마 보장

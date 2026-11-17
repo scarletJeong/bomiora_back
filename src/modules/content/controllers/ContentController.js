@@ -55,6 +55,25 @@ class ContentController {
     return plain.length > 120 ? `${plain.slice(0, 120)}...` : plain;
   }
 
+  async detailPayload(id) {
+    return contentListCache.getOrSetStale(`detailFull:${id}`, async () => {
+      const [row, adjacent] = await Promise.all([
+        contentRepository.findById(id),
+        contentRepository.findAdjacentById(id),
+      ]);
+      if (!row) return null;
+      return {
+        data: this.toMap(row),
+        prev: adjacent.prev
+          ? { id: adjacent.prev.id, title: this.normalizeText(adjacent.prev.title) }
+          : null,
+        next: adjacent.next
+          ? { id: adjacent.next.id, title: this.normalizeText(adjacent.next.title) }
+          : null,
+      };
+    });
+  }
+
   toListMap(row) {
     const contentHtml = this.normalizeText(row.content_html) || '';
     return {
@@ -88,7 +107,7 @@ class ContentController {
           : size;
       const cacheKey = `list:${page}:${fetchSize}:${String(query).trim()}:${category}`;
 
-      const payload = await contentListCache.getOrSet(cacheKey, async () => {
+      const payload = await contentListCache.getOrSetStale(cacheKey, async () => {
         const result = await contentRepository.findList({
           page,
           size: fetchSize,
@@ -108,6 +127,9 @@ class ContentController {
           },
         };
       });
+      for (const item of (payload.data || []).slice(0, 5)) {
+        this.detailPayload(item.id).catch(() => {});
+      }
 
       if (payload.data && payload.data.length > size) {
         return res.json({
@@ -215,28 +237,7 @@ class ContentController {
       const mbIdQ = String(req.query.mb_id || '').trim();
 
       const [payload, userRecommended] = await Promise.all([
-        contentListCache.getOrSet(`detailFull:${id}`, async () => {
-          const [row, adjacent] = await Promise.all([
-            contentRepository.findById(id),
-            contentRepository.findAdjacentById(id),
-          ]);
-          if (!row) return null;
-          return {
-            data: this.toMap(row),
-            prev: adjacent.prev
-              ? {
-                  id: adjacent.prev.id,
-                  title: this.normalizeText(adjacent.prev.title),
-                }
-              : null,
-            next: adjacent.next
-              ? {
-                  id: adjacent.next.id,
-                  title: this.normalizeText(adjacent.next.title),
-                }
-              : null,
-          };
-        }),
+        this.detailPayload(id),
         mbIdQ
           ? contentListCache.getOrSet(
               `rec:${id}:${mbIdQ}`,

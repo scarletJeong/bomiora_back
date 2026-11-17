@@ -40,7 +40,7 @@ class AnnouncementController {
       const query = req.query.query || '';
       const cacheKey = `list:${page}:${size}:${String(query).trim()}`;
 
-      const payload = await announcementListCache.getOrSet(cacheKey, async () => {
+      const payload = await announcementListCache.getOrSetStale(cacheKey, async () => {
         const result = await announcementRepository.findList({ page, size, query });
         return {
           success: true,
@@ -71,7 +71,7 @@ class AnnouncementController {
         return res.status(400).json({ success: false, message: '유효한 공지 ID가 아닙니다.' });
       }
 
-      const payload = await announcementDetailCache.getOrSet(`detail:${id}`, async () => {
+      const payload = await announcementDetailCache.getOrSetStale(`detail:${id}`, async () => {
         const row = await announcementRepository.findById(id);
         if (!row) {
           return { success: false, status: 404, message: '공지사항을 찾을 수 없습니다.' };
