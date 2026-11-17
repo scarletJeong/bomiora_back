@@ -424,7 +424,7 @@ class SocialAuthService {
         ]
       );
 
-      await conn.query(
+      const [signupPoint] = await conn.query(
         `INSERT INTO bomiora_point
          (
            mb_id, po_datetime, po_content, po_point, po_use_point,
@@ -438,7 +438,7 @@ class SocialAuthService {
 
       try {
         const { notifyPointEarned } = require('../../notification/services/MemberNotifyService');
-        notifyPointEarned(mbId, initialPoint).catch((e) => {
+        notifyPointEarned(mbId, initialPoint, signupPoint.insertId).catch((e) => {
           console.error('[SOCIAL SIGNUP] 회원가입 포인트 푸시 실패:', e?.message || e);
         });
       } catch (e) {

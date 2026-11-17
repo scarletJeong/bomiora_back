@@ -109,11 +109,15 @@ async function sendToMember(mbId, options = {}) {
   }
 }
 
-/** 포인트 적립 즉시 푸시 */
-async function notifyPointEarned(mbId, points) {
+/** 포인트 적립 즉시 푸시. 알림 번호는 포인트 내역 po_id */
+async function notifyPointEarned(mbId, points, poId) {
   const amount = Math.abs(Number(points) || 0);
   if (!amount) {
     return { success: false, skipped: true, reason: 'zero_points' };
+  }
+  const historyId = String(poId ?? '').trim();
+  if (!historyId) {
+    return { success: false, skipped: true, reason: 'missing_po_id' };
   }
 
   // 제목만 표시 (body를 같게 넣으면 알림/알림센터에 문구가 2번 보임)
@@ -127,8 +131,9 @@ async function notifyPointEarned(mbId, points) {
       type: 'point',
       point: String(amount),
       ymd,
-      id: `${ymd}_${amount}`,
-      notification_id: `point_${ymd}_${amount}`,
+      po_id: historyId,
+      id: historyId,
+      notification_id: `point_${historyId}`,
       title,
     },
     bypassAppPushAgree: true,

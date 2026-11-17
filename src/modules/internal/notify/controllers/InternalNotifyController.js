@@ -52,7 +52,8 @@ class InternalNotifyController {
         const points = Number(
           req.body?.point ?? req.body?.points ?? req.body?.po_point ?? 0
         );
-        const result = await memberNotifyService.notifyPointEarned(mbId, points);
+        const poId = req.body?.po_id ?? req.body?.poId;
+        const result = await memberNotifyService.notifyPointEarned(mbId, points, poId);
         return res.json({ success: true, data: result });
       }
 

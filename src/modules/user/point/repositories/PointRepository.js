@@ -125,7 +125,7 @@ class PointRepository {
       const currentPoint = Number(member.mb_point || 0);
       const nextPoint = currentPoint + loginPoint;
 
-      await conn.query(
+      const [loginInserted] = await conn.query(
         `INSERT INTO bomiora_point
          (
            mb_id, po_datetime, po_content, po_point, po_use_point,
@@ -147,7 +147,7 @@ class PointRepository {
       await conn.commit();
       this.invalidateMemberPoint(safeMbId);
 
-      notifyPointEarned(safeMbId, loginPoint).catch((e) => {
+      notifyPointEarned(safeMbId, loginPoint, loginInserted.insertId).catch((e) => {
         console.error('[Point] 첫로그인 푸시 실패(지급은 유지):', e?.message || e);
       });
 
@@ -292,7 +292,7 @@ class PointRepository {
       const now = getKstDateTimeString();
       const content = `주문번호 ${safeOdId} 결제 적립`;
 
-      await db.query(
+      const [receiptInserted] = await db.query(
         `INSERT INTO bomiora_point
          (
            mb_id, po_datetime, po_content, po_point, po_use_point,
@@ -301,6 +301,7 @@ class PointRepository {
          VALUES (?, ?, ?, ?, 0, ?, 0, DATE_ADD(?, INTERVAL 1 YEAR), '@shop_order', ?, '수령확인')`,
         [safeMbId, now, content, poPoint, nextPoint, now, safeOdId]
       );
+      const poId = receiptInserted.insertId;
 
       await db.query(
         `UPDATE bomiora_member SET mb_point = ? WHERE mb_id = ?`,
@@ -312,7 +313,7 @@ class PointRepository {
       if (didBegin) {
         await db.commit();
         // 자체 트랜잭션일 때만 즉시 푸시. 외부 conn이면 호출측 commit 후 푸시.
-        notifyPointEarned(safeMbId, poPoint).catch((e) => {
+        notifyPointEarned(safeMbId, poPoint, poId).catch((e) => {
           console.error('[Point] 수령확인 적립 푸시 실패:', e?.message || e);
         });
       }
@@ -320,6 +321,7 @@ class PointRepository {
       return {
         granted: true,
         code: 'OK',
+        poId,
         poPoint,
         poMbPoint: nextPoint,
         needsNotify: !didBegin,
@@ -590,7 +592,7 @@ class PointRepository {
       const now = getKstDateTimeString();
       const relId = `${safeMbId}/${safeItId}`.slice(0, 20);
 
-      await conn.query(
+      const [reviewInserted] = await conn.query(
         `INSERT INTO bomiora_point
          (
            mb_id, po_datetime, po_content, po_point, po_use_point,
@@ -606,7 +608,7 @@ class PointRepository {
 
       await conn.commit();
       this.invalidateMemberPoint(safeMbId);
-      notifyPointEarned(safeMbId, amount).catch((e) => {
+      notifyPointEarned(safeMbId, amount, reviewInserted.insertId).catch((e) => {
         console.error('[Point] 첫 리뷰 적립 푸시 실패:', e?.message || e);
       });
       return { granted: true, code: 'OK', poPoint: amount, poMbPoint: nextPoint };
@@ -722,7 +724,7 @@ async function pushTodayLoginPointIfPending(mbId, fcmToken) {
   await ensureLoginPointPushTable();
 
   const [pointRows] = await pool.query(
-    `SELECT po_point
+    `SELECT po_id, po_point
      FROM bomiora_point
      WHERE mb_id = ?
        AND po_rel_table = '@login'
@@ -758,8 +760,9 @@ async function pushTodayLoginPointIfPending(mbId, fcmToken) {
       type: 'point',
       point: String(points),
       ymd: today,
-      id: `${today}_${points}`,
-      notification_id: `point_${today}_${points}`,
+      po_id: String(pointRows[0].po_id),
+      id: String(pointRows[0].po_id),
+      notification_id: `point_${pointRows[0].po_id}`,
       title,
     },
   });

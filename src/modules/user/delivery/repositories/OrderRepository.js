@@ -9,7 +9,7 @@ class OrderRepository {
     if (!pointResult?.granted || !pointResult?.needsNotify) return;
     const amount = Number(pointResult.poPoint || 0);
     if (amount <= 0) return;
-    notifyPointEarned(mbId, amount).catch((e) => {
+    notifyPointEarned(mbId, amount, pointResult.poId).catch((e) => {
       console.error('[Order] 수령확인 적립 푸시 실패:', e?.message || e);
     });
   }

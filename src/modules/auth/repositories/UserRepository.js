@@ -323,7 +323,7 @@ class UserRepository {
         ]
       );
 
-      await conn.query(
+      const [signupPoint] = await conn.query(
         `INSERT INTO bomiora_point
          (
            mb_id, po_datetime, po_content, po_point, po_use_point,
@@ -351,7 +351,7 @@ class UserRepository {
       // 회원가입 축하 포인트 푸시
       try {
         const { notifyPointEarned } = require('../../user/notification/services/MemberNotifyService');
-        notifyPointEarned(mbId, initialPoint).catch((e) => {
+        notifyPointEarned(mbId, initialPoint, signupPoint.insertId).catch((e) => {
           console.error('[UserRepository] 회원가입 포인트 푸시 실패:', e?.message || e);
         });
       } catch (e) {
