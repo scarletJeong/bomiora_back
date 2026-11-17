@@ -7,9 +7,9 @@ sharp.cache(false);
 
 const PROXY_CACHE_DIR = path.join(__dirname, '../../../../../uploads/image-proxy-cache');
 const PROXY_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
-const ITEM_IMAGE_TTL_MS = 60 * 1000;
+const ITEM_IMAGE_TTL_MS = 10 * 60 * 1000;
+const OPTIMIZED_IMAGE_TTL_MS = 24 * 60 * 60 * 1000;
 const PROXY_MEM_MAX = 80;
-const LOCAL_SHOP_ROOT = 'C:/xampp/htdocs/bomiora/www';
 
 class ImageProxyController {
   constructor() {
@@ -124,26 +124,6 @@ class ImageProxyController {
     return this.isShopItemImageUrl(url) ? ITEM_IMAGE_TTL_MS : PROXY_CACHE_TTL_MS;
   }
 
-  async tryReadLocalShopDataFile(targetUrl) {
-    try {
-      const pathname = new URL(String(targetUrl)).pathname || '';
-      const lower = pathname.toLowerCase();
-      const marker = '/data/';
-      const idx = lower.indexOf(marker);
-      if (idx < 0) return null;
-      const relative = pathname.substring(idx + 1);
-      const filePath = path.resolve(LOCAL_SHOP_ROOT, relative);
-      const root = path.resolve(LOCAL_SHOP_ROOT);
-      if (!filePath.toLowerCase().startsWith(root.toLowerCase())) return null;
-      const bytes = await fs.readFile(filePath);
-      const sniffed = this.sniffImageMimeFromBuffer(bytes);
-      if (!sniffed) return null;
-      return { buf: bytes, type: sniffed };
-    } catch (_) {
-      return null;
-    }
-  }
-
   async tryReadLocalDataEventFile(targetUrl) {
     try {
       const prefix = '/data/event/';
@@ -162,11 +142,19 @@ class ImageProxyController {
     }
   }
 
-  setImageCacheHeaders(res, shortLived = false) {
+  setImageCacheHeaders(res, shortLived = false, optimized = false) {
+    if (optimized) {
+      res.setHeader(
+        'Cache-Control',
+        'public, max-age=3600, s-maxage=86400, stale-while-revalidate=604800',
+      );
+      res.setHeader('CDN-Cache-Control', 'public, max-age=86400');
+    } else {
     res.setHeader(
       'Cache-Control',
-      shortLived ? 'public, max-age=60' : 'public, max-age=86400, immutable',
+      shortLived ? 'public, max-age=600' : 'public, max-age=86400, immutable',
     );
+    }
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
   }
@@ -189,6 +177,23 @@ class ImageProxyController {
         .rotate()
         .resize({ width, withoutEnlargement: true, fastShrinkOnLoad: true })
         .jpeg({ quality: 60, mozjpeg: false, progressive: false })
+        .toBuffer();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /** 원본 해상도를 유지하고 전송 포맷만 고화질 WebP로 최적화한다. */
+  async optimizeOriginalWebp(buf) {
+    if (!buf || !buf.length) return null;
+    try {
+      return await sharp(buf, {
+        failOn: 'none',
+        limitInputPixels: false,
+        sequentialRead: true,
+      })
+        .rotate()
+        .webp({ quality: 92, effort: 4, smartSubsample: false })
         .toBuffer();
     } catch (_) {
       return null;
@@ -263,14 +268,40 @@ class ImageProxyController {
     return res.status(200).send(out);
   }
 
-  sendCachedImage(res, buf, type, shortLived = false) {
+  async sendOptimizedWebp(res, key, bytes) {
+    const out = await this.optimizeOriginalWebp(bytes);
+    if (!out) return res.sendStatus(415);
+    res.setHeader('Content-Type', 'image/webp');
+    this.setImageCacheHeaders(res, false, true);
+    this.writeProxyCache(key, out, 'image/webp');
+    return res.status(200).send(out);
+  }
+
+  sendCachedImage(res, buf, type, shortLived = false, optimized = false) {
     res.setHeader('Content-Type', type || 'image/jpeg');
-    this.setImageCacheHeaders(res, shortLived);
+    this.setImageCacheHeaders(res, shortLived, optimized);
     res.setHeader('X-Proxy-Cache', 'HIT');
     return res.status(200).send(buf);
   }
 
+  detailImageName(url) {
+    try {
+      const name = new URL(String(url)).pathname.split('/').filter(Boolean).pop() || 'image';
+      return decodeURIComponent(name);
+    } catch (_) {
+      return 'image';
+    }
+  }
+
+  logDetailImage(url, thumbW, phase, started, bytes) {
+    if (thumbW || !this.isShopItemImageUrl(url)) return;
+    const ms = Date.now() - started;
+    const size = Number(bytes) > 0 ? `${bytes}B` : '0B';
+    console.log(`[상세이미지] ${ms}ms ${phase} ${size} ${this.detailImageName(url)}`);
+  }
+
   async proxyImage(req, res) {
+    const started = Date.now();
     try {
       const targetUrl = req.query.url;
       if (!targetUrl || !this.isAllowedUrl(String(targetUrl))) {
@@ -278,12 +309,38 @@ class ImageProxyController {
       }
 
       const thumbW = this.thumbWidth(req.query.w);
-      const cacheSource = thumbW ? `${targetUrl}|w=${thumbW}` : String(targetUrl);
+      const optimized = !thumbW && String(req.query.format || '').toLowerCase() === 'webp';
+      const cacheSource = thumbW
+        ? `${targetUrl}|w=${thumbW}`
+        : optimized
+          ? `${targetUrl}|format=webp|v=1`
+          : String(targetUrl);
       const key = this.cacheKey(cacheSource);
       const shortLived = this.isShopItemImageUrl(targetUrl);
-      const cached = await this.readProxyCache(key, this.cacheTtlFor(targetUrl));
+      const cacheTtl = optimized ? OPTIMIZED_IMAGE_TTL_MS : this.cacheTtlFor(targetUrl);
+      const cached = await this.readProxyCache(key, cacheTtl);
       if (cached) {
-        return this.sendCachedImage(res, cached.buf, cached.type, shortLived);
+        this.logDetailImage(targetUrl, thumbW, '캐시', started, cached.buf.length);
+        return this.sendCachedImage(
+          res,
+          cached.buf,
+          cached.type,
+          shortLived,
+          optimized,
+        );
+      }
+
+      if (optimized) {
+        const origin = await this.loadOriginBytes(String(targetUrl));
+        if (!origin) return res.sendStatus(404);
+        if (origin.status) return res.sendStatus(origin.status);
+        const response = await this.sendOptimizedWebp(res, key, origin.buf);
+        this.logDetailImage(targetUrl, 0, 'WebP', started, origin.buf.length);
+        return response;
+      }
+
+      if (!thumbW) {
+        return this.proxyOriginalStream(res, String(targetUrl), key, shortLived, started);
       }
 
       const origin = await this.loadOriginBytes(String(targetUrl));
@@ -293,6 +350,146 @@ class ImageProxyController {
     } catch (error) {
       return res.sendStatus(500);
     }
+  }
+
+  async proxyOriginalStream(res, targetUrl, key, shortLived, started) {
+    const originKey = this.cacheKey(targetUrl);
+    const pending = this._originInflight.get(originKey);
+    if (pending) {
+      const origin = await pending;
+      const bytes = origin && origin.buf ? origin.buf.length : 0;
+      this.logDetailImage(targetUrl, 0, origin && origin.status ? '실패' : '공유', started, bytes);
+      if (!origin || origin.status) return res.sendStatus((origin && origin.status) || 404);
+      return this.sendImageBytes(res, key, origin.buf, origin.type, 0, shortLived);
+    }
+
+    let resolveJob;
+    const job = new Promise((resolve) => {
+      resolveJob = resolve;
+    });
+    this._originInflight.set(originKey, job);
+    const finish = (origin) => {
+      resolveJob(origin);
+      this._originInflight.delete(originKey);
+      return origin;
+    };
+
+    if (this.isLocalXamppUrl(targetUrl)) {
+      const origin = await this.fetchOriginBytes(targetUrl, originKey);
+      finish(origin);
+      const bytes = origin && origin.buf ? origin.buf.length : 0;
+      this.logDetailImage(targetUrl, 0, origin && origin.status ? '실패' : '원본', started, bytes);
+      if (!origin || origin.status) return res.sendStatus((origin && origin.status) || 404);
+      return this.sendImageBytes(res, key, origin.buf, origin.type, 0, shortLived);
+    }
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 20000);
+    try {
+      const response = await fetch(targetUrl, {
+        method: 'GET',
+        signal: controller.signal,
+        headers: {
+          'User-Agent': 'Mozilla/5.0',
+          Accept: 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
+        },
+      });
+      if (!response.ok || !response.body) {
+        clearTimeout(timer);
+        if (await this.sendLocalEventImage(res, targetUrl, originKey, finish)) return undefined;
+        const origin = { status: response.status || 502 };
+        finish(origin);
+        this.logDetailImage(targetUrl, 0, '실패', started, 0);
+        return res.sendStatus(origin.status);
+      }
+
+      const reader = response.body.getReader();
+      const chunks = [];
+      let total = 0;
+      let type = null;
+      let sent = false;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const buf = Buffer.from(value);
+        chunks.push(buf);
+        total += buf.length;
+        if (!sent) {
+          if (total < 12) continue;
+          const head = Buffer.concat(chunks, total);
+          if (this.bufferLooksLikeHtml(head)) {
+            await reader.cancel().catch(() => {});
+            clearTimeout(timer);
+            if (await this.sendLocalEventImage(res, targetUrl, originKey, finish)) return undefined;
+            const origin = { status: 415 };
+            finish(origin);
+            this.logDetailImage(targetUrl, 0, 'html', started, total);
+            return res.sendStatus(415);
+          }
+          type = this.sniffImageMimeFromBuffer(head);
+          if (!type) continue;
+          res.status(200);
+          res.setHeader('Content-Type', type);
+          this.setImageCacheHeaders(res, shortLived);
+          res.setHeader('X-Proxy-Cache', 'MISS');
+          const len = response.headers.get('content-length');
+          if (len) res.setHeader('Content-Length', len);
+          res.write(head);
+          sent = true;
+          continue;
+        }
+        res.write(buf);
+      }
+      clearTimeout(timer);
+
+      const all = Buffer.concat(chunks, total);
+      if (!type) type = this.sniffImageMimeFromBuffer(all);
+      if (!type || this.bufferLooksLikeHtml(all)) {
+        const origin = { status: 415 };
+        finish(origin);
+        this.logDetailImage(targetUrl, 0, 'html', started, total);
+        if (!res.headersSent) return res.sendStatus(415);
+        return res.end();
+      }
+      if (!sent) {
+        res.status(200);
+        res.setHeader('Content-Type', type);
+        this.setImageCacheHeaders(res, shortLived);
+        res.setHeader('X-Proxy-Cache', 'MISS');
+        res.write(all);
+      }
+      res.end();
+      const origin = { buf: all, type };
+      this.writeProxyCache(originKey, all, type);
+      finish(origin);
+      this.logDetailImage(targetUrl, 0, '원본', started, all.length);
+      return undefined;
+    } catch (_) {
+      clearTimeout(timer);
+      const origin = { status: 500 };
+      finish(origin);
+      this.logDetailImage(targetUrl, 0, '실패', started, 0);
+      if (!res.headersSent) return res.sendStatus(500);
+      return res.end();
+    }
+  }
+
+  async sendLocalEventImage(res, targetUrl, originKey, finish) {
+    const localBytes = await this.tryReadLocalDataEventFile(targetUrl);
+    if (!localBytes) return false;
+    const sniffed = this.sniffImageMimeFromBuffer(localBytes);
+    const type = sniffed || this.detectContentType(targetUrl, null);
+    const origin = { buf: localBytes, type };
+    this.writeProxyCache(originKey, localBytes, type);
+    finish(origin);
+    if (!res.headersSent) {
+      res.status(200);
+      res.setHeader('Content-Type', type);
+      this.setImageCacheHeaders(res, false);
+      res.setHeader('X-Proxy-Cache', 'MISS');
+    }
+    res.end(localBytes);
+    return true;
   }
 
   async loadOriginBytes(targetUrl) {
@@ -317,7 +514,7 @@ class ImageProxyController {
       try {
         const bytes = await fs.readFile(filePath);
         const contentType = this.detectContentType(targetUrl, null);
-        await this.writeProxyCache(key, bytes, contentType);
+        this.writeProxyCache(key, bytes, contentType);
         return { buf: bytes, type: contentType };
       } catch (error) {
         if (error && error.code === 'ENOENT') return { status: 404 };
@@ -344,15 +541,10 @@ class ImageProxyController {
     }
 
     if (!response.ok) {
-      const localItem = await this.tryReadLocalShopDataFile(targetUrl);
-      if (localItem) {
-        await this.writeProxyCache(key, localItem.buf, localItem.type);
-        return localItem;
-      }
       const localBytes = await this.tryReadLocalDataEventFile(targetUrl);
       if (localBytes) {
         const type = this.detectContentType(targetUrl, null);
-        await this.writeProxyCache(key, localBytes, type);
+        this.writeProxyCache(key, localBytes, type);
         return { buf: localBytes, type };
       }
       return { status: response.status };
@@ -362,7 +554,7 @@ class ImageProxyController {
     const urlLooksImage = this.urlLooksLikeImagePath(targetUrl);
     const sniffed = this.sniffImageMimeFromBuffer(bytes);
     if (sniffed) {
-      await this.writeProxyCache(key, bytes, sniffed);
+      this.writeProxyCache(key, bytes, sniffed);
       return { buf: bytes, type: sniffed };
     }
 
@@ -380,16 +572,11 @@ class ImageProxyController {
       base.startsWith('text/');
 
     if (urlLooksImage && this.bufferLooksLikeHtml(bytes)) {
-      const localItem = await this.tryReadLocalShopDataFile(targetUrl);
-      if (localItem) {
-        await this.writeProxyCache(key, localItem.buf, localItem.type);
-        return localItem;
-      }
       const localBytes = await this.tryReadLocalDataEventFile(targetUrl);
       if (localBytes) {
         const sniffedLocal = this.sniffImageMimeFromBuffer(localBytes);
         const type = sniffedLocal || this.detectContentType(targetUrl, null);
-        await this.writeProxyCache(key, localBytes, type);
+        this.writeProxyCache(key, localBytes, type);
         return { buf: localBytes, type };
       }
       return { status: 415 };
@@ -403,7 +590,7 @@ class ImageProxyController {
       targetUrl,
       response.headers.get('content-type'),
     );
-    await this.writeProxyCache(key, bytes, contentType);
+    this.writeProxyCache(key, bytes, contentType);
     return { buf: bytes, type: contentType };
   }
 }
