@@ -2,6 +2,7 @@ const productRepository = require('../repositories/ProductRepository');
 const productOptionRepository = require('../option/repositories/ProductOptionRepository');
 const reviewRepository = require('../../../user/review/repositories/ReviewRepository');
 const shopDefaultRepository = require('../../../common/shopdefault/repositories/ShopDefaultRepository');
+const imageProxyController = require('../../../common/imageProxy/controllers/ImageProxyController');
 const { TtlCache } = require('../../../../utils/ttlCache');
 const { registerPublicCache } = require('../../../internal/cache/publicCacheRegistry');
 
@@ -54,6 +55,16 @@ class ProductController {
     return path.startsWith('/') ? path : `/${path}`;
   }
 
+  productImageOriginUrl(raw) {
+    const value = String(raw || '').trim().replace(/^\/+/, '');
+    if (!value) return '';
+    if (/^https?:\/\//i.test(value)) return value;
+    const path = value.toLowerCase().startsWith('data/item/')
+      ? value
+      : `data/item/${value}`;
+    return `https://bomiora0.mycafe24.com/${path}`;
+  }
+
   async getShopDefaultCached() {
     const now = Date.now();
     if (this._shopDefaultCache && now - this._shopDefaultCacheAt < 300_000) {
@@ -93,7 +104,7 @@ class ProductController {
   async warmProductDetailCache(productId) {
     const id = String(productId || '').trim();
     if (!id) return null;
-    return productDetailCache.getOrSetStale(
+    const payload = await productDetailCache.getOrSetStale(
       `detail:${id}`,
       async () => {
         const [row, shopDefault] = await Promise.all([
@@ -108,6 +119,11 @@ class ProductController {
       PRODUCT_DETAIL_FRESH_MS,
       PRODUCT_DETAIL_STALE_MS,
     );
+    const imageUrl = this.productImageOriginUrl(
+      payload?.data?.additionalInfo?.it_img10 || payload?.data?.imageUrl,
+    );
+    if (imageUrl) imageProxyController.warmOptimizedWebp(imageUrl).catch(() => {});
+    return payload;
   }
 
   async _categoriesPayload(itKind) {

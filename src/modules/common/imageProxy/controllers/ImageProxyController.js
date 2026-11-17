@@ -44,6 +44,24 @@ class ImageProxyController {
     }
   }
 
+  canonicalOriginUrl(url) {
+    try {
+      const parsed = new URL(String(url));
+      const host = parsed.hostname.toLowerCase();
+      if (
+        (host === 'bomiora.kr' || host === 'www.bomiora.kr') &&
+        parsed.pathname.toLowerCase().startsWith('/data/editor/')
+      ) {
+        parsed.protocol = 'https:';
+        parsed.hostname = 'bomiora0.mycafe24.com';
+        parsed.port = '';
+      }
+      return parsed.toString();
+    } catch (_) {
+      return String(url || '');
+    }
+  }
+
   detectContentType(url, headerContentType) {
     if (headerContentType) return headerContentType;
     const lower = url.toLowerCase();
@@ -176,7 +194,13 @@ class ImageProxyController {
     try {
       return await sharp(buf, { failOn: 'none', limitInputPixels: false, sequentialRead: true })
         .rotate()
-        .resize({ width, withoutEnlargement: true, fastShrinkOnLoad: !large })
+        .resize({
+          width,
+          height: 8192,
+          fit: 'inside',
+          withoutEnlargement: true,
+          fastShrinkOnLoad: !large,
+        })
         .jpeg({ quality: large ? 85 : 60, mozjpeg: false, progressive: false })
         .toBuffer();
     } catch (_) {
@@ -284,6 +308,19 @@ class ImageProxyController {
     return true;
   }
 
+  async warmOptimizedWebp(targetUrl) {
+    if (!this.isAllowedUrl(targetUrl)) return false;
+    const key = this.cacheKey(`${targetUrl}|format=webp|v=1`);
+    const cached = await this.readProxyCache(key, OPTIMIZED_IMAGE_TTL_MS);
+    if (cached) return true;
+    const origin = await this.loadOriginBytes(targetUrl);
+    if (!origin || origin.status || !origin.buf) return false;
+    const optimized = await this.optimizeOriginalWebp(origin.buf);
+    if (!optimized) return false;
+    await this.writeProxyCache(key, optimized, 'image/webp');
+    return true;
+  }
+
   async sendOptimizedWebp(res, key, bytes) {
     const out = await this.optimizeOriginalWebp(bytes);
     if (!out) return res.sendStatus(415);
@@ -319,10 +356,11 @@ class ImageProxyController {
   async proxyImage(req, res) {
     const started = Date.now();
     try {
-      const targetUrl = req.query.url;
-      if (!targetUrl || !this.isAllowedUrl(String(targetUrl))) {
+      const requestedUrl = req.query.url;
+      if (!requestedUrl || !this.isAllowedUrl(String(requestedUrl))) {
         return res.sendStatus(403);
       }
+      const targetUrl = this.canonicalOriginUrl(requestedUrl);
 
       const thumbW = this.thumbWidth(req.query.w);
       const optimized = !thumbW && String(req.query.format || '').toLowerCase() === 'webp';
