@@ -9,17 +9,47 @@ registerPublicCache('event', eventListCache);
 registerPublicCache('event', eventDetailCache);
 
 class EventController {
-  async activePayload() {
-    return eventListCache.getOrSetStale('active', async () => {
-      const rows = await eventRepository.findActiveEvents();
-      return { success: true, data: rows.map((row) => this.toMap(row)) };
+  async activePayload(page = 1, size = 10) {
+    const safePage = Number.isFinite(Number(page)) && Number(page) > 0 ? Math.floor(Number(page)) : 1;
+    const safeSize = Number.isFinite(Number(size)) && Number(size) > 0
+      ? Math.min(50, Math.floor(Number(size)))
+      : 10;
+    const offset = (safePage - 1) * safeSize;
+    return eventListCache.getOrSetStale(`active:${safePage}:${safeSize}`, async () => {
+      const result = await eventRepository.findActiveEvents({
+        limit: safeSize,
+        offset,
+      });
+      return {
+        success: true,
+        data: result.rows.map((row) => this.toMap(row)),
+        total: result.total,
+        page: safePage,
+        size: safeSize,
+        hasMore: offset + result.rows.length < result.total,
+      };
     });
   }
 
-  async endedPayload() {
-    return eventListCache.getOrSetStale('ended', async () => {
-      const rows = await eventRepository.findEndedEvents();
-      return { success: true, data: rows.map((row) => this.toMap(row)) };
+  async endedPayload(page = 1, size = 10) {
+    const safePage = Number.isFinite(Number(page)) && Number(page) > 0 ? Math.floor(Number(page)) : 1;
+    const safeSize = Number.isFinite(Number(size)) && Number(size) > 0
+      ? Math.min(50, Math.floor(Number(size)))
+      : 10;
+    const offset = (safePage - 1) * safeSize;
+    return eventListCache.getOrSetStale(`ended:${safePage}:${safeSize}`, async () => {
+      const result = await eventRepository.findEndedEvents({
+        limit: safeSize,
+        offset,
+      });
+      return {
+        success: true,
+        data: result.rows.map((row) => this.toMap(row)),
+        total: result.total,
+        page: safePage,
+        size: safeSize,
+        hasMore: offset + result.rows.length < result.total,
+      };
     });
   }
 
@@ -134,7 +164,9 @@ class EventController {
 
   async getActiveEvents(req, res) {
     try {
-      const payload = await this.activePayload();
+      const page = Number(req.query.page || 1);
+      const size = Number(req.query.size || 10);
+      const payload = await this.activePayload(page, size);
       res.set('Cache-Control', 'public, max-age=60');
       return res.json(payload);
     } catch (error) {
@@ -147,7 +179,9 @@ class EventController {
 
   async getEndedEvents(req, res) {
     try {
-      const payload = await this.endedPayload();
+      const page = Number(req.query.page || 1);
+      const size = Number(req.query.size || 10);
+      const payload = await this.endedPayload(page, size);
       res.set('Cache-Control', 'public, max-age=60');
       return res.json(payload);
     } catch (error) {
