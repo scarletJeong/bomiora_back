@@ -17,27 +17,42 @@ const EVENT_LIST_COLUMNS = `
 `;
 
 class EventRepository {
-  async findActiveEvents() {
-    const [rows] = await pool.query(
-      `SELECT ${EVENT_LIST_COLUMNS}
-        FROM bm_event
-        WHERE begin_time <= NOW()
-          AND end_time >= NOW()
-        ORDER BY sort_order ASC, id ASC
-        LIMIT 20`
-    );
-    return rows;
+  async findActiveEvents({ limit = 10, offset = 0 } = {}) {
+    return this._findByPeriod({
+      where: 'begin_time <= NOW() AND end_time >= NOW()',
+      limit,
+      offset,
+    });
   }
 
-  async findEndedEvents() {
-    const [rows] = await pool.query(
-      `SELECT ${EVENT_LIST_COLUMNS}
-        FROM bm_event
-        WHERE end_time < NOW()
-        ORDER BY sort_order ASC, id ASC
-        LIMIT 50`
-    );
-    return rows;
+  async findEndedEvents({ limit = 10, offset = 0 } = {}) {
+    return this._findByPeriod({
+      where: 'end_time < NOW()',
+      limit,
+      offset,
+    });
+  }
+
+  async _findByPeriod({ where, limit, offset }) {
+    const safeLimit = Number.isFinite(limit) && limit > 0 ? Math.min(50, Math.floor(limit)) : 10;
+    const safeOffset = Number.isFinite(Number(offset)) ? Math.max(0, Math.floor(Number(offset))) : 0;
+    const [countResult, listResult] = await Promise.all([
+      pool.query(
+        `SELECT COUNT(*) AS total
+           FROM bm_event
+          WHERE ${where}`
+      ),
+      pool.query(
+        `SELECT ${EVENT_LIST_COLUMNS}
+           FROM bm_event
+          WHERE ${where}
+          ORDER BY sort_order ASC, id ASC
+          LIMIT ? OFFSET ?`,
+        [safeLimit, safeOffset]
+      ),
+    ]);
+    const total = Number(countResult[0]?.[0]?.total || 0);
+    return { rows: listResult[0], total };
   }
 
   async searchByTitle(query, limit = 20, offset = 0) {
