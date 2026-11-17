@@ -190,10 +190,12 @@ app.listen(PORT, () => {
     const productController = require('./src/modules/shopping/product/controllers/ProductController');
     const bannerController = require('./src/modules/home/banner/controllers/BannerController');
     const eventController = require('./src/modules/shopping/event/controllers/EventController');
+    const announcementController = require('./src/modules/community/announcement/controllers/AnnouncementController');
     Promise.all([
       productController.warmHomeProductCaches(),
       bannerController.warmMainBanners(),
       eventController.warmPublicCaches(),
+      announcementController.warmPublicCaches(),
     ]).catch((e) => {
       console.warn('[HomeWarm] 스킵:', e.message);
     });

@@ -21,9 +21,11 @@ class TtlCache {
   }
 
   set(key, value, ttlMs = this.defaultTtlMs) {
+    const expiresAt = Date.now() + ttlMs;
     this.store.set(key, {
       value,
-      expiresAt: Date.now() + ttlMs,
+      expiresAt,
+      staleUntil: expiresAt + 24 * 60 * 60 * 1000,
     });
     return value;
   }

@@ -73,7 +73,7 @@ class ProductController {
   async warmHomeProductCaches() {
     await this.warmShopDefault();
     const homePayload = await homeProductCache
-      .getOrSet('new:4', async () => {
+      .getOrSetStale('new:4', async () => {
         const [rows, shopDefault] = await Promise.all([
           productRepository.findNewProducts(4),
           this.getShopDefaultCached(),
@@ -112,7 +112,7 @@ class ProductController {
 
   async _categoriesPayload(itKind) {
     const kind = String(itKind || '').trim();
-    return homeProductCache.getOrSet(`categories-with-products:${kind}`, async () => {
+    return homeProductCache.getOrSetStale(`categories-with-products:${kind}`, async () => {
       const rows = await productRepository.findCategoriesWithProducts(kind);
       const categories = rows.map((row) => ({
         categoryId: this.bufferToString(row.ca_id),
@@ -126,7 +126,7 @@ class ProductController {
 
   async _listPayload(categoryId, itKind, page, pageSize) {
     const cacheKey = `list:${categoryId}:${itKind || ''}:${page}:${pageSize}`;
-    return productListCache.getOrSet(cacheKey, async () => {
+    return productListCache.getOrSetStale(cacheKey, async () => {
       const [rows, shopDefault] = await Promise.all([
         productRepository.findByCategory(categoryId, itKind, page, pageSize),
         this.getShopDefaultCached(),
@@ -153,7 +153,10 @@ class ProductController {
           cats
             .map((c) => String(c.categoryId || '').trim())
             .filter(Boolean)
-            .map((id) => this._listPayload(id, kind, 1, 20).catch(() => null))
+            .flatMap((id) => [
+              this._listPayload(id, kind, 1, 4).catch(() => null),
+              this._listPayload(id, kind, 1, 20).catch(() => null),
+            ])
         );
       } catch (_) {}
     }
@@ -523,7 +526,7 @@ class ProductController {
   async getPopularProducts(req, res) {
     try {
       const limit = Number(req.query.limit || 10);
-      const payload = await homeProductCache.getOrSet(`best:${limit}`, async () => ({
+      const payload = await homeProductCache.getOrSetStale(`best:${limit}`, async () => ({
         success: true,
         data: await this.mapProductSearchDtos(
           await productRepository.findBestProducts(limit)
@@ -539,7 +542,7 @@ class ProductController {
   async getNewProducts(req, res) {
     try {
       const limit = Number(req.query.limit || 10);
-      const payload = await homeProductCache.getOrSet(`new:${limit}`, async () => {
+      const payload = await homeProductCache.getOrSetStale(`new:${limit}`, async () => {
         const [rows, shopDefault] = await Promise.all([
           productRepository.findNewProducts(limit),
           this.getShopDefaultCached(),
@@ -584,7 +587,7 @@ class ProductController {
     try {
       const limit = Number(req.query.limit || 4);
       const itKind = req.query.it_kind || null;
-      const payload = await homeProductCache.getOrSet(
+      const payload = await homeProductCache.getOrSetStale(
         `md:${limit}:${itKind || ''}`,
         async () => ({
           success: true,
