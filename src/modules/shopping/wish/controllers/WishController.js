@@ -139,6 +139,7 @@ class WishController {
           row.image_url = image;
           row.it_img = image;
           row.it_img1 = image;
+          if (w.it_img10) row.it_img10 = this.bufferToString(w.it_img10);
           row.it_basic = w.it_basic;
         }
         if (wishIsContent) {

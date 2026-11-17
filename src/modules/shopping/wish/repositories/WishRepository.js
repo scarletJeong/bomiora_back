@@ -92,6 +92,7 @@ class WishRepository {
          p.it_price,
          p.it_kind,
          LEFT(IFNULL(p.it_flutter_image_url, p.it_img1), 200) AS it_img1,
+         CAST(p.it_img10 AS CHAR) AS it_img10,
          p.it_flutter_image_url,
          LEFT(IFNULL(p.it_basic, ''), 80) AS it_basic,
          CAST(c.category AS CHAR) AS content_category,

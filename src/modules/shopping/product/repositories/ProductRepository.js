@@ -14,13 +14,14 @@ const HOME_CARD_COLUMNS = `
   it_use_avg, it_use_cnt,
   CAST(it_flutter_image_url AS CHAR) AS it_flutter_image_url,
   CAST(it_img1 AS CHAR) AS it_img1,
+  CAST(it_img10 AS CHAR) AS it_img10,
   it_sc_type, it_sc_price, it_sc_minimum
 `;
 
 /** JOIN 시 상품 컬럼만 alias. `AS it_id` 별칭은 그대로 둔다. */
 function qualifyHomeCardColumns(alias) {
   return HOME_CARD_COLUMNS.replace(
-    /\b(it_id|it_name|it_basic|it_subject|it_price|it_cust_price|ca_id|it_kind|it_type3|it_type4|it_stock_qty|it_use_avg|it_use_cnt|it_flutter_image_url|it_img1|it_sc_type|it_sc_price|it_sc_minimum)\b/g,
+    /\b(it_id|it_name|it_basic|it_subject|it_price|it_cust_price|ca_id|it_kind|it_type3|it_type4|it_stock_qty|it_use_avg|it_use_cnt|it_flutter_image_url|it_img1|it_img10|it_sc_type|it_sc_price|it_sc_minimum)\b/g,
     (name, _g, offset, src) => {
       const before = src.slice(Math.max(0, offset - 6), offset);
       if (/AS\s+$/i.test(before)) return name;
@@ -42,6 +43,7 @@ const LIST_COLUMNS = `
   it_use_avg, it_use_cnt,
   CAST(it_flutter_image_url AS CHAR) AS it_flutter_image_url,
   CAST(it_img1 AS CHAR) AS it_img1,
+  CAST(it_img10 AS CHAR) AS it_img10,
   it_sc_type, it_sc_price, it_sc_minimum
 `;
 
