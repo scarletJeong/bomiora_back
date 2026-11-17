@@ -226,6 +226,10 @@ class ProductController {
   }
 
   processImageUrl(row, maxImages = 9) {
+    const cardImage = row.it_img1;
+    if (cardImage != null && String(cardImage).trim() !== '') {
+      return this.normalizeImageUrl(String(cardImage).trim());
+    }
     if (row.it_flutter_image_url && String(row.it_flutter_image_url).trim()) {
       return this.buildFlutterImageUrl(String(row.it_flutter_image_url).trim(), row.it_id);
     }
@@ -287,6 +291,10 @@ class ProductController {
       const value = row[key];
       imageFields[key] = value != null && String(value).trim() !== '' ? String(value).trim() : null;
     }
+    const detailImage = row.it_img10;
+    imageFields.it_img10 = detailImage != null && String(detailImage).trim() !== ''
+      ? String(detailImage).trim()
+      : null;
 
     const scType = this._toInt(row.it_sc_type, 0);
     const scPrice = this._toInt(row.it_sc_price, 0);

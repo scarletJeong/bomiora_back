@@ -86,7 +86,9 @@ const DETAIL_COLUMNS = `
   CAST(it_img2 AS CHAR) AS it_img2,
   CAST(it_img3 AS CHAR) AS it_img3,
   CAST(it_img4 AS CHAR) AS it_img4,
-  CAST(it_img5 AS CHAR) AS it_img5
+  CAST(it_img5 AS CHAR) AS it_img5,
+  CAST(it_img9 AS CHAR) AS it_img9,
+  CAST(it_img10 AS CHAR) AS it_img10
 `;
 
 class ProductRepository {

@@ -7,7 +7,9 @@ sharp.cache(false);
 
 const PROXY_CACHE_DIR = path.join(__dirname, '../../../../../uploads/image-proxy-cache');
 const PROXY_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const ITEM_IMAGE_TTL_MS = 60 * 1000;
 const PROXY_MEM_MAX = 80;
+const LOCAL_SHOP_ROOT = 'C:/xampp/htdocs/bomiora/www';
 
 class ImageProxyController {
   constructor() {
@@ -110,6 +112,38 @@ class ImageProxyController {
     return filePath;
   }
 
+  isShopItemImageUrl(url) {
+    try {
+      return new URL(String(url)).pathname.toLowerCase().includes('/data/item/');
+    } catch (_) {
+      return false;
+    }
+  }
+
+  cacheTtlFor(url) {
+    return this.isShopItemImageUrl(url) ? ITEM_IMAGE_TTL_MS : PROXY_CACHE_TTL_MS;
+  }
+
+  async tryReadLocalShopDataFile(targetUrl) {
+    try {
+      const pathname = new URL(String(targetUrl)).pathname || '';
+      const lower = pathname.toLowerCase();
+      const marker = '/data/';
+      const idx = lower.indexOf(marker);
+      if (idx < 0) return null;
+      const relative = pathname.substring(idx + 1);
+      const filePath = path.resolve(LOCAL_SHOP_ROOT, relative);
+      const root = path.resolve(LOCAL_SHOP_ROOT);
+      if (!filePath.toLowerCase().startsWith(root.toLowerCase())) return null;
+      const bytes = await fs.readFile(filePath);
+      const sniffed = this.sniffImageMimeFromBuffer(bytes);
+      if (!sniffed) return null;
+      return { buf: bytes, type: sniffed };
+    } catch (_) {
+      return null;
+    }
+  }
+
   async tryReadLocalDataEventFile(targetUrl) {
     try {
       const prefix = '/data/event/';
@@ -128,8 +162,11 @@ class ImageProxyController {
     }
   }
 
-  setImageCacheHeaders(res) {
-    res.setHeader('Cache-Control', 'public, max-age=86400, immutable');
+  setImageCacheHeaders(res, shortLived = false) {
+    res.setHeader(
+      'Cache-Control',
+      shortLived ? 'public, max-age=60' : 'public, max-age=86400, immutable',
+    );
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
   }
@@ -172,16 +209,16 @@ class ImageProxyController {
     if (oldest) this._memCache.delete(oldest);
   }
 
-  async readProxyCache(key) {
+  async readProxyCache(key, ttlMs = PROXY_CACHE_TTL_MS) {
     const mem = this._memCache.get(key);
-    if (mem && Date.now() - mem.at < PROXY_CACHE_TTL_MS) {
+    if (mem && Date.now() - mem.at < ttlMs) {
       return { buf: mem.buf, type: mem.type };
     }
     const file = path.join(PROXY_CACHE_DIR, `${key}.bin`);
     const meta = path.join(PROXY_CACHE_DIR, `${key}.json`);
     try {
       const st = await fs.stat(file);
-      if (Date.now() - st.mtimeMs > PROXY_CACHE_TTL_MS) return null;
+      if (Date.now() - st.mtimeMs > ttlMs) return null;
       const [buf, metaRaw] = await Promise.all([
         fs.readFile(file),
         fs.readFile(meta, 'utf8').catch(() => '{}'),
@@ -211,7 +248,7 @@ class ImageProxyController {
     } catch (_) {}
   }
 
-  async sendImageBytes(res, key, bytes, type, thumbW) {
+  async sendImageBytes(res, key, bytes, type, thumbW, shortLived = false) {
     let out = bytes;
     let outType = type || 'image/jpeg';
     if (thumbW) {
@@ -221,14 +258,14 @@ class ImageProxyController {
       outType = 'image/jpeg';
     }
     res.setHeader('Content-Type', outType);
-    this.setImageCacheHeaders(res);
+    this.setImageCacheHeaders(res, shortLived);
     this.writeProxyCache(key, out, outType);
     return res.status(200).send(out);
   }
 
-  sendCachedImage(res, buf, type) {
+  sendCachedImage(res, buf, type, shortLived = false) {
     res.setHeader('Content-Type', type || 'image/jpeg');
-    this.setImageCacheHeaders(res);
+    this.setImageCacheHeaders(res, shortLived);
     res.setHeader('X-Proxy-Cache', 'HIT');
     return res.status(200).send(buf);
   }
@@ -243,15 +280,16 @@ class ImageProxyController {
       const thumbW = this.thumbWidth(req.query.w);
       const cacheSource = thumbW ? `${targetUrl}|w=${thumbW}` : String(targetUrl);
       const key = this.cacheKey(cacheSource);
-      const cached = await this.readProxyCache(key);
+      const shortLived = this.isShopItemImageUrl(targetUrl);
+      const cached = await this.readProxyCache(key, this.cacheTtlFor(targetUrl));
       if (cached) {
-        return this.sendCachedImage(res, cached.buf, cached.type);
+        return this.sendCachedImage(res, cached.buf, cached.type, shortLived);
       }
 
       const origin = await this.loadOriginBytes(String(targetUrl));
       if (!origin) return res.sendStatus(404);
       if (origin.status) return res.sendStatus(origin.status);
-      return this.sendImageBytes(res, key, origin.buf, origin.type, thumbW);
+      return this.sendImageBytes(res, key, origin.buf, origin.type, thumbW, shortLived);
     } catch (error) {
       return res.sendStatus(500);
     }
@@ -259,7 +297,7 @@ class ImageProxyController {
 
   async loadOriginBytes(targetUrl) {
     const key = this.cacheKey(targetUrl);
-    const cached = await this.readProxyCache(key);
+    const cached = await this.readProxyCache(key, this.cacheTtlFor(targetUrl));
     if (cached) return cached;
 
     const pending = this._originInflight.get(key);
@@ -306,6 +344,11 @@ class ImageProxyController {
     }
 
     if (!response.ok) {
+      const localItem = await this.tryReadLocalShopDataFile(targetUrl);
+      if (localItem) {
+        await this.writeProxyCache(key, localItem.buf, localItem.type);
+        return localItem;
+      }
       const localBytes = await this.tryReadLocalDataEventFile(targetUrl);
       if (localBytes) {
         const type = this.detectContentType(targetUrl, null);
@@ -337,6 +380,11 @@ class ImageProxyController {
       base.startsWith('text/');
 
     if (urlLooksImage && this.bufferLooksLikeHtml(bytes)) {
+      const localItem = await this.tryReadLocalShopDataFile(targetUrl);
+      if (localItem) {
+        await this.writeProxyCache(key, localItem.buf, localItem.type);
+        return localItem;
+      }
       const localBytes = await this.tryReadLocalDataEventFile(targetUrl);
       if (localBytes) {
         const sniffedLocal = this.sniffImageMimeFromBuffer(localBytes);
