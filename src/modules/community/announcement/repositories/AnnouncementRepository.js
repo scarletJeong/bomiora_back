@@ -29,37 +29,39 @@ class AnnouncementRepository {
     const keyword = likeContainsPattern(query);
     const useKeyword = String(query || '').trim().length > 0;
     const whereSql = this._buildWhereClause({ useKeyword });
-    const listParams = useKeyword
-      ? [keyword, keyword, safeSize + 1, offset]
-      : [safeSize + 1, offset];
+    const whereParams = useKeyword ? [keyword, keyword] : [];
 
-    const [rows] = await pool.query(
-      `SELECT
-          n.id,
-          n.title,
-          NULL AS content,
-          n.view_count,
-          n.is_notice,
-          n.writer_name,
-          n.created_at,
-          n.created_by,
-          n.updated_at,
-          n.updated_by,
-          n.image_path
-        FROM bm_notice n
-        ${whereSql}
-        ORDER BY n.is_notice DESC, n.created_at DESC, n.id DESC
-        LIMIT ? OFFSET ?`,
-      listParams
-    );
+    const [countResult, listResult] = await Promise.all([
+      pool.query(
+        `SELECT COUNT(*) AS total FROM bm_notice n ${whereSql}`,
+        whereParams
+      ),
+      pool.query(
+        `SELECT
+            n.id,
+            n.title,
+            NULL AS content,
+            n.view_count,
+            n.is_notice,
+            n.writer_name,
+            n.created_at,
+            n.created_by,
+            n.updated_at,
+            n.updated_by,
+            n.image_path
+          FROM bm_notice n
+          ${whereSql}
+          ORDER BY n.is_notice DESC, n.created_at DESC, n.id DESC
+          LIMIT ? OFFSET ?`,
+        [...whereParams, safeSize, offset]
+      ),
+    ]);
 
-    const hasMore = rows.length > safeSize;
-    const pageRows = hasMore ? rows.slice(0, safeSize) : rows;
     return {
-      total: offset + pageRows.length + (hasMore ? 1 : 0),
+      total: Number(countResult[0]?.[0]?.total || 0),
       page: safePage,
       size: safeSize,
-      rows: pageRows,
+      rows: listResult[0],
     };
   }
 
