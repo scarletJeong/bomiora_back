@@ -122,7 +122,9 @@ class ProductController {
     const imageUrl = this.productImageOriginUrl(
       payload?.data?.additionalInfo?.it_img10 || payload?.data?.imageUrl,
     );
-    if (imageUrl) imageProxyController.warmOptimizedWebp(imageUrl).catch(() => {});
+    // 상세 상단은 1000px 리사이즈본만 표시한다. 상세 API 캐시를 데울 때
+    // 같은 캐시 키의 이미지를 미리 만들어 첫 요청의 원본 fetch/Sharp 변환을 없앤다.
+    if (imageUrl) imageProxyController.warmThumb(imageUrl, 1000).catch(() => {});
     return payload;
   }
 
