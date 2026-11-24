@@ -20,7 +20,7 @@ class HealthProfileCartRepository {
         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
         ?, ?, ?, ?, ?, ?,
         ?, ?, ?, ?, ?, ?, ?,
-        NOW(), NOW(), ?, ?, 'Y', '', '', '', '', '', '', '', 'first', 'prescription', 'ongoing'
+        NOW(), NOW(), ?, ?, 'Y', '', '', '', '', '', '', '', 'first', 'atmosphere', 'ongoing'
       )`,
       [
         payload.mb_id, payload.it_id || '', payload.od_id,
