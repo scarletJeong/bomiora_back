@@ -931,13 +931,20 @@ class ReviewController {
       let reviewItId = String(req.query.itId || req.query.it_id || '').trim();
       if (!reviewItId) reviewItId = this._findCachedReviewItId(mbId, isId);
 
+      const wasFirstReview = await reviewRepository.isEarliestReview(mbId, isId);
       const deleted = await reviewRepository.deleteByIdAndMbId(isId, mbId);
       if (!deleted) {
         return res.json({
           success: false,
           message: '리뷰를 찾을 수 없거나 삭제 권한이 없습니다.',
         });
-      const wasFirstReview = await reviewRepository.isEarliestReview(mbId, isId);
+      }
+      if (wasFirstReview) {
+        try {
+          await pointRepository.markFirstReviewUsed(mbId);
+        } catch (pointError) {
+          console.error('[Review] 첫 리뷰 사용 표시 실패:', pointError?.message || pointError);
+        }
       }
       this._invalidateMemberReviewList(mbId);
       this._invalidateProductReviewList(reviewItId);
@@ -949,13 +956,6 @@ class ReviewController {
   }
 
   async checkReviewExists(req, res) {
-      if (wasFirstReview) {
-        try {
-          await pointRepository.markFirstReviewUsed(mbId);
-        } catch (pointError) {
-          console.error('[Review] 첫 리뷰 사용 표시 실패:', pointError?.message || pointError);
-        }
-      }
     try {
       const mbId = String(req.query.mbId || '').trim();
       const odId = String(req.query.odId || '').trim();
