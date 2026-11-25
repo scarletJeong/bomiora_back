@@ -120,6 +120,7 @@ app.use('/api/proxy', require('./src/modules/common/imageProxy/routes/imageProxy
 app.use('/api/shop', require('./src/modules/common/shopdefault/routes/shopDefaultRoutes'));
 app.use('/api/config', require('./src/modules/config/routes/configRoutes'));
 app.use('/api/address', require('./src/modules/common/address/routes/addressSearchRoutes'));
+app.use('/api/client-failure-log', require('./src/modules/common/client_log/routes/clientFailureLogRoutes'));
 app.use('/api/get-category', require('./src/modules/common/get_category/routes/getCategoryRoutes'));
 app.use('/api/get_category', require('./src/modules/common/get_category/routes/getCategoryRoutes'));
 
