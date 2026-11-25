@@ -28,7 +28,9 @@ class OrderController {
     const id = String(mbId || '').trim();
     if (!id) return;
     for (const key of orderListCache.store.keys()) {
-      if (key.startsWith(`list:${id}:`)) orderListCache.store.delete(key);
+      if (key.startsWith(`list:${id}:`) || key === `counts:${id}`) {
+        orderListCache.store.delete(key);
+      }
     }
   }
   bufferToString(value) {
@@ -494,7 +496,12 @@ class OrderController {
       const lite =
         String(req.query.lite || '') === '1' ||
         String(req.query.lite || '') === 'true';
-      const cacheKey = `list:${mbId}:${period}:${status}:${page}:${size}:${lite ? 'lite' : 'full'}`;
+      const countsOnly =
+        String(req.query.countsOnly || req.query.counts_only || '') === '1' ||
+        String(req.query.countsOnly || req.query.counts_only || '') === 'true';
+      const cacheKey = countsOnly
+        ? `counts:${String(mbId || '').trim()}`
+        : `list:${mbId}:${period}:${status}:${page}:${size}:${lite ? 'lite' : 'full'}`;
 
       if (mbId) {
         const expired = await orderRepository.cancelExpiredUnpaidDeposits({ mbId });
@@ -502,6 +509,24 @@ class OrderController {
           this.invalidateOrderListCache(mbId);
           couponController.invalidateForMember(mbId);
         }
+      }
+
+      if (countsOnly) {
+        const payload = await orderListCache.getOrSet(cacheKey, async () => {
+          const statusCounts = await orderRepository.countOrderStatuses(mbId);
+          return {
+            orders: [],
+            reviewedByOrder: {},
+            currentPage: 0,
+            totalPages: 0,
+            totalElements: 0,
+            totalItems: 0,
+            hasNext: false,
+            statusCounts,
+          };
+        });
+        res.set('Cache-Control', 'private, max-age=20');
+        return res.json(payload);
       }
 
       const payload = await orderListCache.getOrSet(cacheKey, async () => {
