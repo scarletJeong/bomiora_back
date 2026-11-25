@@ -131,35 +131,56 @@ class AnnouncementRepository {
     );
   }
 
-  /** 상세용 — 공지 고정 가드 없이 created_at/id 기준 prev·next (빠름) */
+  _noticeFlag(value) {
+    if (Buffer.isBuffer(value)) return value.length && value[0] ? 1 : 0;
+    return Number(value) === 1 ? 1 : 0;
+  }
+
+  /**
+   * 목록과 같은 순서(고정공지 우선, 작성일 최신, id)에서 바로 위·아래 글.
+   * 한 페이지 안의 이웃이 아니다.
+   */
   async findAdjacentByIdFast(id, current = null) {
     const cur = current || (await this.findById(id));
     if (!cur) return { prev: null, next: null };
 
     const createdAt = cur.created_at;
     const curId = Number(cur.id);
+    const notice = this._noticeFlag(cur.is_notice);
     const [[prevRows], [nextRows]] = await Promise.all([
       pool.query(
         `SELECT id, title FROM bm_notice
           WHERE is_deleted = 0
             AND (
-              created_at > ?
-              OR (created_at = ? AND id > ?)
+              IFNULL(is_notice, 0) > ?
+              OR (
+                IFNULL(is_notice, 0) = ?
+                AND (
+                  created_at > ?
+                  OR (created_at = ? AND id > ?)
+                )
+              )
             )
-          ORDER BY created_at ASC, id ASC
+          ORDER BY IFNULL(is_notice, 0) ASC, created_at ASC, id ASC
           LIMIT 1`,
-        [createdAt, createdAt, curId]
+        [notice, notice, createdAt, createdAt, curId]
       ),
       pool.query(
         `SELECT id, title FROM bm_notice
           WHERE is_deleted = 0
             AND (
-              created_at < ?
-              OR (created_at = ? AND id < ?)
+              IFNULL(is_notice, 0) < ?
+              OR (
+                IFNULL(is_notice, 0) = ?
+                AND (
+                  created_at < ?
+                  OR (created_at = ? AND id < ?)
+                )
+              )
             )
-          ORDER BY created_at DESC, id DESC
+          ORDER BY IFNULL(is_notice, 0) DESC, created_at DESC, id DESC
           LIMIT 1`,
-        [createdAt, createdAt, curId]
+        [notice, notice, createdAt, createdAt, curId]
       ),
     ]);
     return {

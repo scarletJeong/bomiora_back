@@ -24,26 +24,7 @@ class AnnouncementController {
         },
       };
     });
-    this.primeDetailCaches(payload.data);
     return payload;
-  }
-
-  primeDetailCaches(items) {
-    if (!Array.isArray(items)) return;
-    for (let i = 0; i < items.length; i += 1) {
-      const item = items[i];
-      if (!item?.id) continue;
-      announcementDetailCache.set(`detail:${item.id}`, {
-        success: true,
-        data: item,
-        prev: i > 0
-          ? { id: items[i - 1].id, title: items[i - 1].title }
-          : null,
-        next: i + 1 < items.length
-          ? { id: items[i + 1].id, title: items[i + 1].title }
-          : null,
-      });
-    }
   }
 
   announcementImageUrl(raw) {
