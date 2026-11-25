@@ -229,6 +229,10 @@ class KcpPayRepository {
         const orderController = require('../../../user/delivery/controllers/OrderController');
         orderController.invalidateOrderListCache(payload.mbId);
       } catch (_) {}
+      try {
+        const cartController = require('../../cart/controllers/CartController');
+        cartController.invalidateCartListCache(payload.mbId);
+      } catch (_) {}
       if (Array.isArray(payload.coupons) && payload.coupons.length) {
         try {
           const couponController = require('../../../user/coupon/controllers/CouponController');

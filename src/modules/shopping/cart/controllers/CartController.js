@@ -793,7 +793,7 @@ class CartController {
       const cacheKey = `${mbId}:${ctStatus}`;
       const forceRefresh = String(req.query.refresh || '').trim() === '1';
       if (forceRefresh) {
-        cartListCache.store.delete(cacheKey);
+        cartListCache.remove(cacheKey);
       }
 
       const payload = await cartListCache.getOrSet(

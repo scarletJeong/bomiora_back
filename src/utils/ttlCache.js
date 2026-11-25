@@ -118,6 +118,7 @@ class TtlCache {
   }
 
   remove(key) {
+    this.generation += 1;
     this.store.delete(key);
     this.inFlight.delete(key);
   }
