@@ -590,18 +590,27 @@ class OrderController {
           );
           const isConsultationDone =
             isPrescriptionOrder && flags.isConsultationDone === true;
+          const odStatus = this.bufferToString(row.od_status) || '';
+          const displayStatus = this.getDisplayStatus(
+            row.od_status,
+            row.delivery_completed,
+            row.admin_completed,
+            row.auto_confirm_at,
+            isConsultationDone
+          );
+          const settleCase = this.bufferToString(row.od_settle_case) || '';
+          const bankAccount = this.bufferToString(row.od_bank_account) || '';
+          const paymentMethod = settleCase || (
+            this.toInt(row.od_misu) > 0 && bankAccount.includes('/') ? '가상계좌' : ''
+          );
           return {
             odId,
             orderDate: this.formatDate(row.od_time, false),
             orderDateTime: this.formatDate(row.od_time, true),
-            displayStatus: this.getDisplayStatus(
-              row.od_status,
-              row.delivery_completed,
-              row.admin_completed,
-              row.auto_confirm_at,
-              isConsultationDone
-            ),
-            odStatus: this.bufferToString(row.od_status) || '',
+            displayStatus,
+            odStatus,
+            paymentMethod,
+            awaitingDeposit: displayStatus === '결제대기중' || odStatus === '주문',
             totalPrice: this.computeOrderTotal(row),
             deliveryFee: this.toInt(row.od_send_cost) + this.toInt(row.od_send_cost2),
             recipientName: this.bufferToString(row.od_name) || '',
