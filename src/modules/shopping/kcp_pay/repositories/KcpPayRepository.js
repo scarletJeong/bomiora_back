@@ -250,7 +250,7 @@ class KcpPayRepository {
       await connection.beginTransaction();
 
       const [rows] = await connection.query(
-        `SELECT od_id, od_status, od_misu
+        `SELECT od_id, mb_id, od_status, od_misu
          FROM bomiora_shop_order
          WHERE od_id = ?
          LIMIT 1`,
@@ -290,6 +290,13 @@ class KcpPayRepository {
       }
 
       await connection.commit();
+      const mbId = String(current.mb_id || '').trim();
+      if (mbId) {
+        try {
+          const orderController = require('../../../user/delivery/controllers/OrderController');
+          orderController.invalidateOrderDetailCache(mbId, String(orderId));
+        } catch (_) {}
+      }
       return { success: true, status: nextStatus, misu: nextMisu };
     } catch (error) {
       await connection.rollback();
