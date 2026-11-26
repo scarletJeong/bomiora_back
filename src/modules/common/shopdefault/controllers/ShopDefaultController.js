@@ -3,7 +3,9 @@ const { TtlCache } = require('../../../../utils/ttlCache');
 const { registerPublicCache } = require('../../../internal/cache/publicCacheRegistry');
 
 const reservationSettingsCache = new TtlCache(60_000);
+const companyInfoCache = new TtlCache(60_000);
 registerPublicCache('shop', reservationSettingsCache);
+registerPublicCache('shop', companyInfoCache);
 
 class ShopDefaultController {
   normalizeTimeValue(timeValue) {
@@ -27,6 +29,41 @@ class ShopDefaultController {
       end_time: this.normalizeTimeValue(endTime),
       active: Number(active || 0) === 1
     };
+  }
+
+  textValue(value) {
+    if (value == null) return '';
+    if (Buffer.isBuffer(value)) return value.toString('utf8').trim();
+    if (value && typeof value === 'object' && value.type === 'Buffer' && Array.isArray(value.data)) {
+      return Buffer.from(value.data).toString('utf8').trim();
+    }
+    return String(value).trim();
+  }
+
+  async getCompanyInfo(req, res) {
+    try {
+      const payload = await companyInfoCache.getOrSet('company', async () => {
+        const row = await shopDefaultRepository.findCompanyInfo();
+        return {
+          success: true,
+          data: {
+            companyName: this.textValue(row?.de_admin_company_name),
+            ownerName: this.textValue(row?.de_admin_company_owner),
+            businessNumber: this.textValue(row?.de_admin_company_saupja_no),
+            mailOrderNumber: this.textValue(row?.de_admin_tongsin_no),
+            phone: this.textValue(row?.de_admin_company_tel),
+            fax: this.textValue(row?.de_admin_company_fax),
+            email: this.textValue(row?.de_admin_info_email),
+            address: this.textValue(row?.de_admin_company_addr),
+          },
+        };
+      });
+      res.set('Cache-Control', 'public, max-age=60');
+      return res.json(payload);
+    } catch (error) {
+      console.error('회사 정보 조회 실패:', error);
+      return res.status(500).json({ success: false, message: '회사 정보 조회 실패' });
+    }
   }
 
   async getReservationSettings(req, res) {
