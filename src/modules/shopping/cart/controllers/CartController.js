@@ -99,17 +99,30 @@ class CartController {
     return 0;
   }
 
-  calculatePoint(product, optionId, optionPrice, qty) {
-    if (optionId) {
-      const base = this.toInt(product.it_price);
-      const totalPrice = base + this.toInt(optionPrice);
-      const pointType = this.toInt(product.it_point_type);
-      const point = this.toInt(product.it_point);
-      if (pointType === 1) return point * qty;
-      if (pointType === 2) return Math.floor((totalPrice * point) / 100) * qty;
-      return Math.floor(totalPrice * 0.01) * qty;
+  /**
+   * 웹 get_item_point와 동일(개당).
+   * it_point_type: 0=설정금액, 1=판매가%, 2=구매가%(선택옵션가 포함)
+   * io_type>0(추가옵션)은 it_supply_point.
+   */
+  calculatePoint(product, optionId, optionPrice, qty, ioType = 0) {
+    const safeQty = Math.max(1, this.toInt(qty, 1));
+    const type = this.toInt(ioType, 0);
+    if (type > 0) {
+      const supply = Math.max(0, this.toInt(product.it_supply_point, 0));
+      return supply * safeQty;
     }
-    return this.toInt(product.it_supply_point) * qty;
+
+    const pointType = this.toInt(product.it_point_type, 0);
+    const point = this.toInt(product.it_point, 0);
+    if (pointType > 0) {
+      let price = this.toInt(product.it_price, 0);
+      if (pointType === 2 && optionId) {
+        price += this.toInt(optionPrice, 0);
+      }
+      const unit = Math.floor((price * (point / 100)) / 10) * 10;
+      return Math.max(0, unit) * safeQty;
+    }
+    return Math.max(0, point) * safeQty;
   }
 
   buildImageUrl(product, itId) {
@@ -285,6 +298,10 @@ class CartController {
       it_supply_items: this.bufferToString(cart.product_it_supply_items) || '',
       ct_mb_inf: this.bufferToString(cart.ct_mb_inf) || '',
       point_usage_rate: this.pointUsageRateOf(product, ctKindRaw),
+      ct_point: this.toInt(cart.ct_point, 0),
+      it_point: product ? this.toInt(product.it_point, 0) : 0,
+      it_point_type: product ? this.toInt(product.it_point_type, 0) : 0,
+      it_supply_point: product ? this.toInt(product.it_supply_point, 0) : 0,
       ct_time: cart.ct_time,
       image_url: imageUrl,
       it_img: imageUrl,
@@ -711,7 +728,13 @@ class CartController {
           io_type: existingIoType,
           io_price: existingIoPrice,
           ct_time: new Date(),
-          ct_point: this.calculatePoint(product, optionId, existingIoPrice, newQty),
+          ct_point: this.calculatePoint(
+            product,
+            optionId,
+            existingIoPrice,
+            newQty,
+            existingIoType
+          ),
           ct_select: 1,
           ct_select_time: new Date()
         };
@@ -747,7 +770,13 @@ class CartController {
         ct_status: ctStatus,
         ct_history: '',
         ct_price: unitCtPrice,
-        ct_point: this.calculatePoint(product, optionId, optionPrice, quantity),
+        ct_point: this.calculatePoint(
+          product,
+          optionId,
+          optionPrice,
+          quantity,
+          ioType
+        ),
         cp_price: 0,
         ct_point_use: 0,
         ct_stock_use: 0,
@@ -1243,7 +1272,13 @@ class CartController {
           ct_status: ctStatus,
           ct_history: '',
           ct_price: finalPrice,
-          ct_point: this.calculatePoint(product, item.optionId, item.optionPrice, item.quantity),
+          ct_point: this.calculatePoint(
+            product,
+            item.optionId,
+            item.optionPrice,
+            item.quantity,
+            0
+          ),
           cp_price: 0,
           ct_point_use: 0,
           ct_stock_use: 0,
@@ -1312,7 +1347,13 @@ class CartController {
         ct_qty: quantity,
         ct_price: unitPrice,
         ct_time: new Date(),
-        ct_point: this.calculatePoint(product || {}, cart.io_id, ioPrice, quantity)
+        ct_point: this.calculatePoint(
+          product || {},
+          cart.io_id,
+          ioPrice,
+          quantity,
+          this.toInt(cart.io_type, 0)
+        )
       });
       const mbId = this.bufferToString(cart.mb_id);
       const ctStatus = this.normalizeCartStatus(cart.ct_status);

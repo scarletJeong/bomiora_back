@@ -305,6 +305,8 @@ class OrderController {
         ? this.toInt(lineAmount)
         : cartController.cartLineAmount(cart),
       ctStatus,
+      ctPoint: this.toInt(cart.ct_point, 0),
+      ct_point: this.toInt(cart.ct_point, 0),
       imageUrl: listImage || imageUrlMap[itId] || cart.it_img1 || ''
     };
   }
