@@ -80,7 +80,7 @@ const DETAIL_COLUMNS = `
   CAST(it_mb_inf AS CHAR) AS it_mb_inf,
   it_buy_min_qty, it_buy_max_qty, it_tel_inq,
   it_icon1, it_icon2,
-  it_price, it_cust_price, it_stock_qty, it_soldout, it_stock_sms, it_use, it_use_avg, it_use_cnt,
+  it_price, it_cust_price, it_stock_qty, it_soldout, it_stock_sms, it_use, it_nocoupon, it_use_avg, it_use_cnt,
   it_type3, it_type4,
   CAST(ca_id AS CHAR) AS ca_id,
   CAST(it_kind AS CHAR) AS it_kind,

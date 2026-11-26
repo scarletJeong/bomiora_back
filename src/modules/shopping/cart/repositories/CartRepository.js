@@ -32,6 +32,7 @@ const CART_LIST_SELECT = `
          CAST(p.it_img1 AS CHAR) AS it_img1,
          CAST(p.it_soldout AS CHAR) AS product_it_soldout,
          CAST(p.it_use AS CHAR) AS product_it_use,
+         COALESCE(p.it_nocoupon, 0) AS product_it_nocoupon,
          p.it_stock_qty AS product_it_stock_qty,
          p.it_buy_min_qty AS product_it_buy_min_qty,
          p.it_buy_max_qty AS product_it_buy_max_qty,
@@ -61,7 +62,7 @@ class CartRepository {
               it_sc_type, it_sc_method, it_sc_price, it_sc_minimum, it_sc_qty,
               it_price, it_point_type, it_point, it_supply_point,
               it_buy_min_qty, it_buy_max_qty, it_tel_inq, it_stock_qty,
-              it_soldout, it_use, point_usage_rate
+              it_soldout, it_use, it_nocoupon, point_usage_rate
        FROM bomiora_shop_item_new WHERE it_id = ? LIMIT 1`,
       [itId]
     );
@@ -130,7 +131,7 @@ class CartRepository {
               it_sc_type, it_sc_method, it_sc_price, it_sc_minimum, it_sc_qty,
               it_price, it_point_type, it_point, it_supply_point,
               it_buy_min_qty, it_buy_max_qty, it_tel_inq,
-              it_soldout, it_use, it_stock_qty, point_usage_rate
+              it_soldout, it_use, it_nocoupon, it_stock_qty, point_usage_rate
        FROM bomiora_shop_item_new
        WHERE it_id IN (?)`,
       [ids]

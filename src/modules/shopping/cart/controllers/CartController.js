@@ -357,6 +357,10 @@ class CartController {
       parent_it_id: effectiveParent || null,
       it_supply_items: this.bufferToString(cart.product_it_supply_items) || '',
       ct_mb_inf: this.bufferToString(cart.ct_mb_inf) || '',
+      it_nocoupon: this.toInt(
+        cart.product_it_nocoupon ?? product?.it_nocoupon,
+        0
+      ),
       point_usage_rate: this.pointUsageRateOf(product, ctKindRaw),
       ct_point: this.toInt(cart.ct_point, 0),
       it_point: this.toInt(

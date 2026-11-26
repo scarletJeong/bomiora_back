@@ -154,6 +154,18 @@ class CouponController {
         return res.json({ success: false, message: '이미 등록된 쿠폰입니다.' });
       }
 
+      try {
+        await couponRepository.assertProductCouponTargetAllows(
+          coupon.cp_method,
+          coupon.cp_target
+        );
+      } catch (targetError) {
+        return res.json({
+          success: false,
+          message: targetError.message || '쿠폰이 적용되지 않는 제품 입니다.',
+        });
+      }
+
       await couponRepository.create({
         cp_id: coupon.cp_id,
         cp_subject: coupon.cp_subject,

@@ -296,6 +296,25 @@ class CouponRepository {
     return rows.length ? rows[0] : null;
   }
 
+  /**
+   * 개별상품 쿠폰 대상이 it_nocoupon 이면 등록·다운로드 불가 (웹 coupon_update와 동일)
+   */
+  async assertProductCouponTargetAllows(cpMethod, cpTarget) {
+    if (Number(cpMethod) !== 0) return;
+    const itId = this._asText(cpTarget);
+    if (!itId) return;
+    const [rows] = await pool.query(
+      `SELECT COUNT(*) AS cnt
+         FROM bomiora_shop_item_new
+        WHERE it_id = ?
+          AND COALESCE(it_nocoupon, '0') = '0'`,
+      [itId]
+    );
+    if (Number(rows?.[0]?.cnt || 0) <= 0) {
+      throw new Error('쿠폰이 적용되지 않는 제품 입니다.');
+    }
+  }
+
   async findByCouponIdAndUserId(couponId, userId) {
     const [rows] = await pool.query(
       'SELECT * FROM bomiora_shop_coupon WHERE cp_id = ? AND mb_id = ? LIMIT 1',
@@ -480,6 +499,20 @@ class CouponRepository {
     return this._asText(cart?.ct_mb_inf).length > 0;
   }
 
+  /** 상품 쿠폰적용안함 (it_nocoupon=1) */
+  _isNoCouponCart(cart) {
+    const raw =
+      cart?.it_nocoupon ??
+      cart?.product_it_nocoupon ??
+      cart?.itNocoupon;
+    return Number(raw) === 1 || String(raw ?? '').trim() === '1';
+  }
+
+  /** 쿠폰 대상에서 제외: 인플루언서 + 쿠폰적용안함 */
+  _isCouponBlockedCart(cart) {
+    return this._isInfluencerCart(cart) || this._isNoCouponCart(cart);
+  }
+
   _cartCategoryIds(cart) {
     return [
       cart?.product_ca_id ?? cart?.ca_id,
@@ -531,7 +564,8 @@ class CouponRepository {
         : (c) => Math.max(0, Number(c?.ct_price || 0) || 0);
     const baseShipping = Math.max(0, Number(context.baseShipping || 0) || 0);
 
-    const eligible = carts.filter((c) => !this._isInfluencerCart(c));
+    // 쿠폰 대상: 인플루언서·it_nocoupon 제외 (포인트 대상과는 별개)
+    const eligible = carts.filter((c) => !this._isCouponBlockedCart(c));
     const nonInfluencerAmount = eligible.reduce(
       (sum, c) => sum + Math.max(0, lineAmountOf(c) || 0),
       0
@@ -695,7 +729,15 @@ class CouponRepository {
 
     const ctx = this.buildCheckoutCouponContext(context);
     if (ctx.couponPointDisabled) {
-      throw new Error('인플루언서 상품에는 쿠폰을 사용할 수 없습니다.');
+      const onlyInfluencer =
+        Array.isArray(ctx.carts) &&
+        ctx.carts.length > 0 &&
+        ctx.carts.every((c) => this._isInfluencerCart(c));
+      throw new Error(
+        onlyInfluencer
+          ? '인플루언서 상품에는 쿠폰을 사용할 수 없습니다.'
+          : '쿠폰을 적용할 수 없는 상품입니다.'
+      );
     }
 
     const { coupons, usedMap } = await this.getMemberCouponBundle(mbId);
