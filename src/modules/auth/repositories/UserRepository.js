@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const pool = require('../../../config/database');
 const { rememberFromMemberRow } = require('../services/refundAccountCache');
+const pointRepository = require('../../user/point/repositories/PointRepository');
 const User = require('../models/User');
 
 class UserRepository {
@@ -273,7 +274,8 @@ class UserRepository {
       const ip = String(clientIp || '');
       const marketing = resolveMarketingAgree(agreements);
       const appPush = resolveAppPushAgree(agreements);
-      const initialPoint = 5000;
+      const grantConfig = await pointRepository.readPointGrantConfig(conn);
+      const initialPoint = grantConfig.registerPoint;
 
       console.log('[UserRepository.create] 저장 요청 부가 데이터:', {
         mbNo,
@@ -323,15 +325,19 @@ class UserRepository {
         ]
       );
 
-      const [signupPoint] = await conn.query(
-        `INSERT INTO bomiora_point
-         (
-           mb_id, po_datetime, po_content, po_point, po_use_point,
-           po_mb_point, po_expired, po_expire_date, po_rel_table, po_rel_id, po_rel_action
-         )
-         VALUES (?, ?, ?, ?, 0, ?, 0, DATE_ADD(?, INTERVAL 1 YEAR), '@member', ?, '회원가입')`,
-        [mbId, nowKstDateTime, '회원가입 축하', initialPoint, initialPoint, nowKstDateTime, mbId]
-      );
+      let signupPointId = null;
+      if (initialPoint !== 0) {
+        const [signupPoint] = await conn.query(
+          `INSERT INTO bomiora_point
+           (
+             mb_id, po_datetime, po_content, po_point, po_use_point,
+             po_mb_point, po_expired, po_expire_date, po_rel_table, po_rel_id, po_rel_action
+           )
+           VALUES (?, ?, ?, ?, 0, ?, 0, DATE_ADD(?, INTERVAL 1 YEAR), '@member', ?, '회원가입')`,
+          [mbId, nowKstDateTime, '회원가입 축하', initialPoint, initialPoint, nowKstDateTime, mbId]
+        );
+        signupPointId = signupPoint.insertId;
+      }
 
       if (normalizedBirth || normalizedSex || dupInfo || (mbHp && mbHp.length > 0)) {
         try {
@@ -348,14 +354,15 @@ class UserRepository {
 
       await conn.commit();
 
-      // 회원가입 축하 포인트 푸시
-      try {
-        const { notifyPointEarned } = require('../../user/notification/services/MemberNotifyService');
-        notifyPointEarned(mbId, initialPoint, signupPoint.insertId).catch((e) => {
-          console.error('[UserRepository] 회원가입 포인트 푸시 실패:', e?.message || e);
-        });
-      } catch (e) {
-        console.warn('[UserRepository] 포인트 푸시 모듈 로드 스킵:', e?.message || e);
+      if (signupPointId) {
+        try {
+          const { notifyPointEarned } = require('../../user/notification/services/MemberNotifyService');
+          notifyPointEarned(mbId, initialPoint, signupPointId).catch((e) => {
+            console.error('[UserRepository] 회원가입 포인트 푸시 실패:', e?.message || e);
+          });
+        } catch (e) {
+          console.warn('[UserRepository] 포인트 푸시 모듈 로드 스킵:', e?.message || e);
+        }
       }
 
       // 생성된 사용자 조회

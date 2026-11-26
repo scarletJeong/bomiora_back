@@ -5,6 +5,32 @@ const { TtlCache } = require('../../../../utils/ttlCache');
 const pointReadCache = new TtlCache(180_000);
 
 class PointRepository {
+  configInt(value) {
+    if (value == null) return 0;
+    let raw = value;
+    if (Buffer.isBuffer(value)) raw = value.toString('utf8');
+    else if (value && typeof value === 'object' && value.type === 'Buffer' && Array.isArray(value.data)) {
+      raw = Buffer.from(value.data).toString('utf8');
+    }
+    const n = Number(String(raw).trim());
+    if (!Number.isFinite(n)) return 0;
+    return Math.trunc(n);
+  }
+
+  /** 회원가입·로그인·첫 리뷰 점수. 웹 insert_point()와 같이 포인트 사용이 꺼지면 0. */
+  async readPointGrantConfig(conn) {
+    const executor = conn || pool;
+    const [rows] = await executor.query(
+      'SELECT cf_use_point, cf_register_point, cf_login_point, cf_1 FROM bomiora_config LIMIT 1'
+    );
+    const row = rows[0] || {};
+    const usePoint = !rows.length || this.configInt(row.cf_use_point) === 1;
+    const registerPoint = usePoint ? this.configInt(row.cf_register_point) : 0;
+    const loginPoint = usePoint ? this.configInt(row.cf_login_point) : 0;
+    const firstReviewPoint = usePoint ? this.configInt(row.cf_1) : 0;
+    return { usePoint, registerPoint, loginPoint, firstReviewPoint };
+  }
+
   invalidateMemberPoint(mbId) {
     const id = String(mbId || '').trim();
     if (!id) return;
@@ -121,7 +147,25 @@ class PointRepository {
         return { granted: false, code: 'ALREADY', poMbPoint: Number(member.mb_point || 0), today };
       }
 
-      const loginPoint = 100;
+      const grantConfig = await this.readPointGrantConfig(conn);
+      const loginPoint = grantConfig.loginPoint;
+      if (loginPoint === 0) {
+        await conn.query(
+          `UPDATE bomiora_member
+           SET mb_today_login = ?,
+               mb_login_ip = ?
+           WHERE mb_id = ?`,
+          [now, String(ip || '').slice(0, 45), safeMbId]
+        );
+        await conn.commit();
+        return {
+          granted: false,
+          code: grantConfig.usePoint ? 'ZERO' : 'POINT_OFF',
+          poMbPoint: Number(member.mb_point || 0),
+          today,
+        };
+      }
+
       const currentPoint = Number(member.mb_point || 0);
       const nextPoint = currentPoint + loginPoint;
 
@@ -526,7 +570,7 @@ class PointRepository {
   }
 
   /**
-   * 웹 update_use_point()와 같은 첫 리뷰 포인트. 금액은 2,000점.
+   * 웹 update_use_point()와 같은 첫 리뷰 포인트. 금액은 설정의 첫리뷰 포인트(cf_1).
    * 내용 ' 첫리뷰작성', @review / 리뷰작성.
    * mb_1 = 'y' 이거나 이미 첫 리뷰 적립이 있으면 다시 주지 않는다.
    */
@@ -577,14 +621,11 @@ class PointRepository {
         return { granted: false, code: 'ALREADY' };
       }
 
-      const [cfgRows] = await conn.query(
-        'SELECT cf_use_point FROM bomiora_config LIMIT 1'
-      );
-      const usePoint = !cfgRows.length || Number(cfgRows[0].cf_use_point) === 1;
-      const amount = 2000;
-      if (!usePoint) {
+      const grantConfig = await this.readPointGrantConfig(conn);
+      const amount = grantConfig.firstReviewPoint;
+      if (!grantConfig.usePoint || amount === 0) {
         await conn.commit();
-        return { granted: false, code: 'POINT_OFF' };
+        return { granted: false, code: grantConfig.usePoint ? 'ZERO' : 'POINT_OFF' };
       }
 
       const currentPoint = Number(memberRows[0].mb_point || 0);

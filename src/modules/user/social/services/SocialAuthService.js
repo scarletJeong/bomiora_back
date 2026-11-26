@@ -378,12 +378,13 @@ class SocialAuthService {
       agreements?.night === true
         ? 1
         : 0;
-    const initialPoint = 5000;
 
     let conn;
     try {
       conn = await pool.getConnection();
       await conn.beginTransaction();
+      const grantConfig = await pointRepository.readPointGrantConfig(conn);
+      const initialPoint = grantConfig.registerPoint;
 
       const mbNo = await userRepository.generateNextMbNo(conn);
       const mbNick = await this.resolveUniqueNick(nicknameBase, conn);
@@ -424,25 +425,31 @@ class SocialAuthService {
         ]
       );
 
-      const [signupPoint] = await conn.query(
-        `INSERT INTO bomiora_point
-         (
-           mb_id, po_datetime, po_content, po_point, po_use_point,
-           po_mb_point, po_expired, po_expire_date, po_rel_table, po_rel_id, po_rel_action
-         )
-         VALUES (?, ?, ?, ?, 0, ?, 0, DATE_ADD(?, INTERVAL 1 YEAR), '@member', ?, '회원가입')`,
-        [mbId, nowKstDateTime, '회원가입 축하', initialPoint, initialPoint, nowKstDateTime, mbId]
-      );
+      let signupPointId = null;
+      if (initialPoint !== 0) {
+        const [signupPoint] = await conn.query(
+          `INSERT INTO bomiora_point
+           (
+             mb_id, po_datetime, po_content, po_point, po_use_point,
+             po_mb_point, po_expired, po_expire_date, po_rel_table, po_rel_id, po_rel_action
+           )
+           VALUES (?, ?, ?, ?, 0, ?, 0, DATE_ADD(?, INTERVAL 1 YEAR), '@member', ?, '회원가입')`,
+          [mbId, nowKstDateTime, '회원가입 축하', initialPoint, initialPoint, nowKstDateTime, mbId]
+        );
+        signupPointId = signupPoint.insertId;
+      }
 
       await conn.commit();
 
-      try {
-        const { notifyPointEarned } = require('../../notification/services/MemberNotifyService');
-        notifyPointEarned(mbId, initialPoint, signupPoint.insertId).catch((e) => {
-          console.error('[SOCIAL SIGNUP] 회원가입 포인트 푸시 실패:', e?.message || e);
-        });
-      } catch (e) {
-        console.warn('[SOCIAL SIGNUP] 포인트 푸시 모듈 로드 스킵:', e?.message || e);
+      if (signupPointId) {
+        try {
+          const { notifyPointEarned } = require('../../notification/services/MemberNotifyService');
+          notifyPointEarned(mbId, initialPoint, signupPointId).catch((e) => {
+            console.error('[SOCIAL SIGNUP] 회원가입 포인트 푸시 실패:', e?.message || e);
+          });
+        } catch (e) {
+          console.warn('[SOCIAL SIGNUP] 포인트 푸시 모듈 로드 스킵:', e?.message || e);
+        }
       }
 
       await socialProfileRepository.upsertProfile(mbId, provider, {

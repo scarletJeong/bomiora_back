@@ -1005,7 +1005,7 @@ class UserController {
       const lastLoginYmd = formatSqlDateOnlyForApi(user.lastLoginAt) || '';
       const alreadyToday = lastLoginYmd === today;
 
-      // 자동로그인(앱 재실행)도 "오늘 첫 접속"이면 100P 지급.
+      // 자동로그인(앱 재실행)도 오늘 첫 접속이면 로그인 포인트를 지급한다.
       // 응답은 기다리지 않음 — 이미 지급된 날은 DB 트랜잭션 자체를 건너뜀.
       if (!alreadyToday) {
         const clientIp = getClientIp(req);
@@ -1017,7 +1017,7 @@ class UserController {
           .then((firstLoginPoint) => {
             if (firstLoginPoint?.granted) {
               console.log(
-                '[SESSION] 첫로그인 100P 지급 — 푸시는 FCM 토큰 등록 시 발송',
+                '[SESSION] 첫로그인 포인트 지급 — 푸시는 FCM 토큰 등록 시 발송',
                 user.mbId
               );
             }
