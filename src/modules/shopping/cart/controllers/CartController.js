@@ -572,6 +572,59 @@ class CartController {
     return totalShipping;
   }
 
+  /**
+   * 착불은 견적에서 빠지고, 사용자선택(it_sc_method=2)은 현재 ct_send_cost를 알려 준다.
+   */
+  buildSendCostGuide(carts) {
+    const group = {};
+    (carts || []).forEach((c) => {
+      const key = String(c.it_id || '');
+      if (!group[key]) group[key] = [];
+      group[key].push(c);
+    });
+
+    const collect = [];
+    const choices = [];
+    Object.keys(group).forEach((itId) => {
+      const lines = group[itId];
+      if (!lines.length) return;
+      const head = lines[0];
+      const type = this.toInt(head.it_sc_type);
+      const method = this.toInt(head.it_sc_method);
+      if (type <= 1) return;
+
+      let price = 0;
+      let qty = 0;
+      const ctIds = [];
+      lines.forEach((c) => {
+        price += this.cartLineAmount(c);
+        qty += this.toInt(c.ct_qty, 1);
+        const id = Number(c.ct_id);
+        if (Number.isFinite(id) && id > 0) ctIds.push(id);
+      });
+      let fee = this.calculateItemShippingCost(price, qty, head);
+      if (fee < 0) fee = 0;
+      if (fee <= 0) return;
+
+      const name = String(this.bufferToString(head.it_name) || '').trim();
+      const sendCost = this.toInt(head.ct_send_cost) === 1 ? 1 : 0;
+      if (method === 1) {
+        collect.push({ it_id: itId, name, fee, ct_ids: ctIds });
+        return;
+      }
+      if (method === 2) {
+        choices.push({
+          it_id: itId,
+          name,
+          fee,
+          ct_ids: ctIds,
+          ct_send_cost: sendCost,
+        });
+      }
+    });
+    return { collect, choices };
+  }
+
   async ensureShopDefault() {
     const now = Date.now();
     if (this._shopDefault && now - (this._shopDefaultAt || 0) < 60_000) {
@@ -818,6 +871,35 @@ class CartController {
     )];
   }
 
+  async updateSendCost(req, res) {
+    try {
+      const mbId = String(req.body?.mb_id || '').trim();
+      const sendCost = this.toInt(req.body?.ct_send_cost, 0) === 1 ? 1 : 0;
+      const ctIds = this.parseCtIds(req.body?.ct_ids);
+      if (!mbId || !ctIds.length) {
+        return res.status(400).json({ success: false, message: 'mb_id와 ct_ids가 필요합니다.' });
+      }
+
+      const carts = await cartRepository.findByMbIdAndStatus(mbId, '쇼핑');
+      const targets = carts.filter((c) => {
+        if (!ctIds.includes(Number(c.ct_id))) return false;
+        return this.toInt(c.it_sc_type) > 1 && this.toInt(c.it_sc_method) === 2;
+      });
+      if (!targets.length) {
+        return res.status(400).json({ success: false, message: '배송비 결제 방식을 바꿀 수 없는 상품입니다.' });
+      }
+
+      for (const cart of targets) {
+        await cartRepository.updateCart(cart.ct_id, { ct_send_cost: sendCost });
+      }
+      this.invalidateCartListCache(mbId, '쇼핑');
+      return res.json({ success: true, ct_send_cost: sendCost });
+    } catch (error) {
+      console.error('[updateSendCost]', error);
+      return res.status(500).json({ success: false, message: '배송비 결제 방식을 바꾸지 못했습니다.' });
+    }
+  }
+
   async getShippingCost(req, res) {
     try {
       const mbId = String(req.query.mb_id || req.body?.mb_id || '').trim();
@@ -842,12 +924,15 @@ class CartController {
       const carts = await cartRepository.findByMbIdAndStatus(mbId, ctStatus);
       const selected = carts.filter((c) => ctIds.includes(Number(c.ct_id)));
       const quote = await this.quoteShipping(selected, zip);
+      const guide = this.buildSendCostGuide(selected);
       return res.json({
         success: true,
         shipping_cost: quote.base,
         base_shipping_cost: quote.base,
         extra_shipping_cost: quote.extra,
         point_rate: quote.pointRate,
+        collect_shipping: guide.collect,
+        choice_shipping: guide.choices,
       });
     } catch (error) {
       console.error('[getShippingCost]', error);

@@ -6,6 +6,7 @@ router.post('/add', (req, res) => cartController.addToCart(req, res));
 router.get('/', (req, res) => cartController.getCart(req, res));
 router.get('/shipping-cost', (req, res) => cartController.getShippingCost(req, res));
 router.post('/shipping-cost', (req, res) => cartController.getShippingCost(req, res));
+router.post('/send-cost', (req, res) => cartController.updateSendCost(req, res));
 router.get('/recommend', (req, res) => cartController.getRecommendProducts(req, res));
 router.post('/generate-order-id', (req, res) => cartController.generateOrderIdEndpoint(req, res));
 router.post('/healthprofile', (req, res) => cartController.saveHealthProfileForPrescription(req, res));

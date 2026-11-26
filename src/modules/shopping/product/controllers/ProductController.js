@@ -191,7 +191,7 @@ class ProductController {
 
   /**
    * 상세 제품정보 섹션용 배송비 문구
-   * it_sc_type: 0=쇼핑몰기본, 1=무료, 2=조건부무료, 3=유료
+   * it_sc_type: 0=쇼핑몰기본, 1=무료, 2=조건부무료, 3=유료, 4=수량별
    */
   buildShippingFeeLabel(row, shopDefault) {
     const type = this._toInt(row.it_sc_type, 0);
@@ -206,6 +206,12 @@ class ProductController {
       }
       if (price > 0) return `조건부 무료배송 (${this._formatWon(price)})`;
       return '조건부 무료배송';
+    }
+    if (type === 4) {
+      const qty = this._toInt(row.it_sc_qty, 0);
+      const unit = qty > 0 ? qty : 1;
+      if (price > 0) return `${unit}개마다 ${this._formatWon(price)}`;
+      return '수량별 배송비';
     }
 
     // type 0 — bomiora_shop_default
@@ -398,8 +404,10 @@ class ProductController {
         it_depopt2_label: textOrNull(row.it_depopt2_label) || '',
         it_weight: textOrNull(row.it_weight),
         it_sc_type: scType,
+        it_sc_method: this._toInt(row.it_sc_method, 0),
         it_sc_price: scPrice,
         it_sc_minimum: scMinimum,
+        it_sc_qty: this._toInt(row.it_sc_qty, 0),
         shippingFeeLabel,
         it_point: row.it_point,
         it_point_type: row.it_point_type,
