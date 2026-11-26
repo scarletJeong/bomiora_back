@@ -6,6 +6,7 @@ const { logKcpPayProblem } = require('../services/kcpPayLogger');
 const cartController = require('../../cart/controllers/CartController');
 const couponRepository = require('../../../user/coupon/repositories/CouponRepository');
 const pointRepository = require('../../../user/point/repositories/PointRepository');
+const shopDefaultRepository = require('../../../common/shopdefault/repositories/ShopDefaultRepository');
 
 const KCP_ERROR_MESSAGE_MAP = {
   '3001': '결제 요청 정보가 올바르지 않습니다.',
@@ -344,6 +345,11 @@ class KcpPayController {
           retUrl,
         });
       } else {
+        let cardNointUse = false;
+        try {
+          const shop = await shopDefaultRepository.findFirst();
+          cardNointUse = Number(shop?.de_card_noint_use) === 1;
+        } catch (_) {}
         html = kcpPayService.buildRequestHtml({
           jsUrl: config.jsUrl,
           callbackUrl,
@@ -357,6 +363,7 @@ class KcpPayController {
           receiver: pending.request.receiver,
           payMethod: mapped.payMethod,
           escrowUse: escrowUse === true,
+          cardNointUse,
           basketLineCount,
           goodInfo,
           shopUserId: mbId,

@@ -20,13 +20,15 @@ class ConfigController {
 
   async getConfig(req, res) {
     try {
-      const payload = await configCache.getOrSet('point_settings', async () => {
+      const payload = await configCache.getOrSet('app_settings', async () => {
         let cfUsePoint = true;
         let deBonusPoint = true;
         let dePointRate = 1;
         let settleMinPoint = 0;
         let settleMaxPoint = 50000;
         let settlePointUnit = 100;
+        let deEscrowUse = false;
+        let deCardNointUse = false;
 
         try {
           const [cfgRows] = await pool.query(
@@ -40,7 +42,8 @@ class ConfigController {
         try {
           const [shopRows] = await pool.query(
             `SELECT de_bonus_point, de_point_rate,
-                    de_settle_min_point, de_settle_max_point, de_settle_point_unit
+                    de_settle_min_point, de_settle_max_point, de_settle_point_unit,
+                    de_escrow_use, de_card_noint_use
              FROM bomiora_shop_default LIMIT 1`
           );
           if (shopRows.length) {
@@ -56,6 +59,8 @@ class ConfigController {
             settlePointUnit = unitRaw === 1 || unitRaw === 10 || unitRaw === 100
               ? unitRaw
               : 100;
+            deEscrowUse = this.toInt(row.de_escrow_use, 0) === 1;
+            deCardNointUse = this.toInt(row.de_card_noint_use, 0) === 1;
           }
         } catch (_) {}
 
@@ -68,6 +73,8 @@ class ConfigController {
             de_settle_min_point: settleMinPoint,
             de_settle_max_point: settleMaxPoint,
             de_settle_point_unit: settlePointUnit,
+            de_escrow_use: deEscrowUse,
+            de_card_noint_use: deCardNointUse,
           },
         };
       });
@@ -86,6 +93,8 @@ class ConfigController {
           de_settle_min_point: 0,
           de_settle_max_point: 50000,
           de_settle_point_unit: 100,
+          de_escrow_use: false,
+          de_card_noint_use: false,
         },
       });
     }

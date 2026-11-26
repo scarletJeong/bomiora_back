@@ -417,6 +417,7 @@ class KcpPayService {
     receiver,
     payMethod,
     escrowUse,
+    cardNointUse = false,
     basketLineCount,
     goodInfo,
     shopUserId,
@@ -476,7 +477,8 @@ class KcpPayService {
       deli_term: '03',
       bask_cntx: String(lineCount),
       good_info: goodInfo || '',
-      kcp_noint: 'N',
+      // 웹과 동일: 무이자 사용이면 ''(가맹점 설정), 아니면 'N'
+      kcp_noint: cardNointUse ? '' : 'N',
       used_card_YN: 'N',
       used_card: 'CCXA:CCXB:CCXC',
       wish_vbank_list: '',
