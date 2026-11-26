@@ -81,7 +81,7 @@ class KcpPayRepository {
           ?, ?, ?, ?, ?, ?, ?, 0,
           ?, ?, ?, ?, ?, ?, ?,
           'kcp', ?, ?, ?, 0, ?, ?, 0,
-          ?, '', '', ?, ?, ?, ?, 0
+          ?, '', ?, ?, ?, ?, ?, 0
         )`,
         [
           payload.orderId,
@@ -123,6 +123,7 @@ class KcpPayRepository {
           taxMny,
           vatMny,
           odStatus,
+          payload.hopeDate || '',
           now,
           payload.ipAddress,
           payload.settleCase,

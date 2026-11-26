@@ -61,6 +61,8 @@ class KcpPayController {
         receiver,
         od_memo: odMemo,
         memo: topLevelMemo,
+        od_hope_date: rawHopeDate,
+        hope_date: rawHopeDateAlt,
       } = req.body || {};
 
       if (!mbId) {
@@ -250,6 +252,16 @@ class KcpPayController {
       const deliveryMemo = String(
         receiver?.memo ?? odMemo ?? topLevelMemo ?? ''
       ).trim();
+      const hopeResolved = await this.resolveHopeDate(
+        rawHopeDate ?? rawHopeDateAlt
+      );
+      if (hopeResolved.error) {
+        return res.status(400).json({
+          success: false,
+          message: hopeResolved.error,
+          error_code: 'HOPE_DATE_REQUIRED',
+        });
+      }
       const pending = kcpPayStore.createPending({
         mbId,
         orderId,
@@ -263,6 +275,7 @@ class KcpPayController {
           ...(receiver || {}),
           memo: deliveryMemo,
         }),
+        hopeDate: hopeResolved.hopeDate,
         shippingCost: grossShipping,
         baseShipping: baseShip,
         extraShipping: extraShip,
@@ -631,6 +644,7 @@ class KcpPayController {
           receiverAddr3: pending.request.receiver.addr3,
           depositName,
           memo: pending.request.receiver.memo,
+          hopeDate: pending.request.hopeDate || '',
           cartCount: pending.request.cartIds.length,
           cartPrice: pending.request.amount - pending.request.shippingCost + pending.request.couponDiscount + pending.request.usedPoint,
           sendCost: pending.request.baseShipping != null
@@ -899,6 +913,48 @@ class KcpPayController {
       addr3: String(row.addr3 || '').trim(),
       memo: String(row.memo || '').trim(),
     };
+  }
+
+  normalizeHopeDate(value) {
+    const s = String(value || '').trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return '';
+    const picked = new Date(`${s}T00:00:00`);
+    if (Number.isNaN(picked.getTime())) return '';
+    const y = picked.getFullYear();
+    const m = String(picked.getMonth() + 1).padStart(2, '0');
+    const d = String(picked.getDate()).padStart(2, '0');
+    if (`${y}-${m}-${d}` !== s) return '';
+    return s;
+  }
+
+  /** 웹 주문서와 동일: de_hope_date_use 시 after~after+6일 창. */
+  async resolveHopeDate(rawValue) {
+    let use = false;
+    let after = 3;
+    try {
+      const shop = await shopDefaultRepository.findFirst();
+      if (shop) {
+        use = Number(shop.de_hope_date_use) === 1;
+        const afterRaw = Number(shop.de_hope_date_after);
+        after = Number.isFinite(afterRaw) ? Math.max(0, Math.trunc(afterRaw)) : 3;
+      }
+    } catch (_) {}
+    if (!use) return { hopeDate: '' };
+    const hopeDate = this.normalizeHopeDate(rawValue);
+    if (!hopeDate) {
+      return { hopeDate: '', error: '희망배송일을 선택하여 주십시오.' };
+    }
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const min = new Date(today);
+    min.setDate(min.getDate() + after);
+    const max = new Date(min);
+    max.setDate(max.getDate() + 6);
+    const picked = new Date(`${hopeDate}T00:00:00`);
+    if (picked < min || picked > max) {
+      return { hopeDate: '', error: '희망배송일이 허용 범위를 벗어났습니다.' };
+    }
+    return { hopeDate };
   }
 
   splitCouponAmounts(coupons) {
