@@ -3,6 +3,7 @@ const productOptionRepository = require('../option/repositories/ProductOptionRep
 const reviewRepository = require('../../../user/review/repositories/ReviewRepository');
 const shopDefaultRepository = require('../../../common/shopdefault/repositories/ShopDefaultRepository');
 const imageProxyController = require('../../../common/imageProxy/controllers/ImageProxyController');
+const userRepository = require('../../../auth/repositories/UserRepository');
 const { TtlCache } = require('../../../../utils/ttlCache');
 const { registerPublicCache } = require('../../../internal/cache/publicCacheRegistry');
 
@@ -409,12 +410,16 @@ class ProductController {
       isBest: Number(row.it_type4 || 0) === 1,
       stock: row.it_stock_qty ?? 0,
       it_soldout: this.bufferToString(row.it_soldout),
+      it_stock_sms: this._toInt(row.it_stock_sms, 0),
       it_use: this.bufferToString(row.it_use),
       rating: row.it_use_avg != null ? Number(row.it_use_avg) : null,
       reviewCount: row.it_use_cnt ?? 0,
       additionalInfo: {
         it_id: itIdStr,
         it_kind: itKindStr,
+        it_soldout: this.bufferToString(row.it_soldout),
+        it_stock_sms: this._toInt(row.it_stock_sms, 0),
+        it_use: this.bufferToString(row.it_use),
         it_explain: this.bufferToString(itExplain),
         it_subject: itSubjectStr,
         it_basic: itBasicStr,
@@ -445,6 +450,9 @@ class ProductController {
         shippingFeeLabel,
         it_point: row.it_point,
         it_point_type: row.it_point_type,
+        it_buy_min_qty: this._toInt(row.it_buy_min_qty, 0),
+        it_buy_max_qty: this._toInt(row.it_buy_max_qty, 0),
+        it_tel_inq: this._toInt(row.it_tel_inq, 0),
         it_mb_inf: textOrNull(row.it_mb_inf) || '',
         certifications,
         ...imageFields
@@ -691,6 +699,103 @@ class ProductController {
       return res.status(500).json({
         success: false,
         message: `옵션 목록 조회 실패: ${error.message}`,
+      });
+    }
+  }
+
+  /** 휴대폰을 010-1234-5678 형태로 맞춤 (웹 hyphen_hp_number와 동일) */
+  hyphenHpNumber(raw) {
+    const digits = String(raw || '').replace(/[^0-9]/g, '');
+    if (!digits) return '';
+    const matched = digits.match(/^([0-9]{3})([0-9]{3,4})([0-9]{4})$/);
+    if (!matched) return digits;
+    return `${matched[1]}-${matched[2]}-${matched[3]}`;
+  }
+
+  clientIp(req) {
+    const forwarded = String(req.headers['x-forwarded-for'] || '')
+      .split(',')[0]
+      .trim();
+    return forwarded || req.socket?.remoteAddress || req.ip || '';
+  }
+
+  /**
+   * POST /api/products/stock-sms
+   * 로그인 회원 휴대폰으로 재입고 SMS 신청 저장
+   * body: { it_id, mb_id }
+   */
+  async requestStockSms(req, res) {
+    try {
+      const itId = String(req.body?.it_id || req.body?.productId || '').trim();
+      const mbId = String(req.body?.mb_id || req.body?.mbId || '').trim();
+      if (!itId) {
+        return res.status(400).json({
+          success: false,
+          message: '상품정보가 존재하지 않습니다.',
+        });
+      }
+      if (!mbId) {
+        return res.status(401).json({
+          success: false,
+          message: '로그인 후 이용할 수 있습니다.',
+        });
+      }
+
+      const item = await productRepository.findById(itId);
+      if (!item) {
+        return res.status(404).json({
+          success: false,
+          message: '상품정보가 존재하지 않습니다.',
+        });
+      }
+
+      const soldout = String(item.it_soldout ?? '').trim();
+      const stockSms = Number(item.it_stock_sms || 0);
+      if (soldout !== '1' || stockSms !== 1) {
+        return res.status(400).json({
+          success: false,
+          message: '재입고SMS 알림을 신청할 수 없는 상품입니다.',
+        });
+      }
+
+      const member = await userRepository.findByMbId(mbId);
+      if (!member) {
+        return res.status(404).json({
+          success: false,
+          message: '회원 정보를 찾을 수 없습니다.',
+        });
+      }
+
+      const ssHp = this.hyphenHpNumber(member.mbHp);
+      if (!ssHp) {
+        return res.status(400).json({
+          success: false,
+          message: '등록된 휴대폰번호가 없습니다. 회원정보에서 번호를 등록해 주세요.',
+        });
+      }
+
+      const pending = await productRepository.countPendingStockSms(itId, ssHp);
+      if (pending > 0) {
+        return res.status(409).json({
+          success: false,
+          message: '해당 상품에 대하여 이전에 알림 요청을 등록한 내역이 있습니다.',
+        });
+      }
+
+      await productRepository.insertStockSms({
+        itId,
+        ssHp,
+        ssIp: this.clientIp(req),
+      });
+
+      return res.json({
+        success: true,
+        message: '재입고SMS 알림 요청 등록이 완료됐습니다.',
+      });
+    } catch (error) {
+      return res.status(500).json({
+        success: false,
+        message: `재입고SMS 신청 실패: ${error.message}`,
       });
     }
   }

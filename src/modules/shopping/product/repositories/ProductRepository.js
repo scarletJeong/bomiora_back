@@ -78,7 +78,8 @@ const DETAIL_COLUMNS = `
   CAST(it_weight AS CHAR) AS it_weight,
   it_point, it_point_type,
   CAST(it_mb_inf AS CHAR) AS it_mb_inf,
-  it_price, it_cust_price, it_stock_qty, it_soldout, it_use, it_use_avg, it_use_cnt,
+  it_buy_min_qty, it_buy_max_qty, it_tel_inq,
+  it_price, it_cust_price, it_stock_qty, it_soldout, it_stock_sms, it_use, it_use_avg, it_use_cnt,
   it_type3, it_type4,
   CAST(ca_id AS CHAR) AS ca_id,
   CAST(it_kind AS CHAR) AS it_kind,
@@ -360,6 +361,30 @@ class ProductRepository {
       rows,
       total: Number(countRows?.[0]?.total || 0),
     };
+  }
+
+  /** 미전송 재입고 SMS 신청 건수 (it_id + ss_hp) */
+  async countPendingStockSms(itId, ssHp) {
+    const [rows] = await pool.query(
+      `SELECT COUNT(*) AS cnt
+         FROM bomiora_shop_item_stocksms
+        WHERE it_id = ?
+          AND ss_hp = ?
+          AND ss_send = '0'`,
+      [itId, ssHp]
+    );
+    return Number(rows?.[0]?.cnt || 0);
+  }
+
+  /** 재입고 SMS 신청 저장 */
+  async insertStockSms({ itId, ssHp, ssIp }) {
+    const [result] = await pool.query(
+      `INSERT INTO bomiora_shop_item_stocksms
+         (it_id, ss_hp, ss_send, ss_datetime, ss_ip)
+       VALUES (?, ?, '0', NOW(), ?)`,
+      [itId, ssHp, ssIp || '']
+    );
+    return result;
   }
 }
 

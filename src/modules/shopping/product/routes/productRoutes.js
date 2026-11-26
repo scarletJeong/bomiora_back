@@ -11,6 +11,7 @@ router.get(
   '/categories-with-products',
   (req, res) => productController.getCategoriesWithProducts(req, res)
 );
+router.post('/stock-sms', (req, res) => productController.requestStockSms(req, res));
 router.get('/:productId/options', (req, res) => productController.getProductOptions(req, res));
 router.get('/:productId/supply-products', (req, res) =>
   productController.getSupplyProducts(req, res)
