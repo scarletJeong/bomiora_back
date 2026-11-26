@@ -453,6 +453,8 @@ class ProductController {
         it_buy_min_qty: this._toInt(row.it_buy_min_qty, 0),
         it_buy_max_qty: this._toInt(row.it_buy_max_qty, 0),
         it_tel_inq: this._toInt(row.it_tel_inq, 0),
+        it_icon1: this._toInt(row.it_icon1, 0),
+        it_icon2: this._toInt(row.it_icon2, 0),
         it_mb_inf: textOrNull(row.it_mb_inf) || '',
         certifications,
         ...imageFields
