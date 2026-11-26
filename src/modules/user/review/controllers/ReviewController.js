@@ -4,6 +4,7 @@ const { SUBDIRS, mirrorUploadedFile } = require('../../../../utils/cafe24ImageMi
 const reviewRepository = require('../repositories/ReviewRepository');
 const pointRepository = require('../../point/repositories/PointRepository');
 const mainReviewRepository = require('../repositories/MainReviewRepository');
+const shopDefaultRepository = require('../../../common/shopdefault/repositories/ShopDefaultRepository');
 const { TtlCache } = require('../../../../utils/ttlCache');
 const { registerPublicCache } = require('../../../internal/cache/publicCacheRegistry');
 
@@ -354,6 +355,22 @@ class ReviewController {
     });
   }
 
+  /**
+   * 쇼핑몰 설정 de_item_use_use
+   * 0/미설정 → 즉시 출력(is_confirm=1), 1 → 관리자 승인 후 출력(is_confirm=0)
+   */
+  async _reviewConfirmOnCreate() {
+    try {
+      const shopDefault = await shopDefaultRepository.findFirst();
+      const raw = shopDefault?.de_item_use_use;
+      const needsApproval = Number(raw) === 1 || String(raw ?? '').trim() === '1';
+      return needsApproval ? 0 : 1;
+    } catch (err) {
+      console.warn('[Review] shop default confirm flag failed', err?.message);
+      return 1;
+    }
+  }
+
   _invalidateMemberReviewList(mbId) {
     const id = String(mbId || '').trim();
     if (!id) return;
@@ -450,6 +467,7 @@ class ReviewController {
       const memberDisplayName = rvkind === 'supporter'
         ? ''
         : await reviewRepository.findMemberDisplayName(mbId);
+      const isConfirm = await this._reviewConfirmOnCreate();
       const saved = await reviewRepository.create({
         mb_id: mbId,
         od_id: odId,
@@ -457,7 +475,7 @@ class ReviewController {
         is_name: rvkind === 'supporter'
           ? (req.body.isName || mbId)
           : memberDisplayName,
-        is_confirm: 1,
+        is_confirm: isConfirm,
         is_score1: s1,
         is_score2: s2,
         is_score3: s3,
@@ -501,11 +519,16 @@ class ReviewController {
 
       this._invalidateMemberReviewList(mbId);
       this._invalidateProductReviewList(itId);
-      this._syncAggregatesLater(itId);
+      // 즉시 출력일 때만 상품 리뷰 집계 갱신 (승인 대기면 목록에도 안 나옴)
+      if (Number(isConfirm) === 1) {
+        this._syncAggregatesLater(itId);
+      }
       return res.json({
         success: true,
-        message: '리뷰가 성공적으로 작성되었습니다.',
-        review: this.toReviewResponse(saved)
+        message: Number(isConfirm) === 1
+          ? '리뷰가 성공적으로 작성되었습니다.'
+          : '평가하신 글은 관리자가 확인한 후에 출력됩니다.',
+        review: this.toReviewResponse(saved),
       });
     } catch (error) {
       console.error('[ReviewController.createReview]', error);
