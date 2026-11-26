@@ -99,6 +99,66 @@ class CartController {
     return 0;
   }
 
+  isTelInquiry(product) {
+    return this.toInt(product?.it_tel_inq ?? product?.product_it_tel_inq, 0) === 1;
+  }
+
+  buyMinQty(product) {
+    return Math.max(0, this.toInt(product?.it_buy_min_qty ?? product?.product_it_buy_min_qty, 0));
+  }
+
+  buyMaxQty(product) {
+    return Math.max(0, this.toInt(product?.it_buy_max_qty ?? product?.product_it_buy_max_qty, 0));
+  }
+
+  /**
+   * 본품(io_type=0) 수량 합에 최소·최대 구매수량을 적용. 재고가 더 작으면 재고가 상한.
+   * @returns {{ok:boolean, message?:string}}
+   */
+  checkBuyQtyLimits(product, mainQtySum, stockQty = null) {
+    const name = this.bufferToString(product?.it_name) || '상품';
+    const minQty = this.buyMinQty(product);
+    const maxQty = this.buyMaxQty(product);
+    let upper = maxQty > 0 ? maxQty : null;
+    if (stockQty != null && !this.isUnlimitedStock(stockQty)) {
+      const stock = this.toInt(stockQty, 0);
+      if (upper == null || stock < upper) upper = stock;
+    }
+    if (minQty > 0 && mainQtySum < minQty) {
+      return {
+        ok: false,
+        message: `${name}의 선택옵션 개수 총합 ${minQty.toLocaleString('ko-KR')}개 이상 주문해 주십시오.`,
+      };
+    }
+    if (upper != null && mainQtySum > upper) {
+      if (maxQty > 0 && upper === maxQty) {
+        return {
+          ok: false,
+          message: `${name}의 선택옵션 개수 총합 ${maxQty.toLocaleString('ko-KR')}개 이하로 주문해 주십시오.`,
+        };
+      }
+      return {
+        ok: false,
+        message: `${name}의 재고가 부족합니다. (현재고 ${upper}개)`,
+      };
+    }
+    return { ok: true };
+  }
+
+  async sumMainCartQty(mbId, itId, ctStatus, exceptCtId = null) {
+    const carts = await cartRepository.findByMbIdAndStatus(mbId, ctStatus);
+    let sum = 0;
+    for (const row of carts || []) {
+      if (String(this.bufferToString(row.it_id) || '') !== String(itId)) continue;
+      if (this.toInt(row.io_type, 0) !== 0) continue;
+      if (exceptCtId != null && this.toInt(row.ct_id, 0) === this.toInt(exceptCtId, 0)) {
+        continue;
+      }
+      sum += this.toInt(row.ct_qty, 0);
+    }
+    return sum;
+  }
+
   /**
    * 웹 get_item_point와 동일(개당).
    * it_point_type: 0=설정금액, 1=판매가%, 2=구매가%(선택옵션가 포함)
@@ -302,6 +362,22 @@ class CartController {
       it_point: product ? this.toInt(product.it_point, 0) : 0,
       it_point_type: product ? this.toInt(product.it_point_type, 0) : 0,
       it_supply_point: product ? this.toInt(product.it_supply_point, 0) : 0,
+      it_buy_min_qty: this.toInt(
+        cart.product_it_buy_min_qty ?? product?.it_buy_min_qty,
+        0
+      ),
+      it_buy_max_qty: this.toInt(
+        cart.product_it_buy_max_qty ?? product?.it_buy_max_qty,
+        0
+      ),
+      it_tel_inq: this.toInt(
+        cart.product_it_tel_inq ?? product?.it_tel_inq,
+        0
+      ),
+      it_stock_qty: this.toInt(
+        cart.product_it_stock_qty ?? product?.it_stock_qty,
+        0
+      ),
       ct_time: cart.ct_time,
       image_url: imageUrl,
       it_img: imageUrl,
@@ -689,6 +765,12 @@ class CartController {
       if (!mbId || !itId) return res.status(400).json({ success: false, message: 'mb_id와 it_id가 필요합니다.' });
       const product = await cartRepository.findProductById(itId);
       if (!product) return res.status(404).json({ success: false, message: '제품을 찾을 수 없습니다.' });
+      if (this.isTelInquiry(product)) {
+        return res.status(400).json({
+          success: false,
+          message: '전화문의 상품입니다. 고객센터로 문의해 주세요.',
+        });
+      }
 
       const productBasePrice = this.toInt(product.it_price, 0);
       const resolvedParent = await this.resolveParent({
@@ -720,6 +802,22 @@ class CartController {
         const newQty = this.toInt(existing.ct_qty, 0) + quantity;
         const existingIoType = this.toInt(existing.io_type, ioType);
         const existingIoPrice = this.toInt(existing.io_price, optionPrice);
+        if (existingIoType === 0) {
+          const otherSum = await this.sumMainCartQty(
+            mbId,
+            itId,
+            ctStatus,
+            existing.ct_id
+          );
+          const limit = this.checkBuyQtyLimits(
+            product,
+            otherSum + newQty,
+            product.it_stock_qty
+          );
+          if (!limit.ok) {
+            return res.status(400).json({ success: false, message: limit.message });
+          }
+        }
         const updateFields = {
           ct_qty: newQty,
           ct_price: unitCtPrice,
@@ -752,6 +850,18 @@ class CartController {
           ct_kind: this.bufferToString(updatedData.ct_kind),
           parent: this.bufferToString(updatedData.parent) || '',
         });
+      }
+
+      if (ioType === 0) {
+        const otherSum = await this.sumMainCartQty(mbId, itId, ctStatus);
+        const limit = this.checkBuyQtyLimits(
+          product,
+          otherSum + quantity,
+          product.it_stock_qty
+        );
+        if (!limit.ok) {
+          return res.status(400).json({ success: false, message: limit.message });
+        }
       }
 
       if (!odId) odId = await this.generateOrderId(mbId, itId);
@@ -1337,6 +1447,26 @@ class CartController {
       const cart = await cartRepository.findById(ctId);
       if (!cart) return res.status(404).json({ success: false, message: '장바구니 항목을 찾을 수 없습니다.' });
       const product = await cartRepository.findProductById(cart.it_id);
+      if (product && this.isTelInquiry(product)) {
+        return res.status(400).json({
+          success: false,
+          message: '전화문의 상품입니다. 고객센터로 문의해 주세요.',
+        });
+      }
+      const ioType = this.toInt(cart.io_type, 0);
+      if (product && ioType === 0) {
+        const mbId = this.bufferToString(cart.mb_id);
+        const ctStatus = this.normalizeCartStatus(cart.ct_status);
+        const otherSum = await this.sumMainCartQty(mbId, cart.it_id, ctStatus, ctId);
+        const limit = this.checkBuyQtyLimits(
+          product,
+          otherSum + quantity,
+          product.it_stock_qty
+        );
+        if (!limit.ok) {
+          return res.status(400).json({ success: false, message: limit.message });
+        }
+      }
       const ioPrice = this.toInt(cart.io_price, 0);
       // PHP처럼 ct_price는 단가 유지, 수량만 변경
       const unitPrice = this.resolveUnitCtPrice(
@@ -1352,7 +1482,7 @@ class CartController {
           cart.io_id,
           ioPrice,
           quantity,
-          this.toInt(cart.io_type, 0)
+          ioType
         )
       });
       const mbId = this.bufferToString(cart.mb_id);
@@ -1646,6 +1776,15 @@ class CartController {
         issues.push({ ct_id: cart.ct_id, it_id: itId, reason: 'soldout', message: `${name}은(는) 품절되었습니다.` });
         continue;
       }
+      if (this.toInt(cart.it_tel_inq ?? cart.product_it_tel_inq, 0) === 1) {
+        issues.push({
+          ct_id: cart.ct_id,
+          it_id: itId,
+          reason: 'tel_inq',
+          message: `${name}은(는) 전화문의 상품입니다.`,
+        });
+        continue;
+      }
       if (use && use !== '1') {
         issues.push({ ct_id: cart.ct_id, it_id: itId, reason: 'unavailable', message: `${name}은(는) 판매중지되었습니다.` });
         continue;
@@ -1689,6 +1828,29 @@ class CartController {
         continue;
       }
       goodsAmount += stored;
+    }
+
+    const mainQtyByIt = new Map();
+    const productByIt = new Map();
+    for (const cart of carts) {
+      if (this.toInt(cart.io_type, 0) !== 0) continue;
+      const itId = String(this.bufferToString(cart.it_id) || '').trim();
+      if (!itId) continue;
+      mainQtyByIt.set(itId, (mainQtyByIt.get(itId) || 0) + this.toInt(cart.ct_qty, 0));
+      if (!productByIt.has(itId)) productByIt.set(itId, cart);
+    }
+    for (const [itId, sum] of mainQtyByIt.entries()) {
+      const row = productByIt.get(itId);
+      if (!row) continue;
+      const limit = this.checkBuyQtyLimits(row, sum, row.it_stock_qty);
+      if (!limit.ok) {
+        issues.push({
+          ct_id: row.ct_id,
+          it_id: itId,
+          reason: 'buy_qty',
+          message: limit.message,
+        });
+      }
     }
 
     if (issues.length) {

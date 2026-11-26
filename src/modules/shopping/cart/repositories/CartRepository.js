@@ -30,6 +30,9 @@ const CART_LIST_SELECT = `
          CAST(p.it_soldout AS CHAR) AS product_it_soldout,
          CAST(p.it_use AS CHAR) AS product_it_use,
          p.it_stock_qty AS product_it_stock_qty,
+         p.it_buy_min_qty AS product_it_buy_min_qty,
+         p.it_buy_max_qty AS product_it_buy_max_qty,
+         p.it_tel_inq AS product_it_tel_inq,
          p.point_usage_rate AS point_usage_rate
 `;
 
@@ -54,6 +57,7 @@ class CartRepository {
               it_img1, it_flutter_image_url, it_mb_inf, it_inf_price,
               it_sc_type, it_sc_method, it_sc_price, it_sc_minimum, it_sc_qty,
               it_price, it_point_type, it_point, it_supply_point,
+              it_buy_min_qty, it_buy_max_qty, it_tel_inq, it_stock_qty,
               it_soldout, it_use, point_usage_rate
        FROM bomiora_shop_item_new WHERE it_id = ? LIMIT 1`,
       [itId]
@@ -122,6 +126,7 @@ class CartRepository {
               it_img1, it_flutter_image_url, it_mb_inf, it_inf_price,
               it_sc_type, it_sc_method, it_sc_price, it_sc_minimum, it_sc_qty,
               it_price, it_point_type, it_point, it_supply_point,
+              it_buy_min_qty, it_buy_max_qty, it_tel_inq,
               it_soldout, it_use, it_stock_qty, point_usage_rate
        FROM bomiora_shop_item_new
        WHERE it_id IN (?)`,
@@ -343,6 +348,9 @@ class CartRepository {
          CAST(p.it_soldout AS CHAR) AS it_soldout,
          CAST(p.it_use AS CHAR) AS it_use,
          p.it_stock_qty,
+         p.it_buy_min_qty,
+         p.it_buy_max_qty,
+         p.it_tel_inq,
          CAST(p.it_name AS CHAR) AS product_name
        FROM bomiora_shop_cart c
        LEFT JOIN bomiora_shop_item_new p ON p.it_id = c.it_id
