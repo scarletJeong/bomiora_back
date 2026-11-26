@@ -502,6 +502,10 @@ class UserRepository {
         updateFields.push('mb_hp = ?');
         updateValues.push(user.mbHp);
       }
+      if (user.mbDupinfo !== undefined) {
+        updateFields.push('mb_dupinfo = ?');
+        updateValues.push(user.mbDupinfo);
+      }
       if (user.profileImg !== undefined) {
         updateFields.push('profile_img = ?');
         updateValues.push(user.profileImg);

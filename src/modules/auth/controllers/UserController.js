@@ -12,8 +12,12 @@ const {
 const { warmMemberListCaches } = require('../services/warmMemberListCaches');
 const { SUBDIRS, mirrorUploadedFile } = require('../../../utils/cafe24ImageMirror');
 const { formatSqlDateOnlyForApi } = require('../../../utils/healthDateTime');
+const { TtlCache } = require('../../../utils/ttlCache');
+const pool = require('../../../config/database');
 const fs = require('fs');
 const path = require('path');
+
+const nickModifyDaysCache = new TtlCache(60_000);
 
 class UserController {
   async checkDupInfo(req, res) {
@@ -732,7 +736,7 @@ class UserController {
    */
   async updateProfile(req, res) {
     try {
-      const { mbId, name, nickname, phone } = req.body;
+      const { mbId, name, nickname, phone, mbDupinfo, fromKcp } = req.body;
       
       console.log('[UPDATE PROFILE] 프로필 수정 시도:', mbId);
 
@@ -748,21 +752,58 @@ class UserController {
       }
 
       // 2. 정보 업데이트
+      // 이름은 KCP 본인인증 결과만 반영 (직접 입력 변경 불가)
       if (name !== undefined && name !== null && name !== '') {
-        user.name = name;
+        const nextName = String(name).trim();
+        const prevName = String(user.name || '').trim();
+        if (nextName !== prevName) {
+          const dup = String(
+            mbDupinfo || req.body?.mb_dupinfo || req.body?.di || ''
+          ).trim();
+          const viaKcp = fromKcp === true || fromKcp === 1 || fromKcp === '1' || fromKcp === 'true';
+          if (!viaKcp || !dup) {
+            return res.status(400).json({
+              success: false,
+              code: 'NAME_REQUIRES_KCP',
+              message: '이름은 본인인증 후에만 변경할 수 있습니다.',
+            });
+          }
+          const owner = await userRepository.findByMbDupinfo(dup);
+          if (owner && String(owner.mbId || '').trim() !== String(user.mbId || '').trim()) {
+            return res.status(400).json({
+              success: false,
+              code: 'NAME_DUPINFO_OTHER_MEMBER',
+              message: '다른 회원에게 등록된 본인인증 정보입니다.',
+            });
+          }
+          const storedDup = String(user.mbDupinfo || '').trim();
+          if (storedDup && storedDup !== dup) {
+            return res.status(400).json({
+              success: false,
+              code: 'NAME_DUPINFO_MISMATCH',
+              message: '가입 시 본인인증 정보와 일치하지 않습니다.',
+            });
+          }
+          user.name = nextName;
+          if (!storedDup) {
+            user.mbDupinfo = dup;
+          }
+        }
       }
       
       if (nickname !== undefined && nickname !== null) {
         const nextNick = String(nickname).trim();
         const prevNick = String(user.nickname || '').trim();
         if (nextNick !== prevNick) {
-          const nickCheck = assertNicknameChangeAllowed(user.mbNickDate, 6);
+          const nickModifyDays = await getNickModifyDays();
+          const nickCheck = assertNicknameChangeAllowed(user.mbNickDate, nickModifyDays);
           if (!nickCheck.ok) {
             return res.status(400).json({
               success: false,
               code: 'NICKNAME_CHANGE_TOO_SOON',
               message: nickCheck.message,
               nextChangeDate: nickCheck.nextChangeDate || '',
+              nickModifyDays,
             });
           }
           user.nickname = nextNick;
@@ -776,12 +817,14 @@ class UserController {
 
       // 3. 저장
       const updatedUser = await userRepository.update(user);
+      const nickModifyDays = await getNickModifyDays();
       
       console.log('[UPDATE PROFILE] 프로필 수정 완료');
       
       return res.json({
         success: true,
-        user: updatedUser.toResponse(),
+        user: withNickModifyDays(updatedUser.toResponse(), nickModifyDays),
+        nickModifyDays,
         message: '프로필이 수정되었습니다.'
       });
 
@@ -1030,10 +1073,12 @@ class UserController {
           });
       }
 
+      const nickModifyDays = await getNickModifyDays();
       return res.json({
         success: true,
         active: true,
-        user: user.toResponse(),
+        user: withNickModifyDays(user.toResponse(), nickModifyDays),
+        nickModifyDays,
         message: '정상 회원입니다.',
         firstLoginPoint: {
           granted: false,
@@ -1453,9 +1498,9 @@ function formatYmd(date) {
   return `${y}-${m}-${day}`;
 }
 
-function addCalendarMonths(date, months) {
+function addCalendarDays(date, days) {
   const next = new Date(date.getTime());
-  next.setMonth(next.getMonth() + months);
+  next.setDate(next.getDate() + days);
   return next;
 }
 
@@ -1463,18 +1508,58 @@ function getKstTodayDate() {
   return parseMbNickDate(getKstDateString());
 }
 
+function configInt(value) {
+  if (value == null) return 0;
+  let raw = value;
+  if (Buffer.isBuffer(value)) raw = value.toString('utf8');
+  else if (value && typeof value === 'object' && value.type === 'Buffer' && Array.isArray(value.data)) {
+    raw = Buffer.from(value.data).toString('utf8');
+  }
+  const n = Number(String(raw).trim());
+  if (!Number.isFinite(n)) return 0;
+  return Math.trunc(n);
+}
+
+/** 관리자 `cf_nick_modify`(일). 없거나 읽기 실패 시 웹 설치 기본값 60. */
+async function getNickModifyDays() {
+  return nickModifyDaysCache.getOrSet('cf_nick_modify', async () => {
+    try {
+      const [rows] = await pool.query(
+        'SELECT cf_nick_modify FROM bomiora_config LIMIT 1'
+      );
+      if (!rows.length) return 60;
+      const days = configInt(rows[0].cf_nick_modify);
+      return days < 0 ? 60 : days;
+    } catch (_) {
+      return 60;
+    }
+  });
+}
+
+function withNickModifyDays(userPayload, days) {
+  return {
+    ...userPayload,
+    nickModifyDays: days,
+  };
+}
+
 /**
- * 닉네임 변경 가능 여부 (mb_nick_date 기준, 마지막 변경일로부터 N개월)
+ * 닉네임 변경 가능 여부 (mb_nick_date 기준, 마지막 변경일로부터 N일)
+ * 웹: mb_nick_date > today - (cf_nick_modify * 86400) 이면 변경 불가
  */
-function assertNicknameChangeAllowed(mbNickDate, monthInterval = 6) {
+function assertNicknameChangeAllowed(mbNickDate, dayInterval = 60) {
+  const days = Math.max(0, Number(dayInterval) || 0);
+  if (days <= 0) {
+    return { ok: true, nickModifyDays: 0 };
+  }
   const last = parseMbNickDate(mbNickDate);
   if (!last) {
-    return { ok: true };
+    return { ok: true, nickModifyDays: days };
   }
-  const nextAllowed = addCalendarMonths(last, monthInterval);
+  const nextAllowed = addCalendarDays(last, days);
   const today = getKstTodayDate();
   if (!today) {
-    return { ok: true };
+    return { ok: true, nickModifyDays: days };
   }
   const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
   const nextStart = new Date(
@@ -1485,11 +1570,12 @@ function assertNicknameChangeAllowed(mbNickDate, monthInterval = 6) {
   if (todayStart < nextStart) {
     return {
       ok: false,
-      message: '닉네임은 6개월에 1번만 변경할 수 있습니다.',
+      message: `닉네임은 ${days}일에 1번만 변경할 수 있습니다.`,
       nextChangeDate: formatYmd(nextStart),
+      nickModifyDays: days,
     };
   }
-  return { ok: true };
+  return { ok: true, nickModifyDays: days };
 }
 
 function isWithdrawnMember(user) {
