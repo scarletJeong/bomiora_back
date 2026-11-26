@@ -76,7 +76,7 @@ const DETAIL_COLUMNS = `
   CAST(it_depopt2_subject AS CHAR) AS it_depopt2_subject,
   CAST(it_depopt2_label AS CHAR) AS it_depopt2_label,
   CAST(it_weight AS CHAR) AS it_weight,
-  it_point, it_point_type,
+  it_point, it_point_type, it_supply_point,
   CAST(it_mb_inf AS CHAR) AS it_mb_inf,
   it_buy_min_qty, it_buy_max_qty, it_tel_inq,
   it_icon1, it_icon2,

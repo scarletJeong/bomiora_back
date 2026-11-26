@@ -450,6 +450,7 @@ class ProductController {
         shippingFeeLabel,
         it_point: row.it_point,
         it_point_type: row.it_point_type,
+        it_supply_point: this._toInt(row.it_supply_point, 0),
         it_buy_min_qty: this._toInt(row.it_buy_min_qty, 0),
         it_buy_max_qty: this._toInt(row.it_buy_max_qty, 0),
         it_tel_inq: this._toInt(row.it_tel_inq, 0),

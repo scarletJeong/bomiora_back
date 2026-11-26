@@ -359,9 +359,18 @@ class CartController {
       ct_mb_inf: this.bufferToString(cart.ct_mb_inf) || '',
       point_usage_rate: this.pointUsageRateOf(product, ctKindRaw),
       ct_point: this.toInt(cart.ct_point, 0),
-      it_point: product ? this.toInt(product.it_point, 0) : 0,
-      it_point_type: product ? this.toInt(product.it_point_type, 0) : 0,
-      it_supply_point: product ? this.toInt(product.it_supply_point, 0) : 0,
+      it_point: this.toInt(
+        cart.it_point ?? product?.it_point,
+        0
+      ),
+      it_point_type: this.toInt(
+        cart.it_point_type ?? product?.it_point_type,
+        0
+      ),
+      it_supply_point: this.toInt(
+        cart.it_supply_point ?? product?.it_supply_point,
+        0
+      ),
       it_buy_min_qty: this.toInt(
         cart.product_it_buy_min_qty ?? product?.it_buy_min_qty,
         0
