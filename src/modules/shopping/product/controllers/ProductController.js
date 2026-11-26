@@ -296,6 +296,38 @@ class ProductController {
     return null;
   }
 
+  /** 웹 `$_const['certification']` / agency{n}.png 과 동일 */
+  static get CERTIFICATION_LABELS() {
+    return {
+      1: 'HGMP 인증',
+      2: '기관2',
+      3: '기관3',
+      4: '기관4',
+      5: '기관5',
+      6: '기관6',
+      7: '기관7',
+      8: '기관8',
+      9: '기관9',
+      10: '기관10',
+    };
+  }
+
+  buildCertifications(row) {
+    const labels = ProductController.CERTIFICATION_LABELS;
+    const out = [];
+    for (let i = 1; i <= 10; i += 1) {
+      const raw = row[`it_certification${i}`];
+      const on = Number(raw) === 1 || String(raw).trim() === '1';
+      if (!on) continue;
+      out.push({
+        id: i,
+        label: labels[i] || `기관${i}`,
+        imageUrl: `https://bomiora.net/img/detail/agency${i}.png`,
+      });
+    }
+    return out;
+  }
+
   toProductDto(row, shopDefault = null) {
     // Buffer를 문자열로 변환
     const itIdStr = this.bufferToString(row.it_id);
@@ -352,6 +384,7 @@ class ProductController {
     const scPrice = this._toInt(row.it_sc_price, 0);
     const scMinimum = this._toInt(row.it_sc_minimum, 0);
     const shippingFeeLabel = this.buildShippingFeeLabel(row, shopDefault);
+    const certifications = this.buildCertifications(row);
     
     return {
       id: itIdStr,
@@ -364,6 +397,7 @@ class ProductController {
       it_baesong_content: itBaesongContentStr,
       it_shipping_process: itShippingProcessStr,
       it_change_content: itChangeContentStr,
+      certifications,
       shippingFeeLabel,
       price: row.it_price,
       originalPrice: row.it_cust_price,
@@ -412,6 +446,7 @@ class ProductController {
         it_point: row.it_point,
         it_point_type: row.it_point_type,
         it_mb_inf: textOrNull(row.it_mb_inf) || '',
+        certifications,
         ...imageFields
       },
       depOption1Subject: textOrNull(row.it_depopt1_subject) || '',
