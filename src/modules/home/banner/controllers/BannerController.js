@@ -15,6 +15,7 @@ class BannerController {
       imagePath: String(row.image_path || '').trim(),
       placement: String(row.placement || 'main').trim(),
       targetKind: String(row.target_kind || 'all').trim(),
+      listCa: String(row.list_ca || '').trim(),
       sortOrder: Number(row.sort_order || 0),
     };
   }
@@ -31,6 +32,11 @@ class BannerController {
     return 'prescription';
   }
 
+  resolveCaId(raw, placement) {
+    if (placement !== 'list') return '';
+    return String(raw || '').replace(/[^0-9a-zA-Z]/g, '');
+  }
+
   async getActiveList(req, res) {
     try {
       const placement = this.resolvePlacement(req.query.placement);
@@ -38,12 +44,17 @@ class BannerController {
         req.query.target_kind ?? req.query.targetKind,
         placement
       );
+      const caId = this.resolveCaId(
+        req.query.ca_id ?? req.query.caId ?? req.query.categoryId,
+        placement
+      );
 
-      const cacheKey = `banner:${placement}:${targetKind || ''}`;
+      const cacheKey = `banner:${placement}:${targetKind || ''}:${caId || ''}`;
       const payload = await bannerCache.getOrSet(cacheKey, async () => {
         const rows = await bannerRepository.findActiveList({
           placement,
           targetKind,
+          caId,
         });
         const data = rows
           .map((row) => this.toMap(row))
